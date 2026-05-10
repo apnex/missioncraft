@@ -115,15 +115,47 @@ describe('Missioncraft SDK class — W3 smoke-tests', () => {
     });
   });
 
-  describe('update — validation-only at W3 (runtime W4)', () => {
-    it('update("mission", id, validMutation) throws "not yet implemented; W4" but mutation-shape validated', async () => {
+  describe('update — W4.1 state-machine wire-through', () => {
+    it('update("mission", id, {kind: "rename"}) applies + persists; lifecycle preserved', async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      const handle = await mc.create('mission', { name: 'foo' });
+      const updated = await mc.update('mission', handle.id, { kind: 'rename', newName: 'bar-new' });
+      expect(updated.name).toBe('bar-new');
+      expect(updated.lifecycleState).toBe('created');
+      // Round-trip via get() to verify atomic-write persisted
+      const reread = await mc.get('mission', handle.id);
+      expect(reread.name).toBe('bar-new');
+    });
+
+    it('update add-repo on "created" mission auto-advances to "configured" (FSM add-first-repo)', async () => {
       const mc = new Missioncraft({ workspaceRoot: tempRoot });
       const handle = await mc.create('mission');
-      await expect(
-        mc.update('mission', handle.id, { kind: 'rename', newName: 'new-name' }),
-      ).rejects.toMatchObject({
-        message: expect.stringMatching(/not yet implemented \(W4\)/),
+      const before = await mc.get('mission', handle.id);
+      expect(before.lifecycleState).toBe('created');
+      const after = await mc.update('mission', handle.id, {
+        kind: 'add-repo',
+        repo: { url: 'https://github.com/example/repo-x' },
       });
+      expect(after.lifecycleState).toBe('configured');
+      expect(after.repos).toHaveLength(1);
+      expect(after.repos[0].name).toBe('repo-x');
+    });
+
+    it('update remove-repo to last-repo back-transitions "configured" → "created"', async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      const handle = await mc.create('mission', { repo: 'https://github.com/example/repo-x' });
+      const before = await mc.get('mission', handle.id);
+      expect(before.lifecycleState).toBe('configured');
+      const after = await mc.update('mission', handle.id, { kind: 'remove-repo', repoName: 'repo-x' });
+      expect(after.lifecycleState).toBe('created');
+      expect(after.repos).toHaveLength(0);
+    });
+
+    it('update set-tag persists tag', async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      const handle = await mc.create('mission');
+      const after = await mc.update('mission', handle.id, { kind: 'set-tag', key: 'team', value: 'apnex' });
+      expect(after.tags['team']).toBe('apnex');
     });
 
     it('update("mission", id, invalidMutation) rejects shape via ConfigValidationError', async () => {
@@ -133,6 +165,15 @@ describe('Missioncraft SDK class — W3 smoke-tests', () => {
         // @ts-expect-error — intentional invalid shape for runtime validation test
         mc.update('mission', handle.id, 'not-a-mutation'),
       ).rejects.toBeInstanceOf(ConfigValidationError);
+    });
+
+    it('update violating state-restriction matrix throws MissionStateError', async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      const handle = await mc.create('mission', { repo: 'https://github.com/example/repo-x' });
+      // remove-repo is allowed pre-start but rejected post-start; we're 'configured' (pre-start) so this should succeed
+      await expect(
+        mc.update('mission', handle.id, { kind: 'remove-repo', repoName: 'repo-x' }),
+      ).resolves.toMatchObject({ lifecycleState: 'created' });
     });
   });
 

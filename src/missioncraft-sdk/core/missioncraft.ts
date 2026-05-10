@@ -54,6 +54,9 @@ import { instantiateProvider } from './provider-registry.js';
 import { OperatorConfigSchema } from './operator-config-schema.js';
 import { parseMissionConfig, serializeMissionConfig, kebabToCamelObject, camelToKebabObject } from './yaml-transform.js';
 import { ScopeConfigSchema } from './scope-config-schema.js';
+import { validateMutationAllowed } from './state-machine/state-restriction-matrix.js';
+import { nextState } from './state-machine/lifecycle-state-machine.js';
+import type { RepoSpec } from './mission-types.js';
 
 /** Pluggable resource-types. */
 export type ResourceType = 'mission' | 'scope';
@@ -181,24 +184,22 @@ export class Missioncraft {
     id: string,
     mutation: ResourceMap[T]['mutation'],
   ): Promise<ResourceMap[T]['state']> {
-    // W3 update-validation IMPLEMENTED: validate mutation discriminated-union shape; runtime state-restriction (per §2.4.1 matrix) deferred to W4
     if (type === 'mission') {
       const m = mutation as MissionMutation;
       if (typeof m !== 'object' || m === null || typeof m.kind !== 'string') {
         throw new ConfigValidationError(`Missioncraft.update('mission'): mutation must be a discriminated-union with 'kind' field`);
       }
-      // W4: per-field state-restriction matrix dispatch + actual mutation
-      throw new MissionStateError(
-        `Missioncraft.update('mission', '${id}', kind: '${m.kind}'): mutation-shape validated; runtime per-field state-restriction matrix not yet implemented (W4)`,
-      );
+      const state = await this.applyMissionMutation(id, m);
+      return state as ResourceMap[T]['state'];
     }
     if (type === 'scope') {
       const m = mutation as ScopeMutation;
       if (typeof m !== 'object' || m === null || typeof m.kind !== 'string') {
         throw new ConfigValidationError(`Missioncraft.update('scope'): mutation must be a discriminated-union with 'kind' field`);
       }
+      // W4.x: scope-mutation runtime apply (parallel to mission-mutation; simpler since 6 kinds vs 11)
       throw new MissionStateError(
-        `Missioncraft.update('scope', '${id}', kind: '${m.kind}'): mutation-shape validated; runtime mutation-apply not yet implemented (W4)`,
+        `Missioncraft.update('scope', '${id}', kind: '${m.kind}'): mutation-shape validated; runtime apply not yet implemented (W4 follow-on)`,
       );
     }
     throw new ConfigValidationError(`Missioncraft.update: unknown resource-type '${type as string}'`);
@@ -533,6 +534,159 @@ export class Missioncraft {
     const yamlMod = await import('yaml');
     const raw = yamlMod.parse(content);
     return kebabToCamelObject(raw);
+  }
+
+  /**
+   * Apply a MissionMutation to a mission's persisted config (W4.1 state-machine wire-through).
+   *
+   * Pipeline:
+   * 1. Read current mission-config from storage
+   * 2. Validate per-field state-restriction matrix per §2.4.1 (per HIGH-3 + v4.0 multi-participant per MEDIUM-R1.5)
+   * 3. Apply mutation to config (immutable update)
+   * 4. Auto-advance lifecycle-state via FSM (e.g., add-first-repo: created → configured)
+   * 5. Atomic-write updated config (write-temp + rename per MEDIUM-11)
+   * 6. Return updated MissionState
+   *
+   * NOTE: full mission-lock acquisition + cross-mission concurrency control deferred to W4.3 daemon-watcher integration.
+   * W4.1 implements happy-path mutation-apply; concurrent CLI invocations may race (W4.3 acquires advisory lock per acquireMissionLock).
+   */
+  private async applyMissionMutation(id: string, mutation: MissionMutation): Promise<MissionState> {
+    const path = this.missionConfigPath(id);
+    if (!existsSync(path)) {
+      throw new MissionStateError(`mission not found: '${id}' (no config at ${path})`);
+    }
+    const content = await readFile(path, 'utf8');
+    const config = parseMissionConfig(content, path);
+    const currentState = config.mission.lifecycleState;
+
+    // §2.4.1 state-restriction matrix
+    const rejection = validateMutationAllowed(mutation, currentState);
+    if (rejection !== null) {
+      throw new MissionStateError(`Missioncraft.update('mission', '${id}'): ${rejection}`);
+    }
+
+    // Apply mutation; auto-advance lifecycle-state via FSM where applicable
+    const updated = this.applyMissionMutationToConfig(config, mutation);
+    await this.writeMissionConfigAtomic(id, updated);
+    return this.missionConfigToState(updated, this.principal);
+  }
+
+  /**
+   * Pure mutation-application: returns new MissionConfig with mutation applied + lifecycle-state advanced if applicable.
+   * Caller (applyMissionMutation) handles persistence.
+   */
+  private applyMissionMutationToConfig(
+    config: MissionConfig,
+    mutation: MissionMutation,
+  ): MissionConfig {
+    const m = config.mission;
+    let nextRepos = config.repos;
+    let nextMission: MissionConfig['mission'] = m;
+
+    switch (mutation.kind) {
+      case 'add-repo': {
+        const newRepo: RepoSpec = {
+          ...mutation.repo,
+          ...(mutation.repo.name === undefined && { name: repoNameFromUrl(mutation.repo.url) }),
+        };
+        // Reject duplicate repo-name
+        const repoName = newRepo.name ?? repoNameFromUrl(newRepo.url);
+        if (nextRepos.some((r) => (r.name ?? repoNameFromUrl(r.url)) === repoName)) {
+          throw new MissionStateError(`add-repo rejected: repo '${repoName}' already in mission`);
+        }
+        nextRepos = [...nextRepos, newRepo];
+        // FSM: add-first-repo → 'configured'
+        if (config.repos.length === 0 && m.lifecycleState === 'created') {
+          const next = nextState(m.lifecycleState, 'add-first-repo');
+          if (next !== null) nextMission = { ...m, lifecycleState: next };
+        }
+        break;
+      }
+      case 'remove-repo': {
+        const before = nextRepos.length;
+        nextRepos = nextRepos.filter((r) => (r.name ?? repoNameFromUrl(r.url)) !== mutation.repoName);
+        if (nextRepos.length === before) {
+          throw new MissionStateError(`remove-repo rejected: repo '${mutation.repoName}' not found`);
+        }
+        // FSM: remove-last-repo → 'created'
+        if (nextRepos.length === 0 && m.lifecycleState === 'configured') {
+          const next = nextState(m.lifecycleState, 'remove-last-repo');
+          if (next !== null) nextMission = { ...m, lifecycleState: next };
+        }
+        break;
+      }
+      case 'rename':
+        nextMission = { ...m, name: mutation.newName };
+        break;
+      case 'set-description':
+        nextMission = { ...m, description: mutation.description };
+        break;
+      case 'set-hub-id':
+        nextMission = { ...m, hubId: mutation.hubId };
+        break;
+      case 'set-scope':
+        // W4.2+: scope-id validation against existing scope-config
+        if (mutation.scopeId === null) {
+          // Clear scope-id (set to undefined)
+          nextMission = m;          // schema doesn't have scope-id field currently; W4.2+ will add
+        }
+        break;
+      case 'set-tag': {
+        const tags = { ...(m.tags ?? {}), [mutation.key]: mutation.value };
+        nextMission = { ...m, tags };
+        break;
+      }
+      case 'remove-tag': {
+        const tags = { ...(m.tags ?? {}) };
+        delete tags[mutation.key];
+        nextMission = { ...m, tags };
+        break;
+      }
+      case 'add-participant': {
+        const existing = m.participants ?? [];
+        if (existing.some((p) => p.principal === mutation.principal)) {
+          throw new MissionStateError(`add-participant rejected: principal '${mutation.principal}' already participant`);
+        }
+        nextMission = {
+          ...m,
+          participants: [
+            ...existing,
+            { principal: mutation.principal, role: mutation.role, addedAt: new Date() },
+          ],
+        };
+        break;
+      }
+      case 'remove-participant': {
+        const existing = m.participants ?? [];
+        if (!existing.some((p) => p.principal === mutation.principal)) {
+          throw new MissionStateError(`remove-participant rejected: principal '${mutation.principal}' not found`);
+        }
+        nextMission = {
+          ...m,
+          participants: existing.filter((p) => p.principal !== mutation.principal),
+        };
+        break;
+      }
+      case 'set-coordination-remote':
+        nextMission = { ...m, coordinationRemote: mutation.remote };
+        break;
+      default: {
+        const _exhaustive: never = mutation;
+        void _exhaustive;
+        throw new ConfigValidationError(`internal: unhandled mutation kind`);
+      }
+    }
+
+    return { ...config, mission: nextMission, repos: nextRepos };
+  }
+
+  /** Atomic-write updated mission-config (write-temp + rename per MEDIUM-11). */
+  private async writeMissionConfigAtomic(id: string, config: MissionConfig): Promise<void> {
+    const path = this.missionConfigPath(id);
+    const tmp = `${path}.${process.pid}.tmp`;
+    await writeFile(tmp, serializeMissionConfig(config), 'utf8');
+    const { rename } = await import('node:fs/promises');
+    await rename(tmp, path);
   }
 }
 

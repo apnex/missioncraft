@@ -62,3 +62,17 @@ export type {
   ScopeConfig,
   ScopeMutation,
 } from './core/scope-types.js';
+
+// ─── Runtime zod schemas (v1.3 fold per MEDIUM-R3.1; adapter + 3rd-party consumers need .parse() at integration boundary) ───
+export {
+  RepoSpecSchema,
+  MissionParticipantSchema,
+  MissionStatePhaseSchema,
+  MissionConfigSchema,           // default writer-role; v3.6-baseline-compatible
+  makeMissionConfigSchema,       // v4.5 factory per MEDIUM-R6.4 — role-based state-validation
+} from './core/mission-config-schema.js';
+export { ScopeConfigSchema } from './core/scope-config-schema.js';
+export { OperatorConfigSchema } from './core/operator-config-schema.js';
+
+// ─── Engine-side helpers ───
+export { deriveOwningPrincipalRole } from './core/role-derivation.js';

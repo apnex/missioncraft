@@ -122,6 +122,64 @@ export async function terminateDaemon(
   return 'killed';
 }
 
+/**
+ * Immediate dead-pid detection 7-step ordered checks (Design v4.9 §2.6.5 MEDIUM-R6.1 + HIGH-6 fold).
+ *
+ * Per Design: every operator-CLI invocation against `started`/`in-progress` mission performs
+ * 7-step ordered checks; auto-cleans daemon-IPC fields if stale.
+ *
+ * 7-step checks:
+ *   1. Read lockfile.pid (if absent → no daemon expected; return 'no-daemon')
+ *   2. process.kill(pid, 0) → if dead → STALE
+ *   3. ps -p <pid> -o etimes= → cross-check startTime; mismatch → STALE (pid-reuse hazard)
+ *   4. daemonExpiresAt expired → STALE (daemon stopped heartbeating)
+ *   5. If abandon-in-flight (Steps 5-8) → daemon-respawn SKIPPED per v3.6 MEDIUM-R6.1
+ *   6. If STALE: clearDaemonIpcFields (best-effort cleanup)
+ *   7. Return diagnostic
+ *
+ * Returns:
+ *   - 'no-daemon': lockfile absent OR pid absent
+ *   - 'alive': all checks pass; daemon healthy
+ *   - 'stale-cleaned': dead/pid-reuse/expired detected; lockfile-IPC cleared
+ *   - 'abandon-skip': mission in abandon-flow Steps 5-8; daemon-respawn deliberately skipped
+ */
+export async function detectDeadPid(
+  lockfilePath: string,
+  abandonProgress?: string,
+): Promise<'no-daemon' | 'alive' | 'stale-cleaned' | 'abandon-skip'> {
+  // Step 1: read lockfile.pid
+  if (!existsSync(lockfilePath)) return 'no-daemon';
+  const state = await readLockfileState(lockfilePath);
+  if (!state?.pid || !state.startTime) return 'no-daemon';
+
+  // Step 5 early-exit: abandon-flow in-flight (Steps 5-8); daemon-respawn skipped per v3.6 MEDIUM-R6.1
+  // Caller passes mission-config.abandonProgress; non-undefined means abandon-flow is post-Step-4 +
+  // pre-terminal (Steps 5-7) — daemon should NOT be respawned because cleanup is in progress.
+  if (abandonProgress !== undefined && abandonProgress !== 'workspace-handled' && abandonProgress !== 'config-purged') {
+    return 'abandon-skip';
+  }
+
+  // Step 2: process.kill(pid, 0)
+  if (!isAlive(state.pid)) {
+    await clearDaemonIpcFields(lockfilePath);
+    return 'stale-cleaned';
+  }
+
+  // Step 3: pid-reuse mitigation via ps etimes
+  if (!(await verifyPidStartTime(state.pid, state.startTime))) {
+    await clearDaemonIpcFields(lockfilePath);
+    return 'stale-cleaned';
+  }
+
+  // Step 4: daemonExpiresAt expired (heartbeat stopped)
+  if (state.daemonExpiresAt && state.daemonExpiresAt < Date.now()) {
+    await clearDaemonIpcFields(lockfilePath);
+    return 'stale-cleaned';
+  }
+
+  return 'alive';
+}
+
 /** Clear daemon-IPC fields from lockfile (parent-CLI cleanup post-terminateDaemon). */
 export async function clearDaemonIpcFields(lockfilePath: string): Promise<void> {
   if (!existsSync(lockfilePath)) return;

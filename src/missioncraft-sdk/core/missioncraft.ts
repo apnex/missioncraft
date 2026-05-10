@@ -277,6 +277,16 @@ export class Missioncraft {
     const missionLock = await this.storage.acquireMissionLock(missionId, { waitMs: 0 });
     const repoLocks: LockHandle[] = [];
     const workspaceHandles: WorkspaceHandle[] = [];
+    // SD3 fix (v1.0.2): the mission-lockfile dual-purposes as both a start() mutex AND the
+    // daemon-watcher IPC channel (Design v4.9 §2.6.5; per watcher-entry.ts comment "Lockfile-
+    // cleanup is PARENT-CLI responsibility (parent invokes SIGTERM as part of complete-flow
+    // Step 4 / abandon-flow Step 2; same parent-CLI then ... releases lock entirely via
+    // storage.releaseLock)"). Once the daemon spawns successfully at Step 6, the lockfile must
+    // persist with daemon-IPC fields (pid/startTime/daemonExpiresAt) until complete()/abandon()
+    // cleans it up. start() Step 8 unconditionally releasing the mission-lock destroyed the
+    // daemon-IPC state, causing locks/missions/<id>.lock to be empty during mission-active
+    // (SD3) + downstream `msn abandon` SIGTERM-no-op orphaning the daemon (SD2).
+    let daemonSpawned = false;
     try {
       for (const repo of initialConfig.repos) {
         const repoLock = await this.storage.acquireRepoLock(repo.url, missionId, { waitMs: 0 });
@@ -318,6 +328,7 @@ export class Missioncraft {
           workspaceRoot: this.workspaceRoot,
           lockfilePath: this.missionLockfilePath(missionId),
         });
+        daemonSpawned = true;
       } catch (spawnErr: unknown) {
         // Spawn-failure rollback: revert lifecycle to 'configured' (best-effort)
         try {
@@ -344,11 +355,16 @@ export class Missioncraft {
       // Daemon's first tick fires the advance via _engineMutate allowed-states ['started'].
       // start() returns at 'started'; the in-progress advance happens asynchronously post-return.
     } finally {
-      // Step 8: release locks (idempotent on already-released)
+      // Step 8: release locks (idempotent on already-released).
+      // Repo-locks always release (mutex-only; no daemon-IPC needs).
+      // Mission-lock releases ONLY when daemon DIDN'T spawn — on success it persists as
+      // daemon-IPC channel; complete()/abandon() releases it after SIGTERM-cleanup.
       for (const lock of repoLocks) {
         try { await this.storage.releaseLock(lock); } catch { /* idempotent */ }
       }
-      try { await this.storage.releaseLock(missionLock); } catch { /* idempotent */ }
+      if (!daemonSpawned) {
+        try { await this.storage.releaseLock(missionLock); } catch { /* idempotent */ }
+      }
     }
 
     const handle: MissionHandle =

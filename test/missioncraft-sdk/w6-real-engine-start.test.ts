@@ -92,4 +92,32 @@ describe('W6 slice (i) — real-engine start() happy-path (W4.4-deferred carry-o
     const handle = await mc.create('mission');                   // no repo → 'created' state
     await expect(mc.start(handle.id)).rejects.toThrow(/requires lifecycle 'configured'/);
   });
+
+  // SD3 regression (v1.0.2): mission-lockfile must PERSIST after start() with daemon-IPC fields
+  // (pid/startTime/daemonExpiresAt) populated. Pre-fix, start() Step 8 unconditionally released
+  // the missionLock — unlinking the lockfile + losing daemon-IPC state. Per Design v4.9 §2.6.5,
+  // the lockfile is dual-purposed: start()-mutex AND daemon-watcher IPC channel; lifecycle =
+  // mission-active duration, cleaned by complete()/abandon().
+  it('SD3 regression — mission-lockfile persists post-start() with daemon-IPC fields populated', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const handle = await mc.create('mission', { repo: bareRepoUrl });
+
+    await mc.start(handle.id);
+
+    // Lockfile must exist at locks/missions/<id>.lock
+    const lockfilePath = join(tempRoot, 'locks', 'missions', `${handle.id}.lock`);
+    expect(existsSync(lockfilePath)).toBe(true);
+
+    // Lockfile content must include daemon-IPC fields written by spawnDaemonWatcher
+    const lockfileContent = JSON.parse(await readFile(lockfilePath, 'utf8'));
+    expect(lockfileContent.missionId).toBe(handle.id);
+    expect(typeof lockfileContent.pid).toBe('number');
+    expect(lockfileContent.pid).toBeGreaterThan(0);
+    expect(typeof lockfileContent.startTime).toBe('number');
+    expect(lockfileContent.startTime).toBeGreaterThan(0);
+    expect(typeof lockfileContent.daemonExpiresAt).toBe('number');
+
+    // Cleanup: kill daemon to prevent test-leak (afterEach rm'd tempRoot would orphan otherwise)
+    try { process.kill(lockfileContent.pid, 'SIGKILL'); } catch { /* daemon may already be gone */ }
+  }, 30_000);
 });

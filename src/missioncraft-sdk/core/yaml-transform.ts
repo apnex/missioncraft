@@ -117,7 +117,13 @@ export function camelToKebabObject(value: unknown): unknown {
  *
  * Throws ConfigValidationError on parse-fail OR schema-validation-fail (with original zod issues as cause).
  */
-export function parseMissionConfig(yamlString: string, configFilePath?: string): MissionConfig {
+const READER_LIFECYCLE_STATES = new Set(['joined', 'reading', 'readonly-completed', 'leaving']);
+
+export function parseMissionConfig(
+  yamlString: string,
+  configFilePath?: string,
+  roleOverride?: 'writer' | 'reader' | 'auto',
+): MissionConfig {
   let raw: unknown;
   try {
     raw = yamlParse(yamlString);
@@ -128,9 +134,23 @@ export function parseMissionConfig(yamlString: string, configFilePath?: string):
     );
   }
   const camelCased = kebabToCamelObject(raw);
-  const schema = configFilePath !== undefined
-    ? makeMissionConfigSchema(deriveOwningPrincipalRole(configFilePath))
-    : MissionConfigSchema;
+
+  // 'auto' role: peek at lifecycleState to dispatch role-aware schema; used at cross-partition
+  // transition moments (e.g. join Step 3.5 where pre-state is 'configured' (writer) but idempotent
+  // retry pre-state is 'joined' (reader)).
+  let resolvedRole: 'writer' | 'reader' | undefined;
+  if (roleOverride === 'auto') {
+    const observed = (camelCased as { mission?: { lifecycleState?: string } })?.mission?.lifecycleState;
+    resolvedRole = observed && READER_LIFECYCLE_STATES.has(observed) ? 'reader' : 'writer';
+  } else if (roleOverride !== undefined) {
+    resolvedRole = roleOverride;
+  }
+
+  const schema = resolvedRole !== undefined
+    ? makeMissionConfigSchema(resolvedRole)
+    : configFilePath !== undefined
+      ? makeMissionConfigSchema(deriveOwningPrincipalRole(configFilePath))
+      : MissionConfigSchema;
   try {
     return schema.parse(camelCased) as MissionConfig;
   } catch (err) {

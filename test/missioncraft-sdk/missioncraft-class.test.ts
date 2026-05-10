@@ -262,12 +262,33 @@ describe('Missioncraft SDK class — W3 smoke-tests', () => {
       });
     });
 
-    it('join() requires coordRemote (W5 slice ii MVP)', async () => {
+    it('join() requires coordRemote (input-validation gate)', async () => {
       const mc = new Missioncraft({ workspaceRoot: tempRoot });
       await expect(mc.join('msn-test1234', '')).rejects.toBeInstanceOf(ConfigValidationError);
-      // W5 slice ii MVP: validates inputs + resolves principal; clone-flow defers to slice iii+iv (HTTP-server fixture)
+    });
+
+    it('join() requires id (input-validation gate)', async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      await expect(mc.join('', 'file:///tmp/coord.git')).rejects.toBeInstanceOf(ConfigValidationError);
+    });
+
+    it('join() rejects on missing pre-existing local config (W5b substrate-bypass requirement)', async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      // W5b: pre-existing local config required (HTTP-server clone-fixture defers to W5c per (α))
       await expect(mc.join('msn-test1234', 'file:///tmp/coord.git')).rejects.toMatchObject({
-        message: expect.stringMatching(/HTTP-server fixture|slice \(iii\)/),
+        message: expect.stringMatching(/mission 'msn-test1234' not found|HTTP-server clone-fixture/),
+      });
+    });
+
+    it('leave() requires id (input-validation gate)', async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      await expect(mc.leave('')).rejects.toBeInstanceOf(ConfigValidationError);
+    });
+
+    it('leave() rejects non-existent mission with MissionStateError', async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      await expect(mc.leave('msn-deadbeef')).rejects.toMatchObject({
+        message: expect.stringMatching(/mission 'msn-deadbeef' not found/),
       });
     });
   });

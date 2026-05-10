@@ -915,29 +915,35 @@ export class Missioncraft {
     }
   }
 
-  // ─── Multi-participant verbs (W5-deferred) ───
+  // ─── Multi-participant verbs (W5b slice (i) — runtime impl) ───
 
   /**
    * 7-step `joined → reading` transition (Design v4.9 §2.4.1.v4 reader-side state-machine;
    * v4.4 MEDIUM-R1.8 + v4.5 MEDIUM-R6.3 + v4.6 MINOR-R7.1 idempotent-retry).
    *
-   * W5 slice (ii) MVP: validates inputs + resolves principal + canonicalizes coord-remote.
-   * Full clone-flow (Steps 4-7) requires HTTP-server fixture per (α) disposition; lands in slice (iii)+(iv).
+   * W5b slice (i): full runtime LESS Step 5 substrate-bypass clone (HTTP-server fixture defers
+   * to W5c per (α); carries forward W4.3 slice (iv) discipline). Reader's local mission-config is
+   * assumed pre-existing at `<workspaceRoot>/config/<id>.yaml` (in production, populated by clone
+   * Step 5; in W5b tests, seeded by fixture mirroring W4.3 slice (iv) pattern).
    *
-   * Steps (per spec):
-   *   1. Validate coordRemote URL (canonicalize)
-   *   2. Resolve current principal via 4-step precedence
+   * Steps:
+   *   1. Validate + canonicalize coordRemote URL
+   *   2. Resolve current-principal per 4-step precedence
    *   3. Acquire per-principal mission-lock
-   *   3.5. Atomic-write 'joined' state via _engineMutate (per v4.5 MEDIUM-R6.3 transient marker for idempotent-retry)
-   *   4. Allocate per-principal workspace
-   *   5. gitEngine.clone from coord-remote (HTTP-only; W5 slice iii+iv with HTTP-server fixture)
-   *   6. setReaderWorkspaceMode chmod-down per W2 helper
-   *   7. Atomic-write lifecycle 'reading'
+   *   3.5. Atomic-write 'joined' state via _engineMutate (idempotent-retry per v4.6 MINOR-R7.1)
+   *   4. Allocate per-principal workspace per repo
+   *   5. gitEngine.clone from coord-remote — SUBSTRATE-BYPASS at W5b (W5c HTTP-server fixture)
+   *   6. setReaderWorkspaceMode chmod-down per allocated workspace (W2 helper)
+   *   7. Atomic-write lifecycle 'reading' via _engineMutate
    */
   async join(id: string, coordRemote: string, principal?: string): Promise<MissionState> {
     if (!coordRemote) {
       throw new ConfigValidationError("Missioncraft.join: coordRemote is required (reader-side bootstrap surface)");
     }
+    if (!id) {
+      throw new ConfigValidationError("Missioncraft.join: mission-id is required");
+    }
+
     // Step 1: canonicalize coordRemote URL
     const { canonicalizeCoordinationRemote } = await import('./role-derivation.js');
     const canonicalRemote = canonicalizeCoordinationRemote(coordRemote);
@@ -950,18 +956,85 @@ export class Missioncraft {
       identity: this.identity,
     });
 
-    void id; void canonicalRemote; void currentPrincipal;
-    throw new MissionStateError(
-      `Missioncraft.join('${id}', '${canonicalRemote}', '${currentPrincipal}'): Steps 4-7 (workspace + clone + chmod + lifecycle 'reading') ` +
-        `require HTTP-server fixture for real-engine clone path; W5 slice (iii)+(iv) implementation`,
-    );
+    // Step 3: acquire per-principal mission-lock
+    const path = this.missionConfigPath(id);
+    if (!existsSync(path)) {
+      throw new MissionStateError(
+        `Missioncraft.join: mission '${id}' not found at '${path}' ` +
+          `(W5b: pre-existing local config required; HTTP-server clone-fixture defers to W5c per (α))`,
+      );
+    }
+    const missionLock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
+    try {
+      // Step 3.5: atomic-write 'joined' via _engineMutate
+      // Pre-state: 'configured' (writer-state pre-engagement) OR 'joined' (idempotent retry per v4.6 MINOR-R7.1).
+      // Use role='auto' since pre-state can span the writer/reader partition boundary.
+      await this._engineMutate(
+        id,
+        (config) => ({ ...config, mission: { ...config.mission, lifecycleState: 'joined' } }),
+        {
+          validate: (config) => {
+            const s = config.mission.lifecycleState;
+            if (s === 'joined') return null;        // idempotent-retry per v4.6 MINOR-R7.1
+            if (s === 'configured') return null;    // expected pre-state per architect spec
+            return `join Step 3.5 rejected: lifecycle '${s}' not in [configured, joined] ` +
+              `(per Design v4.9 §2.4.1.v4 reader-side state-machine)`;
+          },
+          sourceLabel: `Missioncraft.join.step3.5('${id}')`,
+          role: 'auto',
+        },
+      );
+
+      // Step 4: allocate per-principal workspace per repo (re-read config with reader-role)
+      const content = await readFile(path, 'utf8');
+      const config = parseMissionConfig(content, path, 'reader');
+      const workspaceHandles: WorkspaceHandle[] = [];
+      for (const repo of config.repos) {
+        const ws = await this.storage.allocate(id, repo.url);
+        workspaceHandles.push(ws);
+      }
+
+      // Step 5: SUBSTRATE-BYPASS clone-step (W5b only; HTTP-server fixture at W5c per (α))
+      // Real-engine clone via this.gitEngine.clone(workspace, canonicalRemote, ...) lands at W5c.
+      void canonicalRemote;
+
+      // Step 6: chmod-down each allocated workspace per W2 helper (POSIX 0444/0555 strict-enforce)
+      const { setReaderWorkspaceMode } = await import('./reader-workspace-mode.js');
+      for (const ws of workspaceHandles) {
+        await setReaderWorkspaceMode(ws.path);
+      }
+
+      // Step 7: atomic-write 'reading' via _engineMutate (validate current === 'joined')
+      const finalConfig = await this._engineMutate(
+        id,
+        (cfg) => ({ ...cfg, mission: { ...cfg.mission, lifecycleState: 'reading' } }),
+        {
+          validate: (cfg) =>
+            cfg.mission.lifecycleState === 'joined'
+              ? null
+              : `join Step 7 rejected: lifecycle '${cfg.mission.lifecycleState}' (expected 'joined')`,
+          sourceLabel: `Missioncraft.join.step7('${id}')`,
+          role: 'reader',
+        },
+      );
+
+      return this.missionConfigToState(finalConfig, currentPrincipal);
+    } finally {
+      try { await this.storage.releaseLock(missionLock); } catch { /* idempotent */ }
+    }
   }
 
   /**
-   * Reader-side disengagement (Design v4.9 §2.4.1.v4).
+   * Reader-side disengagement (Design v4.9 §2.4.1.v4 leave-flow; lifecycle 'reading' → 'leaving').
    *
-   * W5 slice (ii) MVP: validates inputs + resolves principal. Full leave-flow (workspace cleanup +
-   * lifecycle 'leaving' → terminal-removed) lands in slice (iii)+(iv).
+   * W5b slice (i): atomic 'leaving' transition + optional workspace cleanup + config-purge on
+   * `--purge-workspace` (terminal-removed semantic per FSM `leave-complete`).
+   *
+   * Steps:
+   *   1. Validate inputs; resolve current-principal
+   *   2. Acquire mission-lock
+   *   3. Atomic-write 'leaving' via _engineMutate (idempotent on already 'leaving')
+   *   4. (--purge-workspace) chmod-up via setReaderWorkspaceWritable + storage.cleanup + unlink config
    */
   async leave(id: string, opts?: { purgeWorkspace?: boolean }): Promise<void> {
     if (!id) {
@@ -972,11 +1045,58 @@ export class Missioncraft {
       constructorPrincipal: this.principal,
       identity: this.identity,
     });
-    void opts; void currentPrincipal;
-    throw new MissionStateError(
-      `Missioncraft.leave('${id}'): reader-side disengagement (lifecycle 'leaving' → terminal-removed) requires ` +
-        `slice (iii)+(iv) reader-daemon Loop B integration; W5 work-in-progress`,
-    );
+    void currentPrincipal;
+
+    const path = this.missionConfigPath(id);
+    if (!existsSync(path)) {
+      throw new MissionStateError(`Missioncraft.leave: mission '${id}' not found at '${path}'`);
+    }
+
+    // Pre-flight read with role='auto' so writer-state mission produces the read-only-participant
+    // rejection message rather than a parse-validation-fail (HIGH-R2.3 boundary preserved).
+    const preflightContent = await readFile(path, 'utf8');
+    const preflightConfig = parseMissionConfig(preflightContent, path, 'auto');
+    const preflightState = preflightConfig.mission.lifecycleState;
+    if (preflightState !== 'reading' && preflightState !== 'joined' && preflightState !== 'leaving') {
+      throw new MissionStateError(
+        `Missioncraft.leave: lifecycle '${preflightState}' not in [reading, joined, leaving] ` +
+          `(read-only participant per HIGH-R2.3)`,
+      );
+    }
+
+    const missionLock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
+    try {
+      // Step 3: atomic-write 'leaving' (per FSM 'reading' → 'leaving' via leave-begin event)
+      await this._engineMutate(
+        id,
+        (cfg) => ({ ...cfg, mission: { ...cfg.mission, lifecycleState: 'leaving' } }),
+        {
+          validate: (cfg) => {
+            const s = cfg.mission.lifecycleState;
+            if (s === 'leaving') return null;     // idempotent-retry
+            if (s === 'reading') return null;
+            if (s === 'joined') return null;      // recovery-path: leave from transient 'joined' allowed
+            return `leave rejected: lifecycle '${s}' not in [reading, joined, leaving] ` +
+              `(read-only participant per HIGH-R2.3)`;
+          },
+          sourceLabel: `Missioncraft.leave('${id}')`,
+          role: 'reader',
+        },
+      );
+
+      // Step 4: --purge-workspace cleanup (terminal-removed per FSM leave-complete)
+      if (opts?.purgeWorkspace) {
+        const { setReaderWorkspaceWritable } = await import('./reader-workspace-mode.js');
+        const handles = await this.storage.list(id);
+        for (const h of handles) {
+          try { await setReaderWorkspaceWritable(h.path); } catch { /* best-effort */ }
+        }
+        await this.storage.cleanup(id);
+        try { await unlink(path); } catch { /* idempotent */ }
+      }
+    } finally {
+      try { await this.storage.releaseLock(missionLock); } catch { /* idempotent */ }
+    }
   }
 
   // ─── Operator-config (key-value namespace) ───
@@ -1333,6 +1453,7 @@ export class Missioncraft {
     options: {
       validate: (config: MissionConfig) => string | null;
       sourceLabel: string;
+      role?: 'writer' | 'reader' | 'auto';
     },
   ): Promise<MissionConfig> {
     const path = this.missionConfigPath(missionId);
@@ -1340,7 +1461,7 @@ export class Missioncraft {
       throw new MissionStateError(`mission not found: '${missionId}' (no config at ${path})`);
     }
     const content = await readFile(path, 'utf8');
-    const config = parseMissionConfig(content, path);
+    const config = parseMissionConfig(content, path, options.role);
 
     const rejection = options.validate(config);
     if (rejection !== null) {

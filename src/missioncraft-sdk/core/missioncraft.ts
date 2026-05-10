@@ -888,6 +888,33 @@ export class Missioncraft {
     throw new MissionStateError('Missioncraft.workspace: workspace-path-resolution not yet implemented (W4)');
   }
 
+  /**
+   * Daemon-tick lifecycle advance: `'started' → 'in-progress'` (Design v4.9 §2.4.1 line 1505).
+   *
+   * Invoked by daemon-watcher's first-tick to fire the daemon-driven advance per state-machine
+   * table ("operator does work" = daemon-tick = THIS code-path). Routes through `_engineMutate`
+   * to preserve validate→apply→atomic-write abstraction discipline.
+   *
+   * Idempotent: returns silently if lifecycle is not 'started' (already advanced OR not yet there).
+   */
+  async daemonTickAdvance(missionId: string): Promise<void> {
+    try {
+      await this._engineMutate(
+        missionId,
+        (config) => ({ ...config, mission: { ...config.mission, lifecycleState: 'in-progress' } }),
+        {
+          validate: (config) =>
+            config.mission.lifecycleState === 'started'
+              ? null
+              : `daemon-tick advance skipped: lifecycle '${config.mission.lifecycleState}' (only 'started' triggers advance)`,
+          sourceLabel: `Missioncraft.daemonTickAdvance('${missionId}')`,
+        },
+      );
+    } catch {
+      // Idempotent best-effort: skip on validation-failure (already advanced OR not at 'started')
+    }
+  }
+
   // ─── Multi-participant verbs (W5-deferred) ───
 
   async join(id: string, coordRemote: string, _principal?: string): Promise<MissionState> {

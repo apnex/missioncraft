@@ -262,11 +262,12 @@ describe('Missioncraft SDK class — W3 smoke-tests', () => {
       });
     });
 
-    it('join() requires coordRemote + throws W5', async () => {
+    it('join() requires coordRemote (W5 slice ii MVP)', async () => {
       const mc = new Missioncraft({ workspaceRoot: tempRoot });
       await expect(mc.join('msn-test1234', '')).rejects.toBeInstanceOf(ConfigValidationError);
+      // W5 slice ii MVP: validates inputs + resolves principal; clone-flow defers to slice iii+iv (HTTP-server fixture)
       await expect(mc.join('msn-test1234', 'file:///tmp/coord.git')).rejects.toMatchObject({
-        message: expect.stringMatching(/not yet implemented \(W5\)/),
+        message: expect.stringMatching(/HTTP-server fixture|slice \(iii\)/),
       });
     });
   });

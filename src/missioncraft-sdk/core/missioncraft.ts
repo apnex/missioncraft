@@ -917,14 +917,66 @@ export class Missioncraft {
 
   // ─── Multi-participant verbs (W5-deferred) ───
 
-  async join(id: string, coordRemote: string, _principal?: string): Promise<MissionState> {
-    if (!coordRemote) throw new ConfigValidationError("Missioncraft.join: coordRemote is required (reader-side bootstrap surface)");
-    void id;
-    throw new MissionStateError('Missioncraft.join: 7-step joined→reading transition not yet implemented (W5)');
+  /**
+   * 7-step `joined → reading` transition (Design v4.9 §2.4.1.v4 reader-side state-machine;
+   * v4.4 MEDIUM-R1.8 + v4.5 MEDIUM-R6.3 + v4.6 MINOR-R7.1 idempotent-retry).
+   *
+   * W5 slice (ii) MVP: validates inputs + resolves principal + canonicalizes coord-remote.
+   * Full clone-flow (Steps 4-7) requires HTTP-server fixture per (α) disposition; lands in slice (iii)+(iv).
+   *
+   * Steps (per spec):
+   *   1. Validate coordRemote URL (canonicalize)
+   *   2. Resolve current principal via 4-step precedence
+   *   3. Acquire per-principal mission-lock
+   *   3.5. Atomic-write 'joined' state via _engineMutate (per v4.5 MEDIUM-R6.3 transient marker for idempotent-retry)
+   *   4. Allocate per-principal workspace
+   *   5. gitEngine.clone from coord-remote (HTTP-only; W5 slice iii+iv with HTTP-server fixture)
+   *   6. setReaderWorkspaceMode chmod-down per W2 helper
+   *   7. Atomic-write lifecycle 'reading'
+   */
+  async join(id: string, coordRemote: string, principal?: string): Promise<MissionState> {
+    if (!coordRemote) {
+      throw new ConfigValidationError("Missioncraft.join: coordRemote is required (reader-side bootstrap surface)");
+    }
+    // Step 1: canonicalize coordRemote URL
+    const { canonicalizeCoordinationRemote } = await import('./role-derivation.js');
+    const canonicalRemote = canonicalizeCoordinationRemote(coordRemote);
+
+    // Step 2: resolve current-principal per 4-step precedence
+    const { resolveCurrentPrincipal } = await import('./principal-resolution.js');
+    const currentPrincipal = await resolveCurrentPrincipal({
+      explicitPrincipal: principal,
+      constructorPrincipal: this.principal,
+      identity: this.identity,
+    });
+
+    void id; void canonicalRemote; void currentPrincipal;
+    throw new MissionStateError(
+      `Missioncraft.join('${id}', '${canonicalRemote}', '${currentPrincipal}'): Steps 4-7 (workspace + clone + chmod + lifecycle 'reading') ` +
+        `require HTTP-server fixture for real-engine clone path; W5 slice (iii)+(iv) implementation`,
+    );
   }
 
-  async leave(_id: string, _opts?: { purgeWorkspace?: boolean }): Promise<void> {
-    throw new MissionStateError('Missioncraft.leave: reader-side disengagement not yet implemented (W5)');
+  /**
+   * Reader-side disengagement (Design v4.9 §2.4.1.v4).
+   *
+   * W5 slice (ii) MVP: validates inputs + resolves principal. Full leave-flow (workspace cleanup +
+   * lifecycle 'leaving' → terminal-removed) lands in slice (iii)+(iv).
+   */
+  async leave(id: string, opts?: { purgeWorkspace?: boolean }): Promise<void> {
+    if (!id) {
+      throw new ConfigValidationError("Missioncraft.leave: mission-id is required");
+    }
+    const { resolveCurrentPrincipal } = await import('./principal-resolution.js');
+    const currentPrincipal = await resolveCurrentPrincipal({
+      constructorPrincipal: this.principal,
+      identity: this.identity,
+    });
+    void opts; void currentPrincipal;
+    throw new MissionStateError(
+      `Missioncraft.leave('${id}'): reader-side disengagement (lifecycle 'leaving' → terminal-removed) requires ` +
+        `slice (iii)+(iv) reader-daemon Loop B integration; W5 work-in-progress`,
+    );
   }
 
   // ─── Operator-config (key-value namespace) ───

@@ -177,12 +177,27 @@ describe('Missioncraft SDK class — W3 smoke-tests', () => {
     });
   });
 
-  describe('Runtime ops — W4/W5 deferred', () => {
-    it('start() throws "not yet implemented (W4)"', async () => {
+  describe('Runtime ops — W4.3 start() FSM-transition validation', () => {
+    it('start() rejects non-existent mission with MissionStateError', async () => {
       const mc = new Missioncraft({ workspaceRoot: tempRoot });
-      await expect(mc.start('msn-test1234')).rejects.toMatchObject({
-        message: expect.stringMatching(/not yet implemented \(W4\)/),
+      await expect(mc.start('msn-deadbeef')).rejects.toMatchObject({
+        message: expect.stringMatching(/mission 'msn-deadbeef' not found/),
       });
+    });
+
+    it("start() rejects 'created' lifecycle (must be 'configured')", async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      const handle = await mc.create('mission');
+      await expect(mc.start(handle.id)).rejects.toMatchObject({
+        message: expect.stringMatching(/requires lifecycle 'configured' \(current: 'created'\)/),
+      });
+    });
+
+    it('start() rejects config-input form (W4.3-only string-id supported)', async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      await expect(
+        mc.start({ config: { missionConfigSchemaVersion: 1, mission: { id: 'msn-x', lifecycleState: 'configured', createdAt: new Date() }, repos: [] } }),
+      ).rejects.toBeInstanceOf(ConfigValidationError);
     });
 
     it('complete() requires message + throws W4', async () => {

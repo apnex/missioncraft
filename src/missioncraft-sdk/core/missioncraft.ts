@@ -29,8 +29,10 @@ import type {
   ApprovalPolicy,
   GitEngine,
   IdentityProvider,
+  LockHandle,
   RemoteProvider,
   StorageProvider,
+  WorkspaceHandle,
 } from '../pluggables/index.js';
 import type { MissioncraftConfig } from './types.js';
 import type {
@@ -218,10 +220,116 @@ export class Missioncraft {
     );
   }
 
-  // ─── Mission-specific verbs (W4-deferred for runtime ops) ───
+  // ─── Mission-specific verbs (W4.3 runtime-impl wiring) ───
 
-  async start(_input: string | { config: MissionConfig }): Promise<MissionHandle> {
-    throw new MissionStateError('Missioncraft.start: 9-step configured→started transition not yet implemented (W4)');
+  /**
+   * 9-step configured → started → in-progress transition (Design v4.9 §2.4.1).
+   *
+   * W4.3 LITE: implements full transition LESS daemon-spawn (Step 6 stub-point in W4.4 graft-set).
+   * Daemon-watcher process model + LockfileState IPC fields = W4.4 scope per per-sub-phase
+   * pattern; W4.3 keeps state-machine FSM logic independent of daemon process-model.
+   *
+   * Steps:
+   *   1. Validate pre-state (must be 'configured' with ≥1 repo)
+   *   2. Acquire mission-lock + per-repo locks (single-writer-per-mission per §2.4)
+   *   3. Allocate workspace per repo via storage.allocate
+   *   4. Clone repos via gitEngine.clone
+   *   5. Atomic-write lifecycle 'configured' → 'started' (transient) via _engineMutate
+   *   6. Daemon-spawn (W4.4 graft-set; see sentinel-comment at the Step 6 position below)
+   *   7. Atomic-write lifecycle 'started' → 'in-progress' via _engineMutate
+   *   8. Release locks
+   */
+  async start(input: string | { config: MissionConfig }): Promise<MissionHandle> {
+    if (typeof input !== 'string') {
+      throw new ConfigValidationError(
+        'Missioncraft.start: config-input form (apply()-equivalent) not yet implemented; pass mission-id string for W4.3',
+      );
+    }
+    const missionId = input;
+
+    // Step 1: validate pre-state via direct config-read (locks not yet acquired)
+    const path = this.missionConfigPath(missionId);
+    if (!existsSync(path)) {
+      throw new MissionStateError(`Missioncraft.start: mission '${missionId}' not found`);
+    }
+    const initialContent = await readFile(path, 'utf8');
+    const initialConfig = parseMissionConfig(initialContent, path);
+    if (initialConfig.mission.lifecycleState !== 'configured') {
+      throw new MissionStateError(
+        `Missioncraft.start: requires lifecycle 'configured' (current: '${initialConfig.mission.lifecycleState}')`,
+      );
+    }
+    if (initialConfig.repos.length === 0) {
+      throw new MissionStateError(
+        `Missioncraft.start: requires at least 1 repo (lifecycle 'configured' but repos[] empty — invariant violation)`,
+      );
+    }
+
+    // Step 2: acquire mission-lock + per-repo locks
+    const missionLock = await this.storage.acquireMissionLock(missionId, { waitMs: 0 });
+    const repoLocks: LockHandle[] = [];
+    const workspaceHandles: WorkspaceHandle[] = [];
+    try {
+      for (const repo of initialConfig.repos) {
+        const repoLock = await this.storage.acquireRepoLock(repo.url, missionId, { waitMs: 0 });
+        repoLocks.push(repoLock);
+      }
+
+      // Step 3: allocate workspaces + Step 4: clone repos
+      const identity = await this.identity.resolve();
+      for (const repo of initialConfig.repos) {
+        const workspace = await this.storage.allocate(missionId, repo.url);
+        workspaceHandles.push(workspace);
+        await this.gitEngine.clone(workspace, repo.url, {
+          fs: undefined,
+          identity,
+          ...(this.remote !== undefined && { remote: this.remote }),
+        });
+      }
+
+      // Step 5: atomic-write lifecycle 'configured' → 'started' (transient state per v3.2 MEDIUM-R2.4)
+      await this._engineMutate(
+        missionId,
+        (config) => ({ ...config, mission: { ...config.mission, lifecycleState: 'started' } }),
+        {
+          validate: (config) =>
+            config.mission.lifecycleState === 'configured'
+              ? null
+              : `transition rejected: expected 'configured' got '${config.mission.lifecycleState}'`,
+          sourceLabel: `Missioncraft.start.step5-begin('${missionId}')`,
+        },
+      );
+
+      // W4.4-GRAFT: daemon-spawn at Step 6 (BEFORE state-yaml-persist Step 7 per v3.2 MEDIUM-R2.4 reorder).
+      // No-op at W4.3 per stub-then-graft discipline; W4.4 will spawn detached daemon-watcher here:
+      //   const daemonPid = await spawnDaemonWatcher(missionId, workspaceHandles, this.principal);
+      //   lockfile.pid = daemonPid; lockfile.startTime = Date.now(); etc. per LockfileState IPC fields.
+
+      // Step 7: atomic-write lifecycle 'started' → 'in-progress' (post-daemon-spawn per ordering invariant)
+      await this._engineMutate(
+        missionId,
+        (config) => ({ ...config, mission: { ...config.mission, lifecycleState: 'in-progress' } }),
+        {
+          validate: (config) =>
+            config.mission.lifecycleState === 'started'
+              ? null
+              : `transition rejected: expected 'started' got '${config.mission.lifecycleState}'`,
+          sourceLabel: `Missioncraft.start.step7-complete('${missionId}')`,
+        },
+      );
+    } finally {
+      // Step 8: release locks (idempotent on already-released)
+      for (const lock of repoLocks) {
+        try { await this.storage.releaseLock(lock); } catch { /* idempotent */ }
+      }
+      try { await this.storage.releaseLock(missionLock); } catch { /* idempotent */ }
+    }
+
+    const handle: MissionHandle =
+      initialConfig.mission.name === undefined
+        ? { id: missionId }
+        : { id: missionId, name: initialConfig.mission.name };
+    return handle;
   }
 
   async apply(_config: MissionConfig): Promise<MissionState> {
@@ -556,38 +664,70 @@ export class Missioncraft {
   }
 
   /**
-   * Apply a MissionMutation to a mission's persisted config (W4.1 state-machine wire-through).
+   * Apply a MissionMutation to a mission's persisted config (W4.3 _engineMutate refactor).
    *
-   * Pipeline:
-   * 1. Read current mission-config from storage
-   * 2. Validate per-field state-restriction matrix per §2.4.1 (per HIGH-3 + v4.0 multi-participant per MEDIUM-R1.5)
-   * 3. Apply mutation to config (immutable update)
-   * 4. Auto-advance lifecycle-state via FSM (e.g., add-first-repo: created → configured)
-   * 5. Atomic-write updated config (write-temp + rename per MEDIUM-11)
-   * 6. Return updated MissionState
+   * W4.1 inlined load + validate + apply + atomic-write; W4.3 routes through _engineMutate
+   * primitive for symmetric rejection-error discipline with engine-internal flows
+   * (publish-flow, abandon-flow per Design v4.9 §2.4.1).
    *
-   * NOTE: full mission-lock acquisition + cross-mission concurrency control deferred to W4.3 daemon-watcher integration.
-   * W4.1 implements happy-path mutation-apply; concurrent CLI invocations may race (W4.3 acquires advisory lock per acquireMissionLock).
+   * Per-field state-restriction matrix (validateMutationAllowed) wraps as the validate
+   * callback; FSM auto-advance (add-first-repo / remove-last-repo) lives in apply callback.
    */
   private async applyMissionMutation(id: string, mutation: MissionMutation): Promise<MissionState> {
-    const path = this.missionConfigPath(id);
+    const updated = await this._engineMutate(
+      id,
+      (config) => this.applyMissionMutationToConfig(config, mutation),
+      {
+        validate: (config) => validateMutationAllowed(mutation, config.mission.lifecycleState),
+        sourceLabel: `Missioncraft.update('mission', '${id}')`,
+      },
+    );
+    return this.missionConfigToState(updated, this.principal);
+  }
+
+  /**
+   * `_engineMutate` — uniform internal-wire primitive for all mission-config mutations.
+   *
+   * W4.3 architect-spec per Design v4.9 §2.4.1 thread-519 round 1: extract single primitive
+   * that both `update<T>('mission', ...)` AND engine-flows (publish-flow, abandon-flow) call
+   * through; rejection-error symmetric across surfaces.
+   *
+   * Pipeline:
+   * 1. Load mission-config from storage (single read)
+   * 2. Run `validate(config)`; throw `MissionStateError` on non-null rejection
+   * 3. Run `applyFn(config)` to compute new config (pure transform)
+   * 4. Atomic-write new config (write-temp + rename per MEDIUM-11)
+   * 5. Return new config (caller projects to MissionState if needed)
+   *
+   * Operator-mutations supply matrix-derived validate; engine-internal mutations supply
+   * lifecycle-state-allowed-list validate. Both surfaces share atomic-write + error format.
+   *
+   * NOTE: mission-lock acquisition + cross-mission concurrency control still W4.3 follow-on
+   * (start() acquires; engine-internal flows in slices ii+iii will acquire via same pattern).
+   */
+  private async _engineMutate(
+    missionId: string,
+    applyFn: (config: MissionConfig) => MissionConfig,
+    options: {
+      validate: (config: MissionConfig) => string | null;
+      sourceLabel: string;
+    },
+  ): Promise<MissionConfig> {
+    const path = this.missionConfigPath(missionId);
     if (!existsSync(path)) {
-      throw new MissionStateError(`mission not found: '${id}' (no config at ${path})`);
+      throw new MissionStateError(`mission not found: '${missionId}' (no config at ${path})`);
     }
     const content = await readFile(path, 'utf8');
     const config = parseMissionConfig(content, path);
-    const currentState = config.mission.lifecycleState;
 
-    // §2.4.1 state-restriction matrix
-    const rejection = validateMutationAllowed(mutation, currentState);
+    const rejection = options.validate(config);
     if (rejection !== null) {
-      throw new MissionStateError(`Missioncraft.update('mission', '${id}'): ${rejection}`);
+      throw new MissionStateError(`${options.sourceLabel}: ${rejection}`);
     }
 
-    // Apply mutation; auto-advance lifecycle-state via FSM where applicable
-    const updated = this.applyMissionMutationToConfig(config, mutation);
-    await this.writeMissionConfigAtomic(id, updated);
-    return this.missionConfigToState(updated, this.principal);
+    const updated = applyFn(config);
+    await this.writeMissionConfigAtomic(missionId, updated);
+    return updated;
   }
 
   /**

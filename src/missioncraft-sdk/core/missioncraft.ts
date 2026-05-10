@@ -14,7 +14,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, writeFile, unlink } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile, unlink, symlink } from 'node:fs/promises';
 import { homedir, platform } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -335,15 +335,17 @@ export class Missioncraft {
     };
     await mkdir(join(this.workspaceRoot, 'config'), { recursive: true });
     await writeFile(this.missionConfigPath(id), serializeMissionConfig(config), 'utf8');
-    // Name-symlink scaffold (per §2.4 name-symlink scheme); operator-supplied --name only
+    // Name-symlink (per §2.4 name-symlink scheme; operator-supplied --name only)
+    // W4.2 fold per W3 forward-fold #1: replaces W3 placeholder pointer-file with true POSIX symlink
     if (opts.name) {
       const namesDir = join(this.workspaceRoot, 'config', '.names');
       await mkdir(namesDir, { recursive: true });
       const symlinkPath = join(namesDir, `${opts.name}.yaml`);
+      // Symlink target = relative path to <id>.yaml (../id.yaml from .names/ subdir)
+      const symlinkTarget = `../${id}.yaml`;
       try {
-        // POSIX O_EXCL via writeFile flag 'wx' on placeholder content; W4+ may switch to fs.symlink for true symlink semantic
-        // For W3 simplicity: write a placeholder pointer-file (not a true symlink)
-        await writeFile(symlinkPath, `# Name-symlink for mission ${id}\nid: ${id}\n`, { flag: 'wx', encoding: 'utf8' });
+        // fs.symlink is atomic create-or-fail-on-EEXIST per POSIX O_EXCL semantic (v1.4 fold per MEDIUM-R3.3)
+        await symlink(symlinkTarget, symlinkPath);
       } catch (err: unknown) {
         const e = err as NodeJS.ErrnoException;
         if (e.code === 'EEXIST') {
@@ -379,6 +381,23 @@ export class Missioncraft {
     await mkdir(join(this.workspaceRoot, 'scopes'), { recursive: true });
     const kebabed = camelToKebabObject(config);
     await writeFile(this.scopeConfigPath(id), yamlStringify(kebabed), 'utf8');
+    // Scope name-symlink per §2.4 (parallel to mission name-symlink scheme; v4.2 POSIX symlink)
+    if (opts.name) {
+      const namesDir = join(this.workspaceRoot, 'scopes', '.names');
+      await mkdir(namesDir, { recursive: true });
+      const symlinkPath = join(namesDir, `${opts.name}.yaml`);
+      const symlinkTarget = `../${id}.yaml`;
+      try {
+        await symlink(symlinkTarget, symlinkPath);
+      } catch (err: unknown) {
+        const e = err as NodeJS.ErrnoException;
+        if (e.code === 'EEXIST') {
+          try { await unlink(this.scopeConfigPath(id)); } catch { /* swallow */ }
+          throw new MissionStateError(`scope name '${opts.name}' already taken (per §2.4 name-uniqueness invariant)`);
+        }
+        throw err;
+      }
+    }
     const handle: ScopeHandle = opts.name === undefined ? { id } : { id, name: opts.name };
     return handle;
   }

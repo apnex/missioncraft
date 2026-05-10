@@ -4,6 +4,8 @@
 // Pipeline: argv → parser (Rules 1-7) → SDK invocation → output-formatter → stdout.
 // Sovereign-module SDK consumer per v1.1 reshape Refinement #4 — imports `@apnex/missioncraft` package self-reference.
 
+import { fileURLToPath } from 'node:url';
+import { realpathSync } from 'node:fs';
 import {
   Missioncraft,
   ConfigValidationError,
@@ -337,8 +339,17 @@ async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): P
   }
 }
 
-// Entry-point — only invoke when run as binary (allows test-import without side-effects)
-const isMainModule = import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('/bin.js') === true;
+// Entry-point — only invoke when run as binary (allows test-import without side-effects).
+// Symlink-safe guard: under `npm install -g`, the bin shim is a symlink and Node 24's default
+// `--preserve-symlinks-main=false` resolves `import.meta.url` to the realpath while `argv[1]`
+// retains the symlink path — direct equality fails. Compare via realpath on both sides.
+const isMainModule = (() => {
+  try {
+    return fileURLToPath(import.meta.url) === realpathSync(process.argv[1] ?? '');
+  } catch {
+    return false;
+  }
+})();
 if (isMainModule) {
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),

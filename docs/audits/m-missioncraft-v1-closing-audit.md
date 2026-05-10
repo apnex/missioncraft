@@ -227,3 +227,70 @@ Per Phase 8 → Phase 9 → Phase 10 lifecycle:
 - v4.10 PATCH bundle (12 items) carries architect-side design-prose-extensions; informs v1.x roadmap. **Director (Y) directive at thread-526 round 5 removed the substantive substrate-completeness gap from carry-forwards — bundle-ops disk-failure ships at v1.0.0 per W6 slice (v); item #12 evolved to design-prose-update reflecting slice (v) implementation reference.**
 
 **Mission-77 substrate-impl arc complete with 3 of 3 durability-modes ✓; v1.0.0 publish-ready pending Director-direct npm publish.**
+
+---
+
+## §9 v1.0.1 patch trail — CLI bin-shim silent-failure (post-ship)
+
+**Defect surfaced:** 2026-05-10 22:00Z — Director-initiated CLI test post-v1.0.0-publish revealed `msn --help` via `npm install -g @apnex/missioncraft` silent-exits 0 (0 bytes stdout + 0 bytes stderr). Library/SDK API unaffected.
+
+**Hub coordinates:** thread-529 (architect-issued v1.0.1 PATCH directive) + task-402 (Director-authorized "Fix it" 2026-05-10).
+
+**Reproduction (Node v24.12.0):**
+
+| Invocation | Outcome |
+|---|---|
+| `npm install -g @apnex/missioncraft` | ✓ install succeeds; bin shim symlink at `~/.nvm/.../bin/msn` → `../lib/node_modules/@apnex/missioncraft/dist/missioncraft-cli/bin.js` |
+| `msn --help` | ✗ silent (exit 0; no output) |
+| `node $REAL_PATH --help` (via `readlink -f`) | ✓ full output |
+| `node $SYMLINK_PATH --help` | ✗ silent (exit 0) — dispositive |
+| `node --preserve-symlinks-main $SYMLINK_PATH --help` | ✓ full output |
+
+**Architect spec-level hypothesis (refuted):** ESM relative-imports break under symlinked-bin shebang invocation (Node 24 `--preserve-symlinks-main=false`); proposed fix via package-exports subpath imports (P1).
+
+**Engineer-side root-cause refutation:** dispositive bisector test — `node -e "import('./node_modules/@apnex/missioncraft/dist/missioncraft-cli/bin.js').then(m => console.log(Object.keys(m)))"` prints `['main']`. If imports failed, this would throw `ERR_MODULE_NOT_FOUND`. Imports load fine; defect is in post-import guard.
+
+**Actual root cause:** `isMainModule` guard at `src/missioncraft-cli/bin.ts:341` (pre-fix):
+```ts
+const isMainModule = import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('/bin.js') === true;
+```
+
+Under symlinked-bin invocation:
+- `import.meta.url` resolves to realpath (Node 24 default `--preserve-symlinks-main=false`) → `file://REAL_PATH/dist/missioncraft-cli/bin.js`
+- `process.argv[1]` retains symlink path → `~/.nvm/.../bin/msn`
+- First check `file://REAL/bin.js === file://SYMLINK/msn` → **false**
+- Fallback `argv[1].endsWith('/bin.js')` — ends with `/msn` → **false**
+- `isMainModule = false` → `main()` never invoked → silent exit 0
+
+The `--preserve-symlinks-main` repro-row "fix" works because it keeps both sides as the symlink path, making the first comparison pass.
+
+**Fix mechanism (slice (i) — commit `87bf370`):** realpath-aware guard via `node:url` + `node:fs`:
+```ts
+import { fileURLToPath } from 'node:url';
+import { realpathSync } from 'node:fs';
+const isMainModule = (() => {
+  try {
+    return fileURLToPath(import.meta.url) === realpathSync(process.argv[1] ?? '');
+  } catch {
+    return false;
+  }
+})();
+```
+
+Maps closest to architect-alternative (P3) explicit realpath resolve but applied to the **guard**, not the imports. `package.json exports` field unchanged.
+
+**Regression test (slice (ii) — commit `2721f19`):** `test/missioncraft-cli/bin-shim-bootstrap.test.ts` — creates a sibling symlink in tmpdir → `dist/missioncraft-cli/bin.js`, spawns `node $SYMLINK_PATH --help`/`--version`, asserts stdout matches help-text + version regex. 3 tests added; suite 258 → 261.
+
+**v4.10 PATCH bundle item #16 — revised mechanism statement:**
+
+> "Design §2.3 CLI bin-shim **main-module guard** discipline — `import.meta.url === \`file://${argv[1]}\`` fails under symlinked-bin invocation (Node 24 `--preserve-symlinks-main=false` resolves `import.meta.url` to realpath while `argv[1]` retains symlink path). Use `fileURLToPath(import.meta.url) === realpathSync(argv[1])` for symlink-safe guard. Substrate-defect surfaced at v1.0.0 publish + fixed at v1.0.1."
+
+**v1.0.0 deprecation:** Director ran `npm deprecate @apnex/missioncraft@1.0.0` 2026-05-10 ~22:03Z with message *"CLI bin-shim broken on standard npm-global-install (Node 24 ESM symlink-resolution silent-failure); SDK/library API works. Use v1.0.1+ for CLI."* (Operator-facing shorthand; truer technical statement is here in §9 + v4.10 PATCH item #16.)
+
+**Methodology surface:** textbook "architect spec-level recall vs engineer-side code-verification" event (`feedback_architect_abstraction_level.md` + `feedback_substrate_currency_audit_rubric.md` adjacency). Architect-side diagnostic data (5-row repro table) was correct + load-bearing; spec-level mechanism-hypothesis was off by one frame (guard-eval, not import-eval). Dynamic-import bisector test is the dispositive corrective — candidate for new feedback memory `feedback_dynamic_import_bisector_for_silent_failure.md`.
+
+**v1.0.1 ship trail:**
+- slice (i) — `87bf370` bin.ts guard fix + version bump 1.0.0 → 1.0.1
+- slice (ii) — `2721f19` regression test (3 tests)
+- slice (iii) — this §9 doc revision
+- slice (iv) — tag `v1.0.1` + push → release.yml fires → npm publishes

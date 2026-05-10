@@ -965,6 +965,94 @@ export class Missioncraft {
   }
 
   /**
+   * Snapshot a mission's wip-branch into the snapshotRoot bundle (Design v4.9 §2.6.2 v0.4 §AAA;
+   * W6 slice (v) Director (Y)). Called best-effort post commitToRef-to-wip; preserves disk-failure
+   * recovery substrate. Bundle path: `<snapshotRoot>/<missionId>/<repoName>/<sha>.bundle`.
+   *
+   * Conditional gating: returns 0 IF gitEngine doesn't implement createBundle (capability-gated
+   * per F13). Per-repo failure non-aborting; returns count of successful bundle-creates.
+   */
+  async snapshotWipBranches(missionId: string): Promise<number> {
+    if (typeof this.gitEngine.createBundle !== 'function') return 0;     // capability-gated
+    const path = this.missionConfigPath(missionId);
+    if (!existsSync(path)) return 0;
+    const content = await readFile(path, 'utf8');
+    const config = parseMissionConfig(content, path, 'auto');
+
+    const { resolveSnapshotRoot, ensureSnapshotRepoDir, snapshotBundlePath } =
+      await import('./snapshot.js');
+    const snapshotRoot = resolveSnapshotRoot(this.workspaceRoot, config.stateDurability?.snapshotRoot);
+
+    const wipRef = `refs/heads/wip/${missionId}`;
+    let successCount = 0;
+    for (const repo of config.repos) {
+      const repoName = repo.name ?? repoNameFromUrl(repo.url);
+      const handle = await this.storage.allocate(missionId, repo.url);
+      try {
+        // Resolve current SHA of wip-ref (skip if doesn't exist yet)
+        const sha = await this.gitEngine.revparse(handle, wipRef).catch(() => null);
+        if (!sha) continue;
+        await ensureSnapshotRepoDir(snapshotRoot, missionId, repoName);
+        const bundlePath = snapshotBundlePath(snapshotRoot, missionId, repoName, sha);
+        if (existsSync(bundlePath)) {
+          successCount++;     // already-snapshotted at this SHA; idempotent
+          continue;
+        }
+        await this.gitEngine.createBundle(handle, bundlePath, wipRef);
+        successCount++;
+      } catch {
+        // Per-repo bundle-create failure non-aborting; next snapshot-cycle retries
+      }
+    }
+    return successCount;
+  }
+
+  /**
+   * Restore a mission from snapshotRoot bundles after disk-failure (`rm -rf workspaceRoot`
+   * recovery scenario per Design v4.9 §2.6.2 + W6 slice (v) Director (Y)).
+   *
+   * For each repo: locates latest-mtime bundle in `<snapshotRoot>/<missionId>/<repoName>/`,
+   * re-allocates workspace via storage.allocate (init's a fresh git-dir), then restoreBundle
+   * unbundles + updates the wip-ref. Capability-gated per F13.
+   *
+   * Returns count of repos successfully restored. Per-repo failure non-aborting (mission-level
+   * partial-recovery preserved per W5b publishStatus discipline).
+   */
+  async restoreFromSnapshot(missionId: string): Promise<number> {
+    if (typeof this.gitEngine.restoreBundle !== 'function') return 0;
+    const path = this.missionConfigPath(missionId);
+    if (!existsSync(path)) {
+      // Mission-config also gone; full-recovery would require config-mirror restore (separate concern)
+      return 0;
+    }
+    const content = await readFile(path, 'utf8');
+    const config = parseMissionConfig(content, path, 'auto');
+
+    const { resolveSnapshotRoot, findLatestBundle } = await import('./snapshot.js');
+    const snapshotRoot = resolveSnapshotRoot(this.workspaceRoot, config.stateDurability?.snapshotRoot);
+
+    const wipRef = `refs/heads/wip/${missionId}`;
+    let successCount = 0;
+    for (const repo of config.repos) {
+      const repoName = repo.name ?? repoNameFromUrl(repo.url);
+      try {
+        const latestBundle = await findLatestBundle(snapshotRoot, missionId, repoName);
+        if (!latestBundle) continue;
+        const handle = await this.storage.allocate(missionId, repo.url);
+        // Initialize git-dir if not already (storage.allocate creates the dir; gitEngine.init populates .git)
+        if (!existsSync(`${handle.path}/.git`)) {
+          await this.gitEngine.init(handle, { fs: undefined, identity: await this.identity.resolve() });
+        }
+        await this.gitEngine.restoreBundle(handle, latestBundle, wipRef);
+        successCount++;
+      } catch {
+        // Per-repo restore failure non-aborting
+      }
+    }
+    return successCount;
+  }
+
+  /**
    * Reader-side cascade: writer terminated (refs/tags/missioncraft/<id>/terminated detected on
    * coord-remote by Loop B). Advances reader's lifecycleState `'reading' → 'readonly-completed'`
    * via `_engineMutate` per HIGH-R2.3 + Design v4.9 §2.10 W5c Q2 disposition. Idempotent on

@@ -113,6 +113,34 @@ export interface GitEngine {
     message: string,
   ): Promise<string /* squashed-commit-sha */>;
 
+  /**
+   * v4.0 fold per W6 slice (v) Director (Y) — bundle-create primitive for disk-failure recovery
+   * (§2.6.2 v0.4 §AAA snapshot mechanism). Creates a `git bundle` archive at `bundlePath`
+   * containing `ref` (and its history). Native-git shell-out per architect (p) disposition
+   * (preserves 5-pluggable frozen API; capability-gated per F13 throws-on-unsupported pattern).
+   *
+   * Returns the bundle file path on success. 3rd-party engines MAY implement; if not, throw
+   * `UnsupportedOperationError`.
+   */
+  createBundle?(
+    workspace: WorkspaceHandle,
+    bundlePath: string,
+    ref: string,
+  ): Promise<string /* bundlePath */>;
+
+  /**
+   * v4.0 fold per W6 slice (v) Director (Y) — bundle-restore primitive for disk-failure recovery.
+   * Unbundles `bundlePath` into `workspace`'s git-dir + updates the named ref.
+   * Native-git shell-out per (p) disposition; capability-gated per F13.
+   *
+   * 3rd-party engines MAY implement; if not, throw `UnsupportedOperationError`.
+   */
+  restoreBundle?(
+    workspace: WorkspaceHandle,
+    bundlePath: string,
+    ref: string,
+  ): Promise<void>;
+
   // ─── Read ───
   status(workspace: WorkspaceHandle): Promise<GitStatus>;
   /** v0.3 fold per §EE — +since +path */

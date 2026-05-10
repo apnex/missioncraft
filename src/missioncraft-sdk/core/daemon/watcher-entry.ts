@@ -185,6 +185,15 @@ async function main(): Promise<void> {
           } catch {
             // coord-remote push failure non-aborting; per-repo retries via next debounce-cycle
           }
+          // W6 slice (v) Director (Y): bundle-ops snapshot post wip-commit (disk-failure recovery
+          // substrate per §2.6.2 v0.4 §AAA). Capability-gated; best-effort; per-repo failure
+          // non-aborting. Bundles land at <snapshotRoot>/<missionId>/<repoName>/<sha>.bundle.
+          try {
+            await mcSdk.snapshotWipBranches(missionId);
+          } catch {
+            // Snapshot failure non-aborting; recovery-from-disk-failure may degrade but
+            // wip-branch local-state preserved + push-to-coord-remote already succeeded.
+          }
         } catch {
           // Storage.list / identity.resolve failure → skip wip-commit cycle
         }

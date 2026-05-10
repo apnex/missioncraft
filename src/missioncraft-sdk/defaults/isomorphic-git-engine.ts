@@ -327,6 +327,66 @@ export class IsomorphicGitEngine implements GitEngine {
     return stdout.trim();
   }
 
+  // ─── Bundle-ops (W6 slice (v) Director (Y); §2.6.2 v0.4 §AAA snapshot mechanism) ───
+
+  /**
+   * Create a `git bundle` archive at `bundlePath` containing `ref` + ancestors.
+   * Native git CLI shell-out per architect (p) disposition (preserves 5-pluggable frozen API).
+   */
+  async createBundle(workspace: WorkspaceHandle, bundlePath: string, ref: string): Promise<string> {
+    try {
+      await execFileAsync('git', ['--version']);
+    } catch (err: unknown) {
+      throw new UnsupportedOperationError(
+        `IsomorphicGitEngine.createBundle requires native git CLI (§2.6.2 v0.4 §AAA bundle-ops native-shell-out); install git OR use 3rd-party GitEngine implementation`,
+        { cause: err instanceof Error ? err : undefined },
+      );
+    }
+    const { mkdir } = await import('node:fs/promises');
+    const { dirname } = await import('node:path');
+    await mkdir(dirname(bundlePath), { recursive: true });
+    await execFileAsync('git', ['bundle', 'create', bundlePath, ref], { cwd: workspace.path });
+    return bundlePath;
+  }
+
+  /**
+   * Restore from `git bundle` at `bundlePath` into `workspace`'s git-dir.
+   * Calls `git bundle unbundle` then `git update-ref` to set the named ref.
+   * Native git CLI shell-out per (p) disposition.
+   */
+  async restoreBundle(workspace: WorkspaceHandle, bundlePath: string, ref: string): Promise<void> {
+    try {
+      await execFileAsync('git', ['--version']);
+    } catch (err: unknown) {
+      throw new UnsupportedOperationError(
+        `IsomorphicGitEngine.restoreBundle requires native git CLI`,
+        { cause: err instanceof Error ? err : undefined },
+      );
+    }
+    // Unbundle into git-dir; capture HEAD-of-bundle to update the ref.
+    const { stdout } = await execFileAsync('git', ['bundle', 'unbundle', bundlePath], { cwd: workspace.path });
+    // `git bundle unbundle` output: "<sha> <ref>\n..." (one-or-more lines); pick first that matches `ref`
+    let bundleSha: string | undefined;
+    for (const line of stdout.trim().split('\n')) {
+      const [sha, bundleRef] = line.trim().split(/\s+/);
+      if (bundleRef === ref) {
+        bundleSha = sha;
+        break;
+      }
+    }
+    if (!bundleSha) {
+      // Fallback: use first line's sha (single-ref bundle case)
+      const first = stdout.trim().split('\n')[0];
+      bundleSha = first?.trim().split(/\s+/)[0];
+    }
+    if (!bundleSha) {
+      throw new UnsupportedOperationError(
+        `IsomorphicGitEngine.restoreBundle: bundle '${bundlePath}' contains no extractable refs`,
+      );
+    }
+    await execFileAsync('git', ['update-ref', ref, bundleSha], { cwd: workspace.path });
+  }
+
   // ─── Read ───
 
   async status(workspace: WorkspaceHandle): Promise<GitStatus> {

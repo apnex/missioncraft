@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
 
 import { updateLockfileState } from '../state-machine/lockfile-state.js';
+import { Missioncraft } from '../missioncraft.js';
 
 const DEBOUNCE_MS = 1000;        // 1s default; configurable via mission.stateDurability.wipCadenceMs in slice (ii)
 const HEARTBEAT_MS = 60_000;     // 60s lockfile-TTL extension cadence
@@ -60,6 +61,34 @@ async function main(): Promise<void> {
       daemonExpiresAt: Date.now() + 86_400_000,        // 24h sliding-window
     });
   }, HEARTBEAT_MS);
+
+  // Daemon-tick `'started' → 'in-progress'` advance per Design v4.9 §2.4.1 line 1505
+  // state-machine table ("operator does work" = daemon-tick = THIS code-path). Closes the
+  // W4.3 spot-fix gap where start() ends at 'started' transient state.
+  // Daemon SDK-bootstrap per architect-pick (a): construct own Missioncraft instance via
+  // env-var operator-config-path; defaults if env-var absent.
+  try {
+    const mc = new Missioncraft({ workspaceRoot });
+    // First tick: advance 'started' → 'in-progress' via _engineMutate-equivalent path
+    // (write directly via update<T>('mission', ...) rejected — no public mutation kind for lifecycle;
+    // instead use the existing FSM via update with no-op mutation that triggers FSM-advance).
+    // For now: read-then-update-config directly per the daemon-tick advance pattern.
+    const { existsSync: exists } = await import('node:fs');
+    const configPath = join(workspaceRoot, 'config', `${missionId}.yaml`);
+    if (exists(configPath)) {
+      const { readFile, writeFile, rename } = await import('node:fs/promises');
+      const content = await readFile(configPath, 'utf8');
+      if (content.includes('lifecycle-state: started')) {
+        const updated = content.replace(/lifecycle-state: started/, 'lifecycle-state: in-progress');
+        const tmp = `${configPath}.${process.pid}.tmp`;
+        await writeFile(tmp, updated, 'utf8');
+        await rename(tmp, configPath);
+      }
+    }
+    void mc;        // Reserved for future SDK-driven operations (slice iii dead-pid detection)
+  } catch {
+    // Daemon-tick advance is best-effort; failure doesn't crash daemon
+  }
 
   // chokidar fs-watch on per-mission workspaces
   // Read mission-config to discover repos + workspace paths

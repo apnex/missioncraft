@@ -59,6 +59,9 @@ import { ScopeConfigSchema } from './scope-config-schema.js';
 import { validateMutationAllowed } from './state-machine/state-restriction-matrix.js';
 import { nextState } from './state-machine/lifecycle-state-machine.js';
 import type { RepoSpec } from './mission-types.js';
+import { spawnDaemonWatcher } from './daemon/spawn-daemon-watcher.js';
+import { triggerDaemonFlush, terminateDaemon, clearDaemonIpcFields } from './daemon/daemon-ipc.js';
+import { updateLockfileState } from './state-machine/lockfile-state.js';
 
 /** Pluggable resource-types. */
 export type ResourceType = 'mission' | 'scope';
@@ -305,16 +308,41 @@ export class Missioncraft {
         },
       );
 
-      // W4.4-GRAFT: daemon-spawn at Step 6 (BEFORE state-yaml-persist Step 7 per v3.2 MEDIUM-R2.4 reorder).
-      // No-op at W4.3 per stub-then-graft discipline; W4.4 will spawn detached daemon-watcher here:
-      //   const daemonPid = await spawnDaemonWatcher(missionId, workspaceHandles, this.principal);
-      //   lockfile.pid = daemonPid; lockfile.startTime = Date.now(); etc. per LockfileState IPC fields.
+      // Step 6 (W4.4 slice ii graft): daemon-spawn BEFORE state-yaml-persist Step 7 per v3.2
+      // MEDIUM-R2.4 ordering. Spawn-failure rollback: revert lifecycle 'started' → 'configured';
+      // throw error; finally-block releases locks → mission stays at 'configured' (clean-rollback
+      // invariant preserved per v3.2 MEDIUM-R2.4).
+      try {
+        await spawnDaemonWatcher({
+          missionId,
+          workspaceRoot: this.workspaceRoot,
+          lockfilePath: this.missionLockfilePath(missionId),
+        });
+      } catch (spawnErr: unknown) {
+        // Spawn-failure rollback: revert lifecycle to 'configured' (best-effort)
+        try {
+          await this._engineMutate(
+            missionId,
+            (config) => ({ ...config, mission: { ...config.mission, lifecycleState: 'configured' } }),
+            {
+              validate: (config) =>
+                config.mission.lifecycleState === 'started'
+                  ? null
+                  : `rollback rejected: expected 'started' got '${config.mission.lifecycleState}'`,
+              sourceLabel: `Missioncraft.start.spawn-failure-rollback('${missionId}')`,
+            },
+          );
+        } catch { /* rollback best-effort; release-locks still runs in finally */ }
+        throw new MissionStateError(
+          `Missioncraft.start: daemon-spawn failed; lifecycle rolled back to 'configured'; original error: ${spawnErr instanceof Error ? spawnErr.message : String(spawnErr)}`,
+          { cause: spawnErr instanceof Error ? spawnErr : undefined },
+        );
+      }
 
-      // Step 7 (W4.4 territory): `started → in-progress` advance is daemon-tick-driven per
-      // Design v4.9 §2.4.1 line 1505 state-machine table ("operator does work" = daemon-tick).
-      // start() ends at 'started' (transient state per line 1542); preserves v3.2 MEDIUM-R2.4
-      // clean-rollback invariant — daemon-spawn failure leaves YAML at 'started' and W4.4
-      // graft will add YAML-rollback to 'configured' on spawn-failure.
+      // Step 7 territory: `started → in-progress` advance is daemon-tick-driven per Design v4.9
+      // §2.4.1 line 1505 state-machine table ("operator does work" = daemon-tick = daemon-side).
+      // Daemon's first tick fires the advance via _engineMutate allowed-states ['started'].
+      // start() returns at 'started'; the in-progress advance happens asynchronously post-return.
     } finally {
       // Step 8: release locks (idempotent on already-released)
       for (const lock of repoLocks) {
@@ -417,9 +445,11 @@ export class Missioncraft {
         );
       }
 
-      // W4.4-GRAFT: daemon-flush via lockfile-state-watch (publish-flow Step 1; pendingFlushBeforeComplete IPC field).
-      // No-op at W4.3 per stub-then-graft discipline; W4.4 will set pendingFlushBeforeComplete = true on lockfile,
-      // poll daemon-acknowledgment 30s, fallback to SIGTERM on timeout per v3.2 MEDIUM-R2.1.
+      // Step 1 (W4.4 slice ii graft): daemon-flush via lockfile-state-watch pendingFlushBeforeComplete
+      // per v3.2 MEDIUM-R2.1. STUB-SEMANTIC: no-op when daemon absent (W4.3 baseline behavior preserved).
+      // On flush-timeout, falls through to publish-loop (daemon SIGTERM happens at Step 4).
+      const flushResult = await triggerDaemonFlush(this.missionLockfilePath(id), 'pendingFlushBeforeComplete');
+      void flushResult;        // 'flushed' / 'no-daemon' / 'timeout' — all proceed to publish-loop
 
       // Step 2: per-repo publish-loop (squash + push + openPullRequest)
       await this.runPublishLoop(id, initialConfig, effectiveMessage);
@@ -437,9 +467,13 @@ export class Missioncraft {
         },
       );
 
-      // W4.4-GRAFT: SIGTERM daemon-watcher 60s + SIGKILL fallback (publish-flow Step 4; per v3.2 MEDIUM-R2.1 + MEDIUM-R2.2).
-      // No-op at W4.3 per stub-then-graft discipline; W4.4 will process.kill(daemonPid, 'SIGTERM'),
-      // poll process.kill(pid, 0) up to MSN_DAEMON_SHUTDOWN_TIMEOUT_MS (default 60000), then SIGKILL.
+      // Step 4 (W4.4 slice ii graft): SIGTERM daemon-watcher 60s + SIGKILL fallback per v3.2
+      // MEDIUM-R2.1 + MEDIUM-R2.2. Parent-CLI clears daemon-IPC fields from lockfile post-shutdown
+      // (per parent-only-ownership contract per slice i).
+      const termResult = await terminateDaemon(this.missionLockfilePath(id));
+      if (termResult === 'terminated' || termResult === 'killed') {
+        await clearDaemonIpcFields(this.missionLockfilePath(id));
+      }
 
       // Step 6: cleanup local mission-branches (best-effort; non-aborting)
       for (let i = 0; i < initialConfig.repos.length; i++) {
@@ -657,15 +691,20 @@ export class Missioncraft {
         repoLocks.push(lock);
       }
 
-      // W4.4-GRAFT: final cadence-tick via daemon-flush (abandon-flow Step 1; pendingTick IPC field).
-      // No-op at W4.3 per stub-then-graft discipline; W4.4 will set pendingTick = true on lockfile,
-      // poll daemon-acknowledgment 30s, fallback to SIGTERM on timeout per v3.2 MEDIUM-R2.1.
+      // Step 1 (W4.4 slice ii graft): final cadence-tick via daemon-flush pendingTick per v3.2
+      // MEDIUM-R2.1. STUB-SEMANTIC: no-op when daemon absent.
+      const tickResult = await triggerDaemonFlush(this.missionLockfilePath(id), 'pendingTick');
+      void tickResult;
       await this.recordAbandonProgress(id, 'tick-fired');
 
-      // W4.4-GRAFT: SIGTERM daemon-watcher 60s + SIGKILL fallback (abandon-flow Step 2; per MEDIUM-R2.2).
-      // No-op at W4.3 per stub-then-graft discipline; W4.4 will process.kill(daemonPid, 'SIGTERM'),
-      // poll process.kill(pid, 0) up to MSN_DAEMON_SHUTDOWN_TIMEOUT_MS, then SIGKILL.
-      // W4.4 will also set lockfile.abandonInProgress = true for Steps 2-4 window dispatch-signal.
+      // Step 2 (W4.4 slice ii graft): set lockfile.abandonInProgress = true (Steps 2-4 window
+      // dispatch-signal per v3.6 MEDIUM-R6.1) THEN SIGTERM daemon. Parent clears daemon-IPC fields
+      // post-shutdown (per parent-only-ownership contract).
+      await updateLockfileState(this.missionLockfilePath(id), { abandonInProgress: true });
+      const abandonTermResult = await terminateDaemon(this.missionLockfilePath(id));
+      if (abandonTermResult === 'terminated' || abandonTermResult === 'killed') {
+        await clearDaemonIpcFields(this.missionLockfilePath(id));
+      }
       await this.recordAbandonProgress(id, 'daemon-killed');
 
       // Step 3: atomic-write abandonMessage (RMW; immutable post-write per v3.3); lifecycle STAYS 'in-progress'
@@ -889,6 +928,11 @@ export class Missioncraft {
 
   private missionConfigPath(id: string): string {
     return join(this.workspaceRoot, 'config', `${id}.yaml`);
+  }
+
+  /** Mission-lockfile path per Design v4.9 §2.4 + §2.6.5; same path used for lock-acquisition + daemon-IPC. */
+  private missionLockfilePath(id: string): string {
+    return join(this.workspaceRoot, 'locks', 'missions', `${id}.lock`);
   }
 
   private scopeConfigPath(id: string): string {

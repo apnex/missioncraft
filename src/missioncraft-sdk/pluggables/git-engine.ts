@@ -23,8 +23,10 @@ export interface CommitOptions {
 export type MergeStrategy = 'ff' | 'no-ff';
 
 export interface PushOptions {
-  readonly branch?: string;
+  readonly branch?: string;        // source ref (local) — passed as `ref` to isomorphic-git
   readonly remote?: string;        // v0.2 fold per §C.1 — explicit remote (default 'origin')
+  readonly url?: string;           // v4.0 fold per W5b — direct URL push (overrides `remote`); coord-remote refspec push without persisting remote config
+  readonly remoteRef?: string;     // v4.0 fold per W5b MEDIUM-R6.1 — destination ref on remote (refspec push when source !== destination)
   readonly force?: boolean;
   readonly tags?: boolean;         // v0.2 fold — push tags
 }

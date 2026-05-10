@@ -123,6 +123,15 @@ async function main(): Promise<void> {
               // Per-repo wip-commit failure is non-aborting; daemon continues watching
             }
           }
+          // W5b slice (ii) item #2: push-on-cadence-conditional to coord-remote.
+          // SDK helper handles conditional gating (coordinationRemote set + reader participants
+          // present) + per-repo refspec push + lastPushSuccessAt tracking via .daemon-state.yaml.
+          // Best-effort: failure is non-aborting; daemon continues watching.
+          try {
+            await mcSdk.pushWipToCoordRemote(missionId);
+          } catch {
+            // coord-remote push failure non-aborting; per-repo retries via next debounce-cycle
+          }
         } catch {
           // Storage.list / identity.resolve failure → skip wip-commit cycle
         }

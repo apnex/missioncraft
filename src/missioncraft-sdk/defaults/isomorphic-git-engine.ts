@@ -252,9 +252,11 @@ export class IsomorphicGitEngine implements GitEngine {
       fs,
       http,
       dir: workspace.path,
-      remote: options.remote,
-      ref: options.branch,
-      force: options.force,
+      ...(options.url !== undefined && { url: options.url }),
+      ...(options.remote !== undefined && { remote: options.remote }),
+      ...(options.branch !== undefined && { ref: options.branch }),
+      ...(options.remoteRef !== undefined && { remoteRef: options.remoteRef }),
+      ...(options.force !== undefined && { force: options.force }),
     });
   }
 

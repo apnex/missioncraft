@@ -583,13 +583,21 @@ export class Missioncraft {
   /**
    * Push with network-partition retry (Design v4.9 §2.6.3 — exponential backoff).
    * 3 attempts max; backoff 100ms → 400ms → 1600ms (~2.1s total).
+   *
+   * W5b slice (ii) extension: accepts refspec options (url + remoteRef) for coord-remote push
+   * with source-ref `refs/heads/wip/<id>` → destination-ref `refs/heads/<repo-name>/wip/<id>` per
+   * MEDIUM-R6.1. Backwards-compat: string-arg form still works (origin remote default-branch push).
    */
-  private async pushWithRetry(handle: WorkspaceHandle, branch: string): Promise<void> {
+  async pushWithRetry(
+    handle: WorkspaceHandle,
+    branchOrOptions: string | { branch: string; url?: string; remote?: string; remoteRef?: string },
+  ): Promise<void> {
+    const opts = typeof branchOrOptions === 'string' ? { branch: branchOrOptions } : branchOrOptions;
     const backoffsMs = [100, 400, 1600];
     let lastErr: unknown;
     for (let attempt = 0; attempt <= backoffsMs.length; attempt++) {
       try {
-        await this.gitEngine.push(handle, { branch });
+        await this.gitEngine.push(handle, opts);
         return;
       } catch (err) {
         lastErr = err;
@@ -886,6 +894,51 @@ export class Missioncraft {
   async workspace(idOrCoordinate: string, _repoName?: string): Promise<string> {
     void idOrCoordinate;
     throw new MissionStateError('Missioncraft.workspace: workspace-path-resolution not yet implemented (W4)');
+  }
+
+  /**
+   * Push wip-branch to coord-remote per-repo refspec (Design v4.9 §2.10 W5b MEDIUM-R6.1).
+   *
+   * Source ref `refs/heads/wip/<missionId>` → destination ref `refs/heads/<repoName>/wip/<missionId>`
+   * on `coordinationRemote`. Conditional: only fires IF coordinationRemote is set AND mission has
+   * ≥1 reader participant (no-op for solo writer-only missions per v3.6 baseline preservation).
+   *
+   * Best-effort: per-repo failure is non-aborting (next debounce-cycle retries). Successful pushes
+   * recorded in `.daemon-state.yaml` (`lastPushSuccessAt` + `perRepoLastPushAt[repoName]`). NOT
+   * mission-config-persisted per MEDIUM-R3.3 separate-file discipline.
+   *
+   * Returns count of successful per-repo pushes (0 if no-op).
+   */
+  async pushWipToCoordRemote(missionId: string): Promise<number> {
+    const path = this.missionConfigPath(missionId);
+    if (!existsSync(path)) return 0;
+    const content = await readFile(path, 'utf8');
+    const config = parseMissionConfig(content, path, 'auto');
+
+    const coordRemote = config.mission.coordinationRemote;
+    if (!coordRemote) return 0;
+    const hasReader = config.mission.participants?.some((p) => p.role === 'reader') ?? false;
+    if (!hasReader) return 0;       // solo writer-only mission; no coord-remote push needed
+
+    let successCount = 0;
+    for (const repo of config.repos) {
+      const repoName = repo.name ?? repoNameFromUrl(repo.url);
+      // storage.allocate is idempotent on re-allocate per StorageProvider contract
+      const handle = await this.storage.allocate(missionId, repo.url);
+      try {
+        await this.pushWithRetry(handle, {
+          branch: `refs/heads/wip/${missionId}`,
+          url: coordRemote,
+          remoteRef: `refs/heads/${repoName}/wip/${missionId}`,
+        });
+        const { recordPushSuccess } = await import('./daemon/daemon-state.js');
+        await recordPushSuccess(this.workspaceRoot, missionId, repoName);
+        successCount++;
+      } catch {
+        // Per-repo push failure is non-aborting; next debounce-cycle retries
+      }
+    }
+    return successCount;
   }
 
   /**

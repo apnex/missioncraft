@@ -912,9 +912,56 @@ export class Missioncraft {
     throw new MissionStateError('Missioncraft.tick: explicit cadence-tick not yet implemented (W4)');
   }
 
-  async workspace(idOrCoordinate: string, _repoName?: string): Promise<string> {
-    void idOrCoordinate;
-    throw new MissionStateError('Missioncraft.workspace: workspace-path-resolution not yet implemented (W4)');
+  /**
+   * Resolve workspace filesystem-path for a mission-id or substrate-coordinate (Design v4.9 §2.3
+   * Rule 7 + W5c MEDIUM-R8.1 substrate-coordinate runtime-resolution per idea-265).
+   *
+   * Forms:
+   *   - `<mission-id>` + optional `<repoName>` arg: returns workspace path for the named repo
+   *     (or first repo if mission has only one + repoName omitted).
+   *   - `<mission-id>:<repo>[/<path>]` (Rule 7 coordinate; gsutil-style): parsed via
+   *     `parseSubstrateCoordinate`; workspace + optional path-suffix appended.
+   *
+   * Errors:
+   *   - mission not found → MissionStateError
+   *   - coordinate's repo not in mission's repos[] → MissionStateError
+   *   - mission has multiple repos AND idOrCoordinate is plain id AND repoName omitted → ConfigValidationError
+   */
+  async workspace(idOrCoordinate: string, repoName?: string): Promise<string> {
+    if (!idOrCoordinate) {
+      throw new ConfigValidationError('Missioncraft.workspace: idOrCoordinate is required');
+    }
+    const { parseSubstrateCoordinate } = await import('./coordinate.js');
+    const coord = parseSubstrateCoordinate(idOrCoordinate);
+    const missionId = coord ? coord.mission : idOrCoordinate;
+    const path = this.missionConfigPath(missionId);
+    if (!existsSync(path)) {
+      throw new MissionStateError(`Missioncraft.workspace: mission '${missionId}' not found at '${path}'`);
+    }
+    const content = await readFile(path, 'utf8');
+    const config = parseMissionConfig(content, path, 'auto');
+
+    // Resolve target repo: coordinate.repo > repoName arg > unique repo
+    const targetRepoName = coord?.repo ?? repoName ?? (config.repos.length === 1
+      ? (config.repos[0].name ?? repoNameFromUrl(config.repos[0].url))
+      : undefined);
+
+    if (!targetRepoName) {
+      throw new ConfigValidationError(
+        `Missioncraft.workspace: mission '${missionId}' has ${config.repos.length} repos; ` +
+          `repoName arg required (or use coordinate-form '<id>:<repo>')`,
+      );
+    }
+
+    const targetRepo = config.repos.find((r) => (r.name ?? repoNameFromUrl(r.url)) === targetRepoName);
+    if (!targetRepo) {
+      throw new MissionStateError(
+        `Missioncraft.workspace: repo '${targetRepoName}' not in mission '${missionId}' repos[]`,
+      );
+    }
+
+    const handle = await this.storage.allocate(missionId, targetRepo.url);
+    return coord?.path ? join(handle.path, coord.path) : handle.path;
   }
 
   /**

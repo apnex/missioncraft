@@ -1,0 +1,176 @@
+// W5c slice (ii) — Missioncraft.workspace(idOrCoordinate, repoName?) substrate-coordinate
+// runtime-resolution tests + HTTP-server fixture smoke-test.
+//
+// Tests:
+//   - parseSubstrateCoordinate parses 4 input shapes (mission-only, mission:repo, mission:repo/path, plain)
+//   - Missioncraft.workspace() with plain mission-id (single repo / multi-repo / repoName arg)
+//   - Missioncraft.workspace() with coordinate-form `<id>:<repo>` (repo lookup)
+//   - Missioncraft.workspace() with coordinate-form `<id>:<repo>/<path>` (path-suffix)
+//   - createGitHttpFixture starts/stops + URL is reachable + clone roundtrip via real git CLI
+
+import { execFile } from 'node:child_process';
+import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { Missioncraft, ConfigValidationError, MissionStateError } from '@apnex/missioncraft';
+import { parseSubstrateCoordinate } from '../../src/missioncraft-sdk/core/coordinate.js';
+import { createGitHttpFixture, type GitHttpFixture } from '../fixtures/git-http-fixture.js';
+
+const execFileAsync = promisify(execFile);
+
+let tempRoot: string;
+
+beforeEach(async () => {
+  tempRoot = await mkdtemp(join(tmpdir(), 'mc-w5c-ii-'));
+});
+
+afterEach(async () => {
+  if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+});
+
+describe('W5c slice (ii) — parseSubstrateCoordinate', () => {
+  it('returns undefined for plain mission-id (no colon)', () => {
+    expect(parseSubstrateCoordinate('msn-abc12345')).toBeUndefined();
+  });
+
+  it('parses mission-only coordinate (trailing colon)', () => {
+    expect(parseSubstrateCoordinate('msn-abc12345:')).toEqual({ mission: 'msn-abc12345' });
+  });
+
+  it('parses mission:repo coordinate', () => {
+    expect(parseSubstrateCoordinate('msn-abc12345:design-repo')).toEqual({
+      mission: 'msn-abc12345',
+      repo: 'design-repo',
+    });
+  });
+
+  it('parses mission:repo/path coordinate (gsutil-style)', () => {
+    expect(parseSubstrateCoordinate('msn-abc12345:design-repo/src/file.ts')).toEqual({
+      mission: 'msn-abc12345',
+      repo: 'design-repo',
+      path: 'src/file.ts',
+    });
+  });
+
+  it('rejects whitespace inside coordinate with ConfigValidationError', () => {
+    expect(() => parseSubstrateCoordinate('msn-abc12345:design repo')).toThrow(/whitespace inside coordinate/);
+  });
+});
+
+describe('W5c slice (ii) — Missioncraft.workspace() runtime-resolution', () => {
+  it('resolves single-repo mission with plain mission-id (auto-pick repo)', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const repoUrl = 'file:///tmp/w5c-ii-1';
+    const handle = await mc.create('mission', { repo: repoUrl });
+
+    const wsPath = await mc.workspace(handle.id);
+    expect(wsPath).toMatch(new RegExp(`/missions/${handle.id}/w5c-ii-1$`));
+  });
+
+  it('rejects multi-repo mission with plain mission-id + no repoName arg', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const handle = await mc.create('mission', { repo: ['file:///tmp/w5c-ii-2a', 'file:///tmp/w5c-ii-2b'] });
+
+    await expect(mc.workspace(handle.id)).rejects.toBeInstanceOf(ConfigValidationError);
+    await expect(mc.workspace(handle.id)).rejects.toThrow(/has 2 repos.*repoName arg required/);
+  });
+
+  it('resolves multi-repo mission with explicit repoName arg', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const handle = await mc.create('mission', { repo: ['file:///tmp/w5c-ii-3a', 'file:///tmp/w5c-ii-3b'] });
+
+    const wsPath = await mc.workspace(handle.id, 'w5c-ii-3b');
+    expect(wsPath).toMatch(new RegExp(`/missions/${handle.id}/w5c-ii-3b$`));
+  });
+
+  it('resolves coordinate-form `<id>:<repo>`', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const handle = await mc.create('mission', { repo: ['file:///tmp/w5c-ii-4a', 'file:///tmp/w5c-ii-4b'] });
+
+    const wsPath = await mc.workspace(`${handle.id}:w5c-ii-4a`);
+    expect(wsPath).toMatch(new RegExp(`/missions/${handle.id}/w5c-ii-4a$`));
+  });
+
+  it('resolves coordinate-form `<id>:<repo>/<path>` with path suffix appended', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const handle = await mc.create('mission', { repo: 'file:///tmp/w5c-ii-5' });
+
+    const wsPath = await mc.workspace(`${handle.id}:w5c-ii-5/src/module.ts`);
+    expect(wsPath).toMatch(new RegExp(`/missions/${handle.id}/w5c-ii-5/src/module\\.ts$`));
+  });
+
+  it('rejects coordinate with non-existent repo', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const handle = await mc.create('mission', { repo: 'file:///tmp/w5c-ii-6' });
+
+    await expect(mc.workspace(`${handle.id}:other-repo`)).rejects.toBeInstanceOf(MissionStateError);
+    await expect(mc.workspace(`${handle.id}:other-repo`)).rejects.toThrow(/repo 'other-repo' not in mission/);
+  });
+
+  it('rejects when mission config does not exist', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    await expect(mc.workspace('msn-deadbeef')).rejects.toThrow(/mission 'msn-deadbeef' not found/);
+  });
+
+  it('rejects empty idOrCoordinate', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    await expect(mc.workspace('')).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+});
+
+describe('W5c slice (ii) — createGitHttpFixture (node-git-server smoke-test)', () => {
+  let fixture: GitHttpFixture | undefined;
+
+  afterEach(async () => {
+    if (fixture) {
+      await fixture.close();
+      fixture = undefined;
+    }
+  });
+
+  it('starts on OS-assigned port + URL is reachable', async () => {
+    const repoBase = join(tempRoot, 'repos');
+    fixture = await createGitHttpFixture(repoBase);
+    expect(fixture.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(fixture.repoBaseDir).toBe(repoBase);
+  });
+
+  it('clone-then-push roundtrip via real git CLI against fixture', async () => {
+    const repoBase = join(tempRoot, 'repos');
+    // Pre-create the bare repo manually (avoids autoCreate timing/HEAD edge-case)
+    const bareDir = join(repoBase, 'test-repo.git');
+    await mkdir(bareDir, { recursive: true });
+    await execFileAsync('git', ['init', '--quiet', '--bare'], { cwd: bareDir });
+    // git 2.25.x predates --initial-branch; rewrite HEAD ref directly
+    await execFileAsync('git', ['symbolic-ref', 'HEAD', 'refs/heads/main'], { cwd: bareDir });
+
+    fixture = await createGitHttpFixture(repoBase, { autoCreate: false });
+
+    // Set up a source repo and push to fixture
+    const srcDir = join(tempRoot, 'src');
+    await mkdir(srcDir, { recursive: true });
+    await execFileAsync('git', ['init', '--quiet'], { cwd: srcDir });
+    await execFileAsync('git', ['symbolic-ref', 'HEAD', 'refs/heads/main'], { cwd: srcDir });
+    await execFileAsync('git', ['config', 'user.email', 't@x.com'], { cwd: srcDir });
+    await execFileAsync('git', ['config', 'user.name', 'Test'], { cwd: srcDir });
+    await writeFile(join(srcDir, 'README.md'), '# fixture-test\n', 'utf8');
+    await execFileAsync('git', ['add', '.'], { cwd: srcDir });
+    await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: srcDir });
+
+    const remoteUrl = `${fixture.url}/test-repo.git`;
+    await execFileAsync('git', ['remote', 'add', 'fixture', remoteUrl], { cwd: srcDir });
+    await execFileAsync('git', ['push', 'fixture', 'main'], { cwd: srcDir });
+
+    // Clone from fixture into a different dir
+    const cloneDir = join(tempRoot, 'clone');
+    await execFileAsync('git', ['clone', remoteUrl, cloneDir]);
+
+    expect(existsSync(join(cloneDir, 'README.md'))).toBe(true);
+    const { stdout } = await execFileAsync('git', ['log', '--oneline', '-1'], { cwd: cloneDir });
+    expect(stdout).toMatch(/initial/);
+  }, 15_000);     // 15s timeout for HTTP-server startup + git network roundtrip
+});

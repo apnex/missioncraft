@@ -145,6 +145,21 @@ export interface MissionConfig {
     // v4.0 NEW per idea-265 multi-participant — populated when mission has multi-participant flow
     readonly participants?: readonly MissionParticipant[];
     readonly coordinationRemote?: string;       // git remote URL; required IFF participants[] contains a reader (zod superRefine)
+    // ─── W4.3 publish-flow + abandon-flow runtime-state (Design v4.9 §2.4.1 lines 640-650) ───
+    // Persisted in YAML; written by complete()/abandon() flows; read for idempotent retry semantics.
+    readonly publishMessage?: string;                     // immutable post-first-complete per v3.2 MEDIUM-R2.6
+    readonly abandonMessage?: string;                     // immutable post-first-abandon per v3.3 fold
+    readonly publishStatus?: Record<string, 'pending' | 'squashed' | 'pushed' | 'pr-opened' | 'failed'>;
+    readonly publishedPRs?: readonly { readonly repoName: string; readonly prUrl: string }[];
+    readonly abandonProgress?:
+      | 'tick-fired'
+      | 'daemon-killed'
+      | 'message-persisted'
+      | 'locks-released'
+      | 'branches-cleaned'
+      | 'workspace-handled'
+      | 'config-purged';
+    readonly abandonRepoStatus?: Record<string, 'pending' | 'cleaned' | 'failed'>;
   };
   readonly repos: readonly RepoSpec[];
   readonly identity?: { readonly provider: string };           // PROVIDER_REGISTRY string-name

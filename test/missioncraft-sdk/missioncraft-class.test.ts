@@ -200,11 +200,38 @@ describe('Missioncraft SDK class — W3 smoke-tests', () => {
       ).rejects.toBeInstanceOf(ConfigValidationError);
     });
 
-    it('complete() requires message + throws W4', async () => {
+    it('complete() requires message (per v3.0 Refinement #4)', async () => {
       const mc = new Missioncraft({ workspaceRoot: tempRoot });
       await expect(mc.complete('msn-test1234', '')).rejects.toBeInstanceOf(ConfigValidationError);
-      await expect(mc.complete('msn-test1234', 'msg')).rejects.toMatchObject({
-        message: expect.stringMatching(/not yet implemented \(W4\)/),
+    });
+
+    it('complete() rejects --retain + --purge-config (mutual exclusion)', async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      await expect(
+        mc.complete('msn-test1234', 'msg', { retain: true, purgeConfig: true }),
+      ).rejects.toBeInstanceOf(ConfigValidationError);
+    });
+
+    it('complete() rejects non-existent mission with MissionStateError', async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      await expect(mc.complete('msn-deadbeef', 'msg')).rejects.toMatchObject({
+        message: expect.stringMatching(/mission 'msn-deadbeef' not found/),
+      });
+    });
+
+    it("complete() rejects 'created' lifecycle (must be 'in-progress' or 'started')", async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      const handle = await mc.create('mission');
+      await expect(mc.complete(handle.id, 'msg')).rejects.toMatchObject({
+        message: expect.stringMatching(/requires lifecycle 'in-progress' or 'started' \(current: 'created'\)/),
+      });
+    });
+
+    it("complete() rejects 'configured' lifecycle (must be 'in-progress' or 'started')", async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      const handle = await mc.create('mission', { repo: 'https://github.com/example/repo-x' });
+      await expect(mc.complete(handle.id, 'msg')).rejects.toMatchObject({
+        message: expect.stringMatching(/requires lifecycle 'in-progress' or 'started' \(current: 'configured'\)/),
       });
     });
 

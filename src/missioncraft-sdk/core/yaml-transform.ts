@@ -18,7 +18,16 @@ import { deriveOwningPrincipalRole } from './role-derivation.js';
  * Field names whose VALUE is treated as Record<string, string> with operator-supplied keys.
  * Per MINOR-R2.2 — these Record-keys are NOT transformed (preserved as-is for cross-system correlation).
  */
-const RECORD_KEY_PRESERVE_FIELDS = new Set<string>(['tags', 'workspace-root-by-principal', 'workspaceRootByPrincipal']);
+const RECORD_KEY_PRESERVE_FIELDS = new Set<string>([
+  'tags',
+  'workspace-root-by-principal',
+  'workspaceRootByPrincipal',
+  // W4.3 publish-flow + abandon-flow: Record<repoName, status> — repo-names are operator-supplied DNS-style slugs (may contain hyphens)
+  'publish-status',
+  'publishStatus',
+  'abandon-repo-status',
+  'abandonRepoStatus',
+]);
 
 function kebabToCamel(key: string): string {
   return key.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());

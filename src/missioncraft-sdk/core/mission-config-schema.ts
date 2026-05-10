@@ -91,6 +91,13 @@ const baseMissionConfigShape = z.object({
     // v4.0 NEW per idea-265 multi-participant
     participants: z.array(MissionParticipantSchema).optional(),
     coordinationRemote: z.string().url().optional(),
+    // W4.3 publish-flow + abandon-flow runtime-state (Design v4.9 §2.4.1 lines 640-650)
+    publishMessage: z.string().optional(),
+    abandonMessage: z.string().optional(),
+    publishStatus: z.record(z.string(), z.enum(['pending', 'squashed', 'pushed', 'pr-opened', 'failed'])).optional(),
+    publishedPRs: z.array(z.object({ repoName: z.string(), prUrl: z.string() })).optional(),
+    abandonProgress: z.enum(['tick-fired', 'daemon-killed', 'message-persisted', 'locks-released', 'branches-cleaned', 'workspace-handled', 'config-purged']).optional(),
+    abandonRepoStatus: z.record(z.string(), z.enum(['pending', 'cleaned', 'failed'])).optional(),
   }),
   repos: z.array(RepoSpecSchema),
   identity: z.object({ provider: z.string() }).optional(),

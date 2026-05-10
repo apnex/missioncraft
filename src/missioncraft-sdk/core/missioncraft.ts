@@ -334,10 +334,261 @@ export class Missioncraft {
     throw new MissionStateError('Missioncraft.apply: full-config-upsert not yet implemented (W4)');
   }
 
-  async complete(id: string, message: string, _opts?: { purgeConfig?: boolean }): Promise<MissionState> {
-    if (!message) throw new ConfigValidationError("Missioncraft.complete: message is required (per v3.0 Refinement #4)");
-    void id;
-    throw new MissionStateError('Missioncraft.complete: 8-step atomic PR-set publish-flow not yet implemented (W4)');
+  /**
+   * 8-step atomic PR-set publish-flow (Design v4.9 §2.4.1 lines 1700+; v3.1+v3.2+v3.3+v3.4 folds).
+   *
+   * W4.3 LITE: implements full transition LESS daemon-flush + SIGTERM (Steps 1+4 stub-points in W4.4 graft-set).
+   *
+   * Steps:
+   *   1. Daemon-flush via lockfile-state-watch (W4.4 graft-set; sentinel below)
+   *   2. Per-repo publish-loop: squashCommit → push → openPullRequest;
+   *      `mission.publishStatus[repoName]` per-repo state-tracking; idempotent retry skips 'pr-opened'
+   *   3. Atomic-write `lifecycle-state: 'completed'` + `publishedPRs[]` via _engineMutate
+   *   4. SIGTERM daemon-watcher 60s + SIGKILL fallback (W4.4 graft-set; sentinel below)
+   *   5. Release mission-lock + repo-locks
+   *   6. Cleanup local mission-branches in each repo workspace
+   *   7. Destroy runtime workspace (per --retain not set)
+   *   8. (--purge-config only) delete <id>.yaml + .names/<slug>.yaml symlink atomically
+   *
+   * publishMessage immutability per v3.2 MEDIUM-R2.6: persisted at first-complete; new message-arg
+   * supplied by retry-invocation is IGNORED with operator-warning logged.
+   */
+  async complete(
+    id: string,
+    message: string,
+    opts: { purgeConfig?: boolean; retain?: boolean } = {},
+  ): Promise<MissionState> {
+    if (!message) {
+      throw new ConfigValidationError("Missioncraft.complete: message is required (per v3.0 Refinement #4)");
+    }
+    if (opts.retain && opts.purgeConfig) {
+      throw new ConfigValidationError(
+        "Missioncraft.complete: --retain and --purge-config are mutually exclusive (purge implies destroy)",
+      );
+    }
+
+    // Pre-flight: load config; verify pre-state
+    const path = this.missionConfigPath(id);
+    if (!existsSync(path)) {
+      throw new MissionStateError(`Missioncraft.complete: mission '${id}' not found`);
+    }
+    const initialContent = await readFile(path, 'utf8');
+    const initialConfig = parseMissionConfig(initialContent, path);
+    const currentState = initialConfig.mission.lifecycleState;
+    if (currentState !== 'in-progress' && currentState !== 'started') {
+      throw new MissionStateError(
+        `Missioncraft.complete: requires lifecycle 'in-progress' or 'started' (current: '${currentState}')`,
+      );
+    }
+
+    // publishMessage immutability per v3.2 MEDIUM-R2.6 — persisted at first-complete
+    const effectiveMessage = initialConfig.mission.publishMessage ?? message;
+    const messageWasOverridden = initialConfig.mission.publishMessage !== undefined && initialConfig.mission.publishMessage !== message;
+
+    // Acquire mission-lock + repo-locks (idempotent finally-block release)
+    const missionLock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
+    const repoLocks: LockHandle[] = [];
+    try {
+      for (const repo of initialConfig.repos) {
+        const lock = await this.storage.acquireRepoLock(repo.url, id, { waitMs: 0 });
+        repoLocks.push(lock);
+      }
+
+      // Persist publishMessage on first invocation (immutable post-write)
+      if (initialConfig.mission.publishMessage === undefined) {
+        await this._engineMutate(
+          id,
+          (config) => ({ ...config, mission: { ...config.mission, publishMessage: effectiveMessage } }),
+          {
+            validate: (config) =>
+              config.mission.lifecycleState === 'in-progress' || config.mission.lifecycleState === 'started'
+                ? null
+                : `transition rejected: expected 'in-progress' or 'started' got '${config.mission.lifecycleState}'`,
+            sourceLabel: `Missioncraft.complete.persist-message('${id}')`,
+          },
+        );
+      } else if (messageWasOverridden) {
+        // Operator-warning per v3.2 MEDIUM-R2.6 idempotent-retry semantic
+        // (no logger pluggable yet; emit to stderr — logger pluggable is W6 scope)
+        process.stderr.write(
+          `NOTE: complete already initiated for '${id}' with message '${initialConfig.mission.publishMessage}'; ` +
+            `retry uses original message; new message arg ignored. ` +
+            `To use a different message, abandon + re-create mission.\n`,
+        );
+      }
+
+      // W4.4-GRAFT: daemon-flush via lockfile-state-watch (publish-flow Step 1; pendingFlushBeforeComplete IPC field).
+      // No-op at W4.3 per stub-then-graft discipline; W4.4 will set pendingFlushBeforeComplete = true on lockfile,
+      // poll daemon-acknowledgment 30s, fallback to SIGTERM on timeout per v3.2 MEDIUM-R2.1.
+
+      // Step 2: per-repo publish-loop (squash + push + openPullRequest)
+      await this.runPublishLoop(id, initialConfig, effectiveMessage);
+
+      // Step 3: atomic-write 'lifecycle-state: completed' + finalize publishStatus
+      const finalConfig = await this._engineMutate(
+        id,
+        (config) => ({ ...config, mission: { ...config.mission, lifecycleState: 'completed' } }),
+        {
+          validate: (config) =>
+            config.mission.lifecycleState === 'in-progress' || config.mission.lifecycleState === 'started'
+              ? null
+              : `transition rejected: expected 'in-progress' or 'started' got '${config.mission.lifecycleState}'`,
+          sourceLabel: `Missioncraft.complete.step3-advance('${id}')`,
+        },
+      );
+
+      // W4.4-GRAFT: SIGTERM daemon-watcher 60s + SIGKILL fallback (publish-flow Step 4; per v3.2 MEDIUM-R2.1 + MEDIUM-R2.2).
+      // No-op at W4.3 per stub-then-graft discipline; W4.4 will process.kill(daemonPid, 'SIGTERM'),
+      // poll process.kill(pid, 0) up to MSN_DAEMON_SHUTDOWN_TIMEOUT_MS (default 60000), then SIGKILL.
+
+      // Step 6: cleanup local mission-branches (best-effort; non-aborting)
+      for (let i = 0; i < initialConfig.repos.length; i++) {
+        const lock = repoLocks[i];
+        const handles = await this.storage.list(id);
+        const handle = handles.find((h) => h.repoUrl === initialConfig.repos[i].url);
+        if (handle) {
+          try {
+            await this.gitEngine.deleteBranch(handle, `mission/${id}`, { force: true });
+          } catch {
+            /* best-effort; remote branch persists for PR-merge per spec */
+          }
+        }
+        void lock;
+      }
+
+      // Step 7: destroy workspace (per --retain not set)
+      if (!opts.retain) {
+        await this.storage.cleanup(id);
+      }
+
+      // Step 8: --purge-config delete config + name-symlink atomically
+      if (opts.purgeConfig) {
+        const symlinkPath = initialConfig.mission.name
+          ? join(this.workspaceRoot, 'config', '.names', `${initialConfig.mission.name}.yaml`)
+          : undefined;
+        try { await unlink(this.missionConfigPath(id)); } catch { /* idempotent */ }
+        if (symlinkPath) {
+          try { await unlink(symlinkPath); } catch { /* idempotent */ }
+        }
+      }
+
+      return this.missionConfigToState(finalConfig, this.principal);
+    } finally {
+      // Step 5: release locks (idempotent finally-block; runs even on partial-failure)
+      for (const lock of repoLocks) {
+        try { await this.storage.releaseLock(lock); } catch { /* idempotent */ }
+      }
+      try { await this.storage.releaseLock(missionLock); } catch { /* idempotent */ }
+    }
+  }
+
+  /**
+   * Per-repo publish-loop (complete() Step 2; Design v4.9 §2.4.1 v3.1+v3.3+v3.4 folds).
+   *
+   * Atomic across mission's repos; preserves partial state via `mission.publishStatus[<repoName>]`.
+   * Idempotent retry: skips repos already at 'pr-opened'; resumes from first non-'pr-opened'.
+   */
+  private async runPublishLoop(
+    missionId: string,
+    initialConfig: MissionConfig,
+    publishMessage: string,
+  ): Promise<void> {
+    for (const repo of initialConfig.repos) {
+      const repoName = repo.name ?? repoNameFromUrl(repo.url);
+      // Re-load latest publishStatus (may have advanced since we started loop)
+      const currentContent = await readFile(this.missionConfigPath(missionId), 'utf8');
+      const currentConfig = parseMissionConfig(currentContent, this.missionConfigPath(missionId));
+      const status = currentConfig.mission.publishStatus?.[repoName];
+      if (status === 'pr-opened') {
+        continue;        // idempotent retry — already published
+      }
+
+      const handles = await this.storage.list(missionId);
+      const handle = handles.find((h) => h.repoUrl === repo.url);
+      if (!handle) {
+        await this.recordPublishStatus(missionId, repoName, 'failed');
+        throw new MissionStateError(
+          `Missioncraft.complete: workspace handle missing for repo '${repoName}'; mission cannot publish; verify start() was called`,
+        );
+      }
+
+      try {
+        // Squash wip-commits via gitEngine.squashCommit (W2 default per HIGH-R3.1 dispatch-chain)
+        const baseRef = repo.base ?? 'main';
+        const headRef = `mission/${missionId}`;
+        if (typeof this.gitEngine.squashCommit === 'function') {
+          await this.gitEngine.squashCommit(handle, baseRef, headRef, publishMessage);
+        }
+        // (No fallback path at W4.3; engine-internal-fallback shell-out per MINOR-R4.1 = W4.x follow-on)
+        await this.recordPublishStatus(missionId, repoName, 'squashed');
+
+        // Push to remote (fast-forward; no force)
+        await this.gitEngine.push(handle, { branch: headRef });
+        await this.recordPublishStatus(missionId, repoName, 'pushed');
+
+        // Open PR via RemoteProvider (capability-gated; SKIP if not supported per F13)
+        if (this.remote && this.remote.capabilities.supportsPullRequests) {
+          const pr = await this.remote.openPullRequest(repo.url, {
+            head: headRef,
+            base: baseRef,
+            title: publishMessage,
+            body: `Automated mission-publish for ${missionId}`,
+          });
+          await this.recordPublishedPR(missionId, repoName, pr.url);
+        }
+        // Mark pr-opened regardless of capabilities (push-only mode also marks per spec line 1717)
+        await this.recordPublishStatus(missionId, repoName, 'pr-opened');
+      } catch (err) {
+        await this.recordPublishStatus(missionId, repoName, 'failed');
+        throw err;        // Re-throw; partial-state preserved for idempotent retry
+      }
+    }
+  }
+
+  /** Atomic Record-key update of publishStatus[repoName] per _engineMutate primitive. */
+  private async recordPublishStatus(
+    missionId: string,
+    repoName: string,
+    status: 'pending' | 'squashed' | 'pushed' | 'pr-opened' | 'failed',
+  ): Promise<void> {
+    await this._engineMutate(
+      missionId,
+      (config) => ({
+        ...config,
+        mission: {
+          ...config.mission,
+          publishStatus: { ...(config.mission.publishStatus ?? {}), [repoName]: status },
+        },
+      }),
+      {
+        validate: (config) =>
+          config.mission.lifecycleState === 'in-progress' || config.mission.lifecycleState === 'started'
+            ? null
+            : `publish-status update rejected: lifecycle '${config.mission.lifecycleState}' not in [in-progress, started]`,
+        sourceLabel: `Missioncraft.complete.publishStatus['${repoName}']('${missionId}')`,
+      },
+    );
+  }
+
+  /** Atomic append to publishedPRs[] per _engineMutate primitive. */
+  private async recordPublishedPR(missionId: string, repoName: string, prUrl: string): Promise<void> {
+    await this._engineMutate(
+      missionId,
+      (config) => ({
+        ...config,
+        mission: {
+          ...config.mission,
+          publishedPRs: [...(config.mission.publishedPRs ?? []), { repoName, prUrl }],
+        },
+      }),
+      {
+        validate: (config) =>
+          config.mission.lifecycleState === 'in-progress' || config.mission.lifecycleState === 'started'
+            ? null
+            : `publishedPRs append rejected: lifecycle '${config.mission.lifecycleState}' not in [in-progress, started]`,
+        sourceLabel: `Missioncraft.complete.publishedPRs.append('${missionId}', '${repoName}')`,
+      },
+    );
   }
 
   async abandon(id: string, message: string, _opts?: { purgeConfig?: boolean }): Promise<MissionState> {
@@ -591,6 +842,13 @@ export class Missioncraft {
       storageProviderName: extractProviderName(this.storage),
       gitEngineProviderName: extractProviderName(this.gitEngine),
       ...(this.remote !== undefined && { remoteProviderName: extractProviderName(this.remote) }),
+      // W4.3 publish-flow + abandon-flow runtime-state
+      ...(m.publishMessage !== undefined && { publishMessage: m.publishMessage }),
+      ...(m.abandonMessage !== undefined && { abandonMessage: m.abandonMessage }),
+      ...(m.publishStatus !== undefined && { publishStatus: m.publishStatus }),
+      ...(m.publishedPRs !== undefined && { publishedPRs: m.publishedPRs }),
+      ...(m.abandonProgress !== undefined && { abandonProgress: m.abandonProgress }),
+      ...(m.abandonRepoStatus !== undefined && { abandonRepoStatus: m.abandonRepoStatus }),
     };
   }
 

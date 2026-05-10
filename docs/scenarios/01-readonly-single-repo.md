@@ -80,6 +80,8 @@ msn --help
 
 Expected: grammar dispatch + verb-list including `create / list / show / start / apply / update / complete / abandon / tick / scope / workspace / config / join / leave / --help / --version`.
 
+**Note**: Pre-v1.0.2 (v1.0.0), `msn --help` silent-failed (exit 0; zero stdout) via shebang+symlink `isMainModule` guard mismatch — Node 24 default `--preserve-symlinks-main=false` resolves `import.meta.url` to realpath while `process.argv[1]` retains symlink path; equality fails; `main()` never invoked. Fixed in v1.0.1 commit `87bf370` via symlink-safe `fileURLToPath(import.meta.url) === realpathSync(argv[1])` guard.
+
 ### Step 2 — Create mission
 
 ```bash
@@ -150,7 +152,7 @@ msn-99c369ee  test-readonly  configured  1
 msn start <mission-id>
 ```
 
-Performs the 9-step `configured → started` transition:
+Performs the 7-step `configured → started` transition:
 1. Validate pre-state (lifecycle `configured` + ≥1 repo)
 2. Acquire mission-lock + per-repo locks
 3. Allocate workspace per repo via `LocalFilesystemStorage`
@@ -191,8 +193,9 @@ vitest.config.ts
 
 ```bash
 ls ~/.missioncraft/locks/missions/ 2>&1
-# Get daemon-pid from lockfile JSON:
-DAEMON_PID=$(cat ~/.missioncraft/locks/missions/<mission-id>.lock | jq -r '.pid // empty')
+# Get daemon-pid from lockfile JSON (re-source from disk on each step; do not rely on shell-var across sessions):
+MISSION_ID=<mission-id>
+DAEMON_PID=$(jq -r '.pid // empty' ~/.missioncraft/locks/missions/$MISSION_ID.lock)
 echo "daemon-pid=$DAEMON_PID"
 ps -p $DAEMON_PID 2>&1
 ```
@@ -280,7 +283,8 @@ Verify daemon does NOT push to remote (single-participant; `coordinationRemote` 
 sleep 10
 # Verify no remote-side activity by checking the mission's wip-branch was NOT pushed
 # (remote ls-remote should NOT show refs/heads/<repoName>/wip/<missionId>)
-git ls-remote https://github.com/apnex/missioncraft.git 2>&1 | grep "wip/$<mission-id>" || echo "✓ no remote wip-branch (read-only boundary preserved)"
+MISSION_ID=<mission-id>
+git ls-remote https://github.com/apnex/missioncraft.git 2>&1 | grep "wip/$MISSION_ID" || echo "✓ no remote wip-branch (read-only boundary preserved)"
 ```
 
 Expected: no remote wip-branch ref; read-only boundary preserved.
@@ -356,9 +360,13 @@ Output:
 ### Step 12 — Verify workspace cleaned + daemon dead
 
 ```bash
-ls ~/.missioncraft/missions/<mission-id>/ 2>&1 || echo "✓ workspace removed"
-ps -p $DAEMON_PID 2>&1 || echo "✓ daemon process exited"
-ls ~/.missioncraft/config/<mission-id>.yaml 2>&1
+MISSION_ID=<mission-id>
+ls ~/.missioncraft/missions/$MISSION_ID/ 2>&1 || echo "✓ workspace removed"
+# Re-source daemon-pid from lockfile if shell-session lost the var
+# (lockfile may already be unlinked by abandon Step 4; fall back to $DAEMON_PID if set)
+[ -f ~/.missioncraft/locks/missions/$MISSION_ID.lock ] && DAEMON_PID=$(jq -r '.pid // empty' ~/.missioncraft/locks/missions/$MISSION_ID.lock)
+[ -n "$DAEMON_PID" ] && ps -p $DAEMON_PID 2>&1 || echo "✓ daemon process exited"
+ls ~/.missioncraft/config/$MISSION_ID.yaml 2>&1
 ```
 
 Expected:
@@ -388,7 +396,7 @@ Actual output (v1.0.2):
 (exit=0)
 ```
 
-**Known UX gap (v1.0.2)**: `msn workspace <id>` resolves the path from mission-config `repos[]` regardless of workspace-presence-on-disk. Post-abandon, the workspace directory is destroyed but the CLI returns the (now-stale) path. Operator should check lifecycle-state via `msn show <id>` before relying on workspace-path resolution post-terminal. Tracked for v1.x follow-on: `workspace` should error on terminal-state OR include a `fs.existsSync` guard with operator-error message ("workspace destroyed; mission in terminal state").
+**Known UX gap (v1.0.2)**: `msn workspace <id>` resolves the path from mission-config `repos[]` regardless of workspace-presence-on-disk. Post-abandon, the workspace directory is destroyed but the CLI returns the (now-stale) path. Operator should check lifecycle-state via `msn show <id>` before relying on workspace-path resolution post-terminal. **Tracked as `idea-268`** (terminal-state-guard for `msn workspace`; route-a; v1.0.x roadmap candidate).
 
 ---
 
@@ -428,12 +436,9 @@ Removes all mission configs + remaining workspaces + lockfiles.
 
 ## §7 Companion scenarios (forward-pointers)
 
-- **02-readwrite-single-repo.md** — full `complete` flow with push + PR-open against owned repo
-- **03-multi-repo-mission.md** — single mission spanning 2+ repos
-- **04-abandon-with-retain-and-purge.md** — `--retain` workspace preservation + `--purge-config` permanent removal
-- **05-multi-participant-writer-reader.md** — `msn join` + reader-daemon Loop B + cross-host coordination via `--coord-remote`
-- **06-disk-failure-recovery.md** — bundle-ops restore from snapshotRoot (`rm -rf workspaceRoot` recovery)
-- **07-substrate-coordinate-addressing.md** — Rule N coord-form patterns for multi-repo missions
+- **02-readwrite-single-repo.md** — full `complete` flow with push + PR-open against owned repo; covers `--retain` + `--purge-config` abandon-flag variants as sub-sections
+- **03-multi-repo-mission.md** — single mission spanning 2+ repos; covers Rule N coord-form patterns (substrate-coordinate addressing) for multi-repo workspace-switching
+- **04-multi-participant-writer-reader.md** — `msn join` + reader-daemon Loop B + cross-host coordination via `--coord-remote`; covers disk-failure recovery (bundle-ops restore from snapshotRoot; `rm -rf workspaceRoot` recovery) as durability-mode sub-section
 
 ---
 

@@ -94,3 +94,10 @@ export {
 // ─── Default implementations (Design v4.8 §2.1.x — operator imports + injects via Missioncraft constructor) ───
 export { TrustAllPolicy } from './defaults/trust-all-policy.js';
 export { LocalGitConfigIdentity } from './defaults/local-git-config-identity.js';
+
+// ─── RemoteProvider implementations (Design v4.8 §2.1.5) ───
+export { PureGitRemoteProvider } from './providers/pure-git-remote-provider.js';
+export {
+  GitHubRemoteProvider,
+  type GitHubRemoteProviderOptions,
+} from './providers/github-remote-provider.js';

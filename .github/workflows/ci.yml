@@ -26,6 +26,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # CI runner needs git config user.name/email set for LocalGitConfigIdentity tests
+      # (Design v4.8 §2.1.1 default-impl shells `git config --get user.name/email`).
+      - name: Configure git identity (CI test fixture)
+        run: |
+          git config --global user.name "ci-runner"
+          git config --global user.email "ci@apnex.example"
+
       - name: tsc-build
         run: npm run build
 

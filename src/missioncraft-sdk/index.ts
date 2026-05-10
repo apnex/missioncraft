@@ -90,3 +90,7 @@ export {
   UnsupportedOperationError,
   NetworkRetryExhaustedError,
 } from './errors.js';
+
+// ─── Default implementations (Design v4.8 §2.1.x — operator imports + injects via Missioncraft constructor) ───
+export { TrustAllPolicy } from './defaults/trust-all-policy.js';
+export { LocalGitConfigIdentity } from './defaults/local-git-config-identity.js';

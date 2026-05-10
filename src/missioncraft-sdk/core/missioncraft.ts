@@ -223,9 +223,14 @@ export class Missioncraft {
   // ─── Mission-specific verbs (W4.3 runtime-impl wiring) ───
 
   /**
-   * 9-step configured → started → in-progress transition (Design v4.9 §2.4.1).
+   * 9-step configured → started transition (Design v4.9 §2.4.1; v3.2 MEDIUM-R2.4 reorder).
    *
-   * W4.3 LITE: implements full transition LESS daemon-spawn (Step 6 stub-point in W4.4 graft-set).
+   * W4.3 LITE: implements full configured → started transition LESS daemon-spawn (Step 6
+   * stub-point in W4.4 graft-set). End-state is `'started'` per spec line 1542 (transient
+   * state — short-lived, not unpersisted; persisted briefly until daemon-tick fires
+   * `started → in-progress` advance per state-machine table line 1505 = "operator does work"
+   * fired by daemon-tick = W4.4 territory).
+   *
    * Daemon-watcher process model + LockfileState IPC fields = W4.4 scope per per-sub-phase
    * pattern; W4.3 keeps state-machine FSM logic independent of daemon process-model.
    *
@@ -236,7 +241,7 @@ export class Missioncraft {
    *   4. Clone repos via gitEngine.clone
    *   5. Atomic-write lifecycle 'configured' → 'started' (transient) via _engineMutate
    *   6. Daemon-spawn (W4.4 graft-set; see sentinel-comment at the Step 6 position below)
-   *   7. Atomic-write lifecycle 'started' → 'in-progress' via _engineMutate
+   *   7. (W4.4 territory) `started → in-progress` advance fired by daemon-tick (NOT start())
    *   8. Release locks
    */
   async start(input: string | { config: MissionConfig }): Promise<MissionHandle> {
@@ -305,18 +310,11 @@ export class Missioncraft {
       //   const daemonPid = await spawnDaemonWatcher(missionId, workspaceHandles, this.principal);
       //   lockfile.pid = daemonPid; lockfile.startTime = Date.now(); etc. per LockfileState IPC fields.
 
-      // Step 7: atomic-write lifecycle 'started' → 'in-progress' (post-daemon-spawn per ordering invariant)
-      await this._engineMutate(
-        missionId,
-        (config) => ({ ...config, mission: { ...config.mission, lifecycleState: 'in-progress' } }),
-        {
-          validate: (config) =>
-            config.mission.lifecycleState === 'started'
-              ? null
-              : `transition rejected: expected 'started' got '${config.mission.lifecycleState}'`,
-          sourceLabel: `Missioncraft.start.step7-complete('${missionId}')`,
-        },
-      );
+      // Step 7 (W4.4 territory): `started → in-progress` advance is daemon-tick-driven per
+      // Design v4.9 §2.4.1 line 1505 state-machine table ("operator does work" = daemon-tick).
+      // start() ends at 'started' (transient state per line 1542); preserves v3.2 MEDIUM-R2.4
+      // clean-rollback invariant — daemon-spawn failure leaves YAML at 'started' and W4.4
+      // graft will add YAML-rollback to 'configured' on spawn-failure.
     } finally {
       // Step 8: release locks (idempotent on already-released)
       for (const lock of repoLocks) {

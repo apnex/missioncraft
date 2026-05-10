@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: vitest (missioncraft) — node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: tsc-build
+        run: npm run build
+
+      - name: vitest (missioncraft)
+        run: npm test
+
+      # v0.3 fold per §FF + F22; v0.4 fold per §DDD.3; v0.5 fix per §BBBB
+      # Event-conditional: github.base_ref is empty on push events, only populated on pull_request
+      - name: Changeset gate
+        if: github.event_name == 'pull_request'
+        run: npx changeset status --since=${{ github.base_ref }}

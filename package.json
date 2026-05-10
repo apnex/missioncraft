@@ -1,0 +1,57 @@
+{
+  "name": "@apnex/missioncraft",
+  "version": "1.0.0",
+  "description": "Sovereign mission-orchestration substrate — declarative mission resources spanning 1+ git repos",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/missioncraft-sdk/index.js",
+  "types": "./dist/missioncraft-sdk/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/missioncraft-sdk/index.d.ts",
+      "import": "./dist/missioncraft-sdk/index.js"
+    }
+  },
+  "bin": {
+    "msn": "./dist/missioncraft-cli/bin.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:sdk": "vitest run test/missioncraft-sdk",
+    "test:cli": "vitest run test/missioncraft-cli",
+    "test:watch": "vitest",
+    "docs": "typedoc src/missioncraft-sdk/index.ts",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.0",
+    "isomorphic-git": "^1.27.0",
+    "yaml": "^2.6.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^4.0.0",
+    "typedoc": "^0.28.0",
+    "memfs": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/apnex/missioncraft.git"
+  }
+}

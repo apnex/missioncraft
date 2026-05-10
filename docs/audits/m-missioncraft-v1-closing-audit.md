@@ -29,23 +29,26 @@
 | W5c slice (iii) | `7a5fb52` | +4 | Real-engine integration tests + W5 closing audit |
 | W6 slice (i) | `d07c44d` | +2 | Real-engine start() happy-path |
 | W6 slice (ii) | `781dc0d` | +3 | Real-engine W5c-deferred carry-overs + storage.list hidden-dir filter |
-| W6 slice (iii) | (this audit's predecessor) | +2 | Network-partition resilience + mission-class signature audit-pass coverage map |
+| W6 slice (iii)+(iv) bundled | `b306c6d` | +2 | Network-partition resilience + mission-class signature audit-pass + closing-audit-v1 + npm publish-prep (Director (Y) directive arrived post-commit; closing-audit revised this slice) |
+| W6 slice (v) | `df5b8ae` | +11 | **Bundle-ops substrate-extension per Director (Y)**: GitEngine.createBundle?/restoreBundle? + snapshot.ts module + SDK snapshotWipBranches/restoreFromSnapshot + daemon-watcher hook + end-to-end disk-failure recovery test |
+| W6 slice (vi) | (this commit) | +N | **Closing-audit revision** post bundle-ops ship: removes #3 v1.x carry-forward + adds bundle-ops to architectural ship-shape + refreshes npm pack --dry-run artifact |
 
-**Total commits across mission-77 W0–W6**: ~38 (precise list via `git log --oneline` on `apnex/missioncraft:main`)
-**Total tests landed**: **162 baseline → 247 final** (+85 net across mission)
+**Total commits across mission-77 W0–W6**: ~40 (precise list via `git log --oneline` on `apnex/missioncraft:main`)
+**Total tests landed**: **162 baseline → 258+ final** (+96+ net across mission)
 **CI**: green at every wave-close
 **Substrate-currency discipline**: 4 consecutive waves (W5a + W5b + W5c + W6) shipped without drift-catch + spot-fix cycle (W4.3 `adf7ba1` + W4.4 `670b6c5` were the corrective precedents)
+**Director (Y) directive at thread-526 round 5**: extended W6 with bundle-ops substrate (slice v) — substrate-completeness restored at v1.0.0; no carry-forward gaps on architecturally-complete shape
 
 ---
 
 ## Architectural ship-shape
 
-### Pluggable interfaces (5)
+### Pluggable interfaces (5; frozen-API)
 
 - `IdentityProvider` (§2.1.1)
 - `ApprovalPolicy` (§2.1.2)
 - `StorageProvider` (§2.1.3) + `LocalFilesystemStorage` default
-- `GitEngine` (§2.1.4) + `IsomorphicGitEngine` default
+- `GitEngine` (§2.1.4) + `IsomorphicGitEngine` default — capability-gated optional methods: `squashCommit?` (W3 §2.1.4 v0.6) + `createBundle?` + `restoreBundle?` (W6 slice (v) Director (Y); §2.6.2 v0.4 §AAA bundle-ops)
 - `RemoteProvider` (§2.1.5) + `PureGitRemoteProvider` (null-object) + `GitHubRemoteProvider` (gh-cli wrapper)
 
 ### SDK surface (16 methods per v4.x consolidation)
@@ -64,6 +67,7 @@ Engine-internal methods (cascade-state writes via `_engineMutate`):
 - `propagateConfigToCoordRemote` — config-mutation propagation (W5b slice ii)
 - `cascadeTerminated` / `cascadeConfigUpdate` — reader-side cascade handlers (W5c slice i)
 - `readerLoopBTick` — reader-daemon Loop B orchestration (W5c slice i)
+- `snapshotWipBranches` / `restoreFromSnapshot` — disk-failure recovery via bundle-ops (W6 slice v Director (Y))
 
 ### CLI surface (15 reserved verbs)
 
@@ -92,9 +96,15 @@ ${workspaceRoot}/
   locks/scopes/<scope-id>.lock                  # per-scope lock
   scopes/<scope-id>.yaml + .names/              # scope-config + name-symlink
   operator.yaml                                 # operator-config
+
+../.missioncraft-snapshots/                     # OUT-OF-BAND from workspaceRoot (W6 slice v)
+  <missionId>/<repoName>/<sha>.bundle           # disk-failure recovery bundle-ops snapshots
+                                                # all-bundles-retained; mtime-based latest-pick
 ```
 
 `storage.list` filters hidden dirs (engine-internal artifacts excluded from operator-visible workspace listing per W6 slice (ii) hygiene fold).
+
+**Snapshot location** is sibling-of-workspaceRoot by default (`<workspaceRoot>/../.missioncraft-snapshots/`) so `rm -rf workspaceRoot` mid-mission preserves the snapshot tree for recovery (per Design v4.9 §2.6.2 v0.4 §AAA bundle-ops mechanism). Operator-config `mission.stateDurability.snapshotRoot` overrides if explicit-path needed.
 
 ### Coord-remote ref schema (per §2.10 multi-participant)
 
@@ -118,24 +128,27 @@ ${workspaceRoot}/
 9. (W5b slice ii) §2.4 workspace-contract consolidation prose: `.daemon.log` + `.daemon-state.yaml` + `.daemon-tx-active` sentinel + `.config-mirror/` per-mission engine-internal artifacts
 10. (W5c slice i) §2.1.4 GitEngine-implementation-mapping: isomorphic-git API doesn't expose `--tags --prune` fetch; reader-daemon Loop B native-git shell-out per §2.6.2 v0.4 §AAA bundle-ops breach pattern
 11. (W5c slice i) §2.6.5 v3.0 spec: sentinel-file MUST be placed at workspace's parent dir, not inside the chmod-down workspace
-12. **(W6 slice i)** Substrate-completeness gap: bundle-ops disk-failure recovery (§2.6.2 + W4.4 §5 spec'd; not implemented; v1.x carry-forward) — Director-flagged at slice (iv) closing-audit pre-publish
+12. **(W6 slice v)** Design §2.6.2 implementation-mapping prose-update: bundle-ops native-git shell-out canonicals (`git bundle create` / `git bundle unbundle` + `git update-ref`) + snapshotRoot directory layout (`<snapshotRoot>/<missionId>/<repoName>/<sha>.bundle`) + bundle naming/retention discipline (all-bundles-retained with mtime-based latest-pick) + slice (v) implementation reference (`df5b8ae`)
 
-All 12 items are PATCH-grade design-prose-extensions (not substrate-impl gaps EXCEPT item #12 which is a substantive substrate-completeness gap surfaced explicitly here per architect-pre-publish discipline).
+All 12 items are PATCH-grade design-prose-extensions. **Item #12 evolved per Director (Y) directive** — was substrate-completeness gap (v1.x carry-forward); now design-prose-update reflecting slice (v) implementation reference. Substrate-completeness restored at v1.0.0; no carry-forward gaps on architecturally-complete shape.
 
 ---
 
 ## v1.0.0 known carry-forwards to v1.x
 
-Per Q5=b §2.7 bounded test surface boundary + architect-ratified W6 slice (i) dispositions:
+Per Q5=b §2.7 bounded test surface boundary + architect-ratified W6 slice (i) dispositions; **Director (Y) directive at thread-526 round 5 removed the substantive substrate-completeness gap from carry-forwards** (bundle-ops now ships at v1.0.0 per W6 slice (v) `df5b8ae`).
 
-### Substrate-impl gaps (v1.x scope)
+### Substrate-impl gaps
 
-- **Bundle-ops disk-failure recovery** (v4.10 PATCH item #12): §2.6.2 specified `git bundle create/extract` for `snapshotRoot` durability mechanism but NO SDK-level primitives implemented. Mission-77 v1.0.0 ships with 2 of 3 durability-modes (process-crash via wip-branch + network-partition via push retry-loop); disk-failure deferred to v1.x substrate-extension.
-- **Cross-mechanism crash test** (W4.4-deferred #2): Q5=b §2.7 "NO chaos / fault-injection tests" boundary applies; deferred to v1.x post-strict-1.0.
+**NONE** — Director (Y) directive extended W6 to include bundle-ops substrate. Mission-77 v1.0.0 ships **3 of 3 durability-modes complete**:
+- ✓ Process-crash recovery (W4.4 wip-branch + dead-pid 7-step)
+- ✓ Network-partition resilience (W5b push retry-loop + W6 slice (iii) signature test)
+- ✓ Disk-failure recovery (W6 slice (v) bundle-ops; this audit's predecessor)
 
 ### Test-coverage gaps (CI-matrix-only or skip)
 
 - **gh pr view deeper coverage** (W4.4-deferred #4): partial coverage at `remote-providers.test.ts:65` (gh CLI presence + version-validation); deeper PR-flow tests require gh-auth + real GitHub repo (CI-matrix-only or skip per existing pattern).
+- **Cross-mechanism crash test** (W4.4-deferred #2): Q5=b §2.7 "NO chaos / fault-injection tests" boundary applies; deferred to v1.x post-strict-1.0.
 
 ### Strict-1.0 commitment honored
 
@@ -164,17 +177,19 @@ Per Q5=b §2.7 bounded test surface boundary + architect-ratified W6 slice (i) d
 
 Per Q1 disposition at thread-526 round 2 (engineer-architect-bilateral; Director directive carry-forward): publish authorization mechanism **(γ) Director-direct npm publish** — engineer ships publish-ready commit + tag; Director executes terminal `npm publish --access public` from their machine retains npm-token authority for the `@apnex` scope.
 
-### Pre-publish artifact (`npm pack --dry-run` summary)
+### Pre-publish artifact (`npm pack --dry-run` summary; refreshed post slice (v) bundle-ops)
 
 ```
 name: @apnex/missioncraft
 version: 1.0.0
 filename: apnex-missioncraft-1.0.0.tgz
-package size: 137.7 kB
-unpacked size: 613.2 kB
-shasum: 0db05cd4658dba4650db7483274cbf6ebfd38416
-total files: 163
+package size: 143.6 kB
+unpacked size: 640.1 kB
+shasum: ff1767caa18b7d4da69fff8e54b09c65d776e834
+total files: 167
 ```
+
+(+5.9 kB packed / +26.9 kB unpacked / +4 files vs pre-slice-(v) artifact at `b306c6d` — accounts for `core/snapshot.ts` module + `IsomorphicGitEngine.createBundle/restoreBundle` impl + bundle-ops integration in `core/missioncraft.ts`.)
 
 **Director pre-publish verification checklist:**
 - [ ] `dist/` tree present (sovereign-module split: `dist/missioncraft-sdk/` + `dist/missioncraft-cli/`)
@@ -209,6 +224,6 @@ Per Phase 8 → Phase 9 → Phase 10 lifecycle:
 
 - 4 waves consecutive (W5a + W5b + W5c + W6) shipped substrate-currency-clean — first sustained pattern this session.
 - Pattern A engineer-turn discipline ratified bilaterally (memory `feedback_pattern_a_engineer_turn_discipline.md`): combine sub-slice plan + START SIGNAL + first-milestone surface; skip ack-only AND plan-only courtesy rounds.
-- v4.10 PATCH bundle (12 items) carries architect-side design-prose-extensions; informs v1.x roadmap via item #12 substantive substrate-completeness gap (bundle-ops disk-failure).
+- v4.10 PATCH bundle (12 items) carries architect-side design-prose-extensions; informs v1.x roadmap. **Director (Y) directive at thread-526 round 5 removed the substantive substrate-completeness gap from carry-forwards — bundle-ops disk-failure ships at v1.0.0 per W6 slice (v); item #12 evolved to design-prose-update reflecting slice (v) implementation reference.**
 
-**Mission-77 substrate-impl arc complete; v1.0.0 publish-ready pending Director-direct npm publish.**
+**Mission-77 substrate-impl arc complete with 3 of 3 durability-modes ✓; v1.0.0 publish-ready pending Director-direct npm publish.**

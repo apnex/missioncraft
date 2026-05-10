@@ -76,6 +76,12 @@ export { OperatorConfigSchema } from './core/operator-config-schema.js';
 
 // ─── Engine-side helpers ───
 export { deriveOwningPrincipalRole } from './core/role-derivation.js';
+export {
+  parseMissionConfig,
+  serializeMissionConfig,
+  kebabToCamelObject,
+  camelToKebabObject,
+} from './core/yaml-transform.js';
 
 // ─── Error class hierarchy (10 classes; flat under MissioncraftError base per F18 v0.3 §BB) ───
 export {

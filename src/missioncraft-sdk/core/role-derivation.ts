@@ -12,28 +12,51 @@
  *
  * Per HIGH-R1.2 partition-spec (Design v4.8 §2.10.9):
  * - Each principal holds own per-principal `<workspace>/config/<id>.yaml`
- * - Engine knows config's owning-principal from file-path mapping
- * - Writer's workspace if owning-OS-user matches writer-principal-resolution; reader's workspace otherwise
+ * - Engine knows config's owning-principal from file-path mapping via OperatorConfig.workspaceRootByPrincipal
+ * - Owning-principal compared against currentPrincipal → writer (match) | reader (mismatch) | writer (no map = legacy)
+ *
+ * W5 slice (i) impl: full per-principal partition-spec lookup per OperatorConfig.workspaceRootByPrincipal map.
  *
  * @param configFilePath - absolute path to mission-config YAML
- * @param currentPrincipal - optional current-principal context (per §2.3.1 4-step precedence chain);
- *                          if provided, resolves owner-principal vs current-principal for reader-vs-writer determination
+ * @param currentPrincipal - optional current-principal context (per §2.3.1 4-step precedence chain)
+ * @param workspaceRootByPrincipal - optional map from principal-id → workspace-root path; from OperatorConfig
  * @returns 'writer' | 'reader' — used by makeMissionConfigSchema(role) factory at parse-site
- *
- * W1 placeholder semantic: defaults to 'writer' for v3.6-baseline-compatible behavior (legacy single-principal missions never reach reader-states; default-writer-validation is no-op for them).
- * Reader detection requires participants[] inspection AT PARSE-TIME — chicken-and-egg with schema validation; W2+ engine-side resolves via two-phase parse (base parse → role-derivation → role-aware re-parse).
  */
 export function deriveOwningPrincipalRole(
   configFilePath: string,
   currentPrincipal?: string,
+  workspaceRootByPrincipal?: Record<string, string>,
 ): 'writer' | 'reader' {
-  // W1: default to writer per backward-compat semantic
-  // (V3.6-baseline missions have NO reader-side states; default-writer parse-validation is no-op for them)
-  // W2+ TODO: implement full per-principal partition-spec lookup:
-  //   1. parse `<workspace>/operator.yaml` for `defaults.workspace-root-by-principal` map
-  //   2. find principal whose workspace-root-prefix matches configFilePath
-  //   3. compare against currentPrincipal (or IdentityProvider.resolve()) to determine writer-vs-reader
-  void configFilePath;
-  void currentPrincipal;
-  return 'writer';
+  // No principal map OR no current-principal → default writer (v3.6-baseline single-principal compat)
+  if (!workspaceRootByPrincipal || !currentPrincipal) return 'writer';
+
+  // Find owning-principal: longest-prefix-match of configFilePath against workspace-root values
+  // (handles nested workspace-roots; longest-match wins per HIGH-R1.2 partition-spec)
+  let owningPrincipal: string | undefined;
+  let longestMatchLen = 0;
+  for (const [principal, root] of Object.entries(workspaceRootByPrincipal)) {
+    if (configFilePath.startsWith(root) && root.length > longestMatchLen) {
+      owningPrincipal = principal;
+      longestMatchLen = root.length;
+    }
+  }
+
+  // No owning-principal match → default writer (legacy single-principal compat)
+  if (!owningPrincipal) return 'writer';
+
+  // Owning-principal == current-principal → writer; else → reader
+  return owningPrincipal === currentPrincipal ? 'writer' : 'reader';
+}
+
+/**
+ * Canonicalize a coordinationRemote git-URL per Design v4.8 §2.10.4 wire-format normalization.
+ * Strips trailing slash; lowercases scheme; preserves path-case (case-sensitive on remote).
+ */
+export function canonicalizeCoordinationRemote(url: string): string {
+  let canonical = url.trim();
+  // Strip trailing slash (single)
+  if (canonical.endsWith('/')) canonical = canonical.slice(0, -1);
+  // Lowercase scheme (https / git / ssh / file are case-insensitive per RFC 3986)
+  canonical = canonical.replace(/^(\w+):\/\//, (_, scheme: string) => `${scheme.toLowerCase()}://`);
+  return canonical;
 }

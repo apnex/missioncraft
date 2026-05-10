@@ -106,13 +106,42 @@ async function main(): Promise<void> {
     awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 100 },
   });
 
+  // Process-crash recovery (slice iii follow-on): wip-commit-on-debounce per Design v0.2 §B.1.
+  // SDK-bootstrapped Missioncraft instance (mc) provides storage + gitEngine pluggable access.
+  // Per workspace: gitEngine.commitToRef(workspace, 'refs/heads/wip/<missionId>', ...) commits
+  // current working-tree state to wip-branch WITHOUT moving HEAD WITHOUT polluting INDEX.
+  let mcSdk: Missioncraft;
+  try {
+    mcSdk = new Missioncraft({ workspaceRoot });
+  } catch {
+    process.stderr.write(`watcher-entry: SDK bootstrap failed for wip-commit; daemon continues with no wip-cadence\n`);
+    mcSdk = undefined as unknown as Missioncraft;
+  }
+
   watcher.on('change', () => {
-    // Debounced wip-commit (slice ii enriches with actual commitToRef invocation per Design §2.6.5)
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      // TODO slice (ii): invoke gitEngine.commitToRef(workspace, 'refs/heads/wip/<missionId>', ...)
-      // for each repo workspace. Slice (i) MVP: just clear timer (debounce-fire marker).
       debounceTimer = undefined;
+      void (async () => {
+        if (!mcSdk) return;
+        try {
+          const handles = await mcSdk.storage.list(missionId);
+          const identity = await mcSdk.identity.resolve();
+          for (const handle of handles) {
+            try {
+              await mcSdk.gitEngine.commitToRef(handle, `refs/heads/wip/${missionId}`, {
+                message: `[wip] auto-commit ${new Date().toISOString()}`,
+                author: identity,
+                autoStage: true,
+              });
+            } catch {
+              // Per-repo wip-commit failure is non-aborting; daemon continues watching
+            }
+          }
+        } catch {
+          // Storage.list / identity.resolve failure → skip wip-commit cycle
+        }
+      })();
     }, DEBOUNCE_MS);
   });
 

@@ -556,8 +556,9 @@ export class Missioncraft {
         // (No fallback path at W4.3; engine-internal-fallback shell-out per MINOR-R4.1 = W4.x follow-on)
         await this.recordPublishStatus(missionId, repoName, 'squashed');
 
-        // Push to remote (fast-forward; no force)
-        await this.gitEngine.push(handle, { branch: headRef });
+        // Push to remote (fast-forward; no force) with network-partition retry per §2.6.3.
+        // Exponential backoff: 100ms, 400ms, 1600ms (3 attempts max; ~2.1s total max delay).
+        await this.pushWithRetry(handle, headRef);
         await this.recordPublishStatus(missionId, repoName, 'pushed');
 
         // Open PR via RemoteProvider (capability-gated; SKIP if not supported per F13)
@@ -577,6 +578,27 @@ export class Missioncraft {
         throw err;        // Re-throw; partial-state preserved for idempotent retry
       }
     }
+  }
+
+  /**
+   * Push with network-partition retry (Design v4.9 §2.6.3 — exponential backoff).
+   * 3 attempts max; backoff 100ms → 400ms → 1600ms (~2.1s total).
+   */
+  private async pushWithRetry(handle: WorkspaceHandle, branch: string): Promise<void> {
+    const backoffsMs = [100, 400, 1600];
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= backoffsMs.length; attempt++) {
+      try {
+        await this.gitEngine.push(handle, { branch });
+        return;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < backoffsMs.length) {
+          await new Promise((r) => setTimeout(r, backoffsMs[attempt]));
+        }
+      }
+    }
+    throw lastErr;
   }
 
   /** Atomic Record-key update of publishStatus[repoName] per _engineMutate primitive. */

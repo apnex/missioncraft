@@ -76,3 +76,17 @@ export { OperatorConfigSchema } from './core/operator-config-schema.js';
 
 // ─── Engine-side helpers ───
 export { deriveOwningPrincipalRole } from './core/role-derivation.js';
+
+// ─── Error class hierarchy (10 classes; flat under MissioncraftError base per F18 v0.3 §BB) ───
+export {
+  MissioncraftError,
+  LockTimeoutError,
+  StorageAllocationError,
+  RemoteAuthError,
+  ApprovalDeniedError,
+  MissionStateError,
+  WorkspaceConflictError,
+  ConfigValidationError,
+  UnsupportedOperationError,
+  NetworkRetryExhaustedError,
+} from './errors.js';

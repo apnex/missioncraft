@@ -1434,9 +1434,40 @@ export class Missioncraft {
         workspaceHandles.push(ws);
       }
 
-      // Step 5: SUBSTRATE-BYPASS clone-step (W5b only; HTTP-server fixture at W5c per (α))
-      // Real-engine clone via this.gitEngine.clone(workspace, canonicalRemote, ...) lands at W5c.
-      void canonicalRemote;
+      // Step 5: real-engine fetch + checkout from coord-remote per W6 slice (ii) impl-extension.
+      // Uses W5c slice (i) coord-mirror primitives (ensureCoordMirrorInit + fetchCoordRemote +
+      // git checkout from cached git-dir) — best-effort: failure (e.g., file:// stub URL in
+      // backwards-compat tests) preserves substrate-bypass behavior. Production reader-side
+      // first-join with valid HTTP coord-remote fetches wip-branch content into workspace.
+      try {
+        const { ensureCoordMirrorInit, fetchCoordRemote, coordMirrorPath: cmPath } =
+          await import('./coord-mirror.js');
+        await ensureCoordMirrorInit(this.workspaceRoot, id, canonicalRemote);
+        await fetchCoordRemote(this.workspaceRoot, id);
+        const mirrorGitDir = `${cmPath(this.workspaceRoot, id)}/.git`;
+        const { execFile } = await import('node:child_process');
+        const { promisify } = await import('node:util');
+        const execFileAsync = promisify(execFile);
+        for (let i = 0; i < config.repos.length; i++) {
+          const repo = config.repos[i];
+          const repoName = repo.name ?? repoNameFromUrl(repo.url);
+          const ref = `refs/remotes/coord-remote/${repoName}/wip/${id}`;
+          try {
+            await execFileAsync('git', [
+              `--git-dir=${mirrorGitDir}`,
+              `--work-tree=${workspaceHandles[i].path}`,
+              'checkout', '-f', ref,
+            ]);
+          } catch {
+            // Per-repo checkout failure non-aborting (e.g., wip-branch not yet pushed by writer);
+            // workspace remains empty + chmod-down at Step 6 still applies.
+          }
+        }
+      } catch {
+        // Substrate-bypass preserved when coord-remote unreachable (e.g., file:// stub in tests);
+        // Step 6 chmod-down still applies; reader-daemon Loop B handles cascade-recovery if
+        // coord-remote becomes reachable post-join.
+      }
 
       // Step 6: chmod-down each allocated workspace per W2 helper (POSIX 0444/0555 strict-enforce)
       const { setReaderWorkspaceMode } = await import('./reader-workspace-mode.js');

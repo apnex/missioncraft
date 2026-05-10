@@ -134,6 +134,11 @@ export class LocalFilesystemStorage implements StorageProvider {
     }
     const handles: WorkspaceHandle[] = [];
     for (const name of entries) {
+      // Skip hidden dirs — engine-internal artifacts (W5b `.config-mirror/`, W5c `.coord-mirror/`,
+      // W5b/W5c `.daemon-state.yaml`, v4.6 `.daemon-tx-active` sentinel) are NOT workspace handles
+      // per Design §2.4 workspace-contract (per-mission engine-internal artifacts excluded from
+      // operator-visible workspace listing per v4.10 PATCH item #9).
+      if (name.startsWith('.')) continue;
       const path = join(missionDir, name);
       try {
         const s = await stat(path);

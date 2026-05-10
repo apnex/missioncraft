@@ -591,10 +591,231 @@ export class Missioncraft {
     );
   }
 
-  async abandon(id: string, message: string, _opts?: { purgeConfig?: boolean }): Promise<MissionState> {
-    if (!message) throw new ConfigValidationError("Missioncraft.abandon: message is required (per v3.0 Refinement #4)");
-    void id;
-    throw new MissionStateError('Missioncraft.abandon: 8-step abandon-flow not yet implemented (W4)');
+  /**
+   * 8-step abandon-flow (Design v4.9 §2.4.1 lines 1739+; v3.4+v3.5+v3.6 folds).
+   *
+   * W4.3 LITE: implements full abandon-flow LESS daemon-flush + SIGTERM (Steps 1+2 stub-points
+   * in W4.4 graft-set).
+   *
+   * Symmetric partial-failure recovery model with publish-flow:
+   * - mission stays 'in-progress' throughout cleanup-flow (per v3.5 MEDIUM-R5.1 — reverted from v3.4)
+   * - lifecycle-state advances ATOMICALLY to 'abandoned' at Step 6 single-lock-cycle (per v3.6 MINOR-R6.1)
+   * - per-step progress via mission.abandonProgress field for idempotent retry
+   * - per-repo cleanup via mission.abandonRepoStatus (parallel to publishStatus discipline)
+   *
+   * Steps:
+   *   1. Final cadence-tick (W4.4 graft-set; sentinel below); mark 'tick-fired'
+   *   2. SIGTERM daemon-watcher (W4.4 graft-set; sentinel below); mark 'daemon-killed'
+   *   3. Atomic-write abandonMessage (immutable post-write); lifecycle STAYS 'in-progress'; mark 'message-persisted'
+   *   4. Release mission-lock + repo-locks; mark 'locks-released'
+   *   5. Per-repo local-branch cleanup with abandonRepoStatus per-repo state; mark 'branches-cleaned' iff ALL 'cleaned'
+   *   6. Atomic single-lock-cycle: workspace handle + lifecycle 'abandoned' + abandonProgress 'workspace-handled' under SAME lock
+   *   7. --purge-config: re-acquire mission-lock; delete <id>.yaml + .names/<slug>.yaml symlink; mark 'config-purged'
+   *   8. Marker step (lifecycle-advance integrated into Step 6 per v3.6 MINOR-R6.1)
+   *
+   * Post-Step-4 dispatch signal handoff per v3.6 MEDIUM-R6.1: lockfile-based abandonInProgress
+   * (Steps 2-4 window) → mission-config abandonProgress (Steps 5-8 window) — survives lockfile-delete.
+   */
+  async abandon(
+    id: string,
+    message: string,
+    opts: { purgeConfig?: boolean; retain?: boolean } = {},
+  ): Promise<MissionState> {
+    if (!message) {
+      throw new ConfigValidationError("Missioncraft.abandon: message is required (per v3.0 Refinement #4)");
+    }
+    if (opts.retain && opts.purgeConfig) {
+      throw new ConfigValidationError(
+        "Missioncraft.abandon: --retain and --purge-config are mutually exclusive (purge implies destroy)",
+      );
+    }
+
+    // Pre-flight: load config; verify pre-state
+    const path = this.missionConfigPath(id);
+    if (!existsSync(path)) {
+      throw new MissionStateError(`Missioncraft.abandon: mission '${id}' not found`);
+    }
+    const initialContent = await readFile(path, 'utf8');
+    const initialConfig = parseMissionConfig(initialContent, path);
+    const currentState = initialConfig.mission.lifecycleState;
+    if (currentState !== 'in-progress' && currentState !== 'started') {
+      throw new MissionStateError(
+        `Missioncraft.abandon: requires lifecycle 'in-progress' or 'started' (current: '${currentState}')`,
+      );
+    }
+
+    // abandonMessage immutability per v3.3 fold + symmetric with publishMessage
+    const effectiveMessage = initialConfig.mission.abandonMessage ?? message;
+    const messageWasOverridden = initialConfig.mission.abandonMessage !== undefined && initialConfig.mission.abandonMessage !== message;
+
+    // First lock-cycle: Steps 2-4 (acquire + Steps 1-3 + release at Step 4)
+    const missionLock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
+    const repoLocks: LockHandle[] = [];
+    try {
+      for (const repo of initialConfig.repos) {
+        const lock = await this.storage.acquireRepoLock(repo.url, id, { waitMs: 0 });
+        repoLocks.push(lock);
+      }
+
+      // W4.4-GRAFT: final cadence-tick via daemon-flush (abandon-flow Step 1; pendingTick IPC field).
+      // No-op at W4.3 per stub-then-graft discipline; W4.4 will set pendingTick = true on lockfile,
+      // poll daemon-acknowledgment 30s, fallback to SIGTERM on timeout per v3.2 MEDIUM-R2.1.
+      await this.recordAbandonProgress(id, 'tick-fired');
+
+      // W4.4-GRAFT: SIGTERM daemon-watcher 60s + SIGKILL fallback (abandon-flow Step 2; per MEDIUM-R2.2).
+      // No-op at W4.3 per stub-then-graft discipline; W4.4 will process.kill(daemonPid, 'SIGTERM'),
+      // poll process.kill(pid, 0) up to MSN_DAEMON_SHUTDOWN_TIMEOUT_MS, then SIGKILL.
+      // W4.4 will also set lockfile.abandonInProgress = true for Steps 2-4 window dispatch-signal.
+      await this.recordAbandonProgress(id, 'daemon-killed');
+
+      // Step 3: atomic-write abandonMessage (RMW; immutable post-write per v3.3); lifecycle STAYS 'in-progress'
+      if (initialConfig.mission.abandonMessage === undefined) {
+        await this._engineMutate(
+          id,
+          (config) => ({ ...config, mission: { ...config.mission, abandonMessage: effectiveMessage } }),
+          {
+            validate: (config) =>
+              config.mission.lifecycleState === 'in-progress' || config.mission.lifecycleState === 'started'
+                ? null
+                : `transition rejected: expected 'in-progress' or 'started' got '${config.mission.lifecycleState}'`,
+            sourceLabel: `Missioncraft.abandon.persist-message('${id}')`,
+          },
+        );
+      } else if (messageWasOverridden) {
+        process.stderr.write(
+          `NOTE: abandon already initiated for '${id}' with message '${initialConfig.mission.abandonMessage}'; ` +
+            `retry uses original message; new message arg ignored.\n`,
+        );
+      }
+      await this.recordAbandonProgress(id, 'message-persisted');
+    } finally {
+      // Step 4: release locks (idempotent; lockfile-delete clears abandonInProgress flag implicitly)
+      for (const lock of repoLocks) {
+        try { await this.storage.releaseLock(lock); } catch { /* idempotent */ }
+      }
+      try { await this.storage.releaseLock(missionLock); } catch { /* idempotent */ }
+    }
+    await this.recordAbandonProgress(id, 'locks-released');
+
+    // Step 5: per-repo local-branch cleanup (NO LOCK; post-Step-4 dispatch signal is mission-config.abandonProgress)
+    let allCleaned = true;
+    for (const repo of initialConfig.repos) {
+      const repoName = repo.name ?? repoNameFromUrl(repo.url);
+      const handles = await this.storage.list(id);
+      const handle = handles.find((h) => h.repoUrl === repo.url);
+      if (handle) {
+        try {
+          await this.gitEngine.deleteBranch(handle, `mission/${id}`, { force: true });
+          await this.recordAbandonRepoStatus(id, repoName, 'cleaned');
+        } catch {
+          await this.recordAbandonRepoStatus(id, repoName, 'failed');
+          allCleaned = false;
+          /* non-aborting per spec; idempotent retry re-attempts only failed/pending repos */
+        }
+      } else {
+        await this.recordAbandonRepoStatus(id, repoName, 'cleaned');        // no workspace = nothing to clean
+      }
+    }
+    if (allCleaned) {
+      await this.recordAbandonProgress(id, 'branches-cleaned');
+    }
+
+    // Step 6: atomic single-lock-cycle (v3.6 MINOR-R6.1 option-b)
+    const step6Lock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
+    let finalConfig: MissionConfig;
+    try {
+      // Workspace handling (destroy default; preserve if --retain)
+      if (!opts.retain) {
+        await this.storage.cleanup(id);
+      }
+      // Atomic-write lifecycle 'abandoned' + abandonProgress 'workspace-handled' under SAME lock-cycle
+      finalConfig = await this._engineMutate(
+        id,
+        (config) => ({
+          ...config,
+          mission: {
+            ...config.mission,
+            lifecycleState: 'abandoned',
+            abandonProgress: 'workspace-handled',
+          },
+        }),
+        {
+          validate: (config) =>
+            config.mission.lifecycleState === 'in-progress' || config.mission.lifecycleState === 'started'
+              ? null
+              : `step6 atomic-advance rejected: lifecycle '${config.mission.lifecycleState}' not in [in-progress, started]`,
+          sourceLabel: `Missioncraft.abandon.step6-atomic('${id}')`,
+        },
+      );
+    } finally {
+      try { await this.storage.releaseLock(step6Lock); } catch { /* idempotent */ }
+    }
+
+    // Step 7: --purge-config delete config + symlink (separate lock-cycle; lifecycle already terminal)
+    if (opts.purgeConfig) {
+      const step7Lock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
+      try {
+        const symlinkPath = initialConfig.mission.name
+          ? join(this.workspaceRoot, 'config', '.names', `${initialConfig.mission.name}.yaml`)
+          : undefined;
+        try { await unlink(this.missionConfigPath(id)); } catch { /* idempotent */ }
+        if (symlinkPath) {
+          try { await unlink(symlinkPath); } catch { /* idempotent */ }
+        }
+      } finally {
+        try { await this.storage.releaseLock(step7Lock); } catch { /* idempotent */ }
+      }
+      // mark 'config-purged' transient — never observed in stable terminal state since config is deleted
+    }
+
+    // Step 8: marker step (no-op; lifecycle-advance integrated into Step 6 per v3.6 MINOR-R6.1)
+    return this.missionConfigToState(finalConfig, this.principal);
+  }
+
+  /** Atomic update of abandonProgress field per _engineMutate primitive. */
+  private async recordAbandonProgress(
+    missionId: string,
+    progress: 'tick-fired' | 'daemon-killed' | 'message-persisted' | 'locks-released' | 'branches-cleaned' | 'workspace-handled' | 'config-purged',
+  ): Promise<void> {
+    await this._engineMutate(
+      missionId,
+      (config) => ({
+        ...config,
+        mission: { ...config.mission, abandonProgress: progress },
+      }),
+      {
+        validate: (config) =>
+          config.mission.lifecycleState === 'in-progress' || config.mission.lifecycleState === 'started'
+            ? null
+            : `abandonProgress update rejected: lifecycle '${config.mission.lifecycleState}' not in [in-progress, started]`,
+        sourceLabel: `Missioncraft.abandon.abandonProgress=${progress}('${missionId}')`,
+      },
+    );
+  }
+
+  /** Atomic Record-key update of abandonRepoStatus[repoName] per _engineMutate primitive. */
+  private async recordAbandonRepoStatus(
+    missionId: string,
+    repoName: string,
+    status: 'pending' | 'cleaned' | 'failed',
+  ): Promise<void> {
+    await this._engineMutate(
+      missionId,
+      (config) => ({
+        ...config,
+        mission: {
+          ...config.mission,
+          abandonRepoStatus: { ...(config.mission.abandonRepoStatus ?? {}), [repoName]: status },
+        },
+      }),
+      {
+        validate: (config) =>
+          config.mission.lifecycleState === 'in-progress' || config.mission.lifecycleState === 'started'
+            ? null
+            : `abandonRepoStatus update rejected: lifecycle '${config.mission.lifecycleState}' not in [in-progress, started]`,
+        sourceLabel: `Missioncraft.abandon.abandonRepoStatus['${repoName}']('${missionId}')`,
+      },
+    );
   }
 
   async tick(_id: string): Promise<{ wipCommitSha?: string; snapshotPath?: string }> {

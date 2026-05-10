@@ -235,6 +235,33 @@ describe('Missioncraft SDK class — W3 smoke-tests', () => {
       });
     });
 
+    it('abandon() requires message (per v3.0 Refinement #4)', async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      await expect(mc.abandon('msn-test1234', '')).rejects.toBeInstanceOf(ConfigValidationError);
+    });
+
+    it('abandon() rejects --retain + --purge-config (mutual exclusion)', async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      await expect(
+        mc.abandon('msn-test1234', 'msg', { retain: true, purgeConfig: true }),
+      ).rejects.toBeInstanceOf(ConfigValidationError);
+    });
+
+    it('abandon() rejects non-existent mission with MissionStateError', async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      await expect(mc.abandon('msn-deadbeef', 'msg')).rejects.toMatchObject({
+        message: expect.stringMatching(/mission 'msn-deadbeef' not found/),
+      });
+    });
+
+    it("abandon() rejects 'configured' lifecycle (must be 'in-progress' or 'started')", async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      const handle = await mc.create('mission', { repo: 'https://github.com/example/repo-x' });
+      await expect(mc.abandon(handle.id, 'msg')).rejects.toMatchObject({
+        message: expect.stringMatching(/requires lifecycle 'in-progress' or 'started' \(current: 'configured'\)/),
+      });
+    });
+
     it('join() requires coordRemote + throws W5', async () => {
       const mc = new Missioncraft({ workspaceRoot: tempRoot });
       await expect(mc.join('msn-test1234', '')).rejects.toBeInstanceOf(ConfigValidationError);

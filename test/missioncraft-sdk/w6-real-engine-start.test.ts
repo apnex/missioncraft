@@ -120,4 +120,46 @@ describe('W6 slice (i) — real-engine start() happy-path (W4.4-deferred carry-o
     // Cleanup: kill daemon to prevent test-leak (afterEach rm'd tempRoot would orphan otherwise)
     try { process.kill(lockfileContent.pid, 'SIGKILL'); } catch { /* daemon may already be gone */ }
   }, 30_000);
+
+  // SD2 regression (v1.0.2 slice (ii)): `msn abandon` must SIGTERM the daemon spawned by start().
+  // Pre-fix: lockfile was empty during mission-active (SD3) → abandon's terminateDaemon no-op'd →
+  // daemon orphaned (operator manual `kill` required). Post-slice-(i)+(i.5) fix: lockfile persists
+  // with daemon-pid via slice (i); abandon inherits the lockfile via slice (i.5) → SIGTERM fires
+  // via inherited-pid → daemon shuts down cleanly + lockfile cleaned up.
+  //
+  // Test timeout: 90s. terminateDaemon's default 60s SIGTERM-poll + SIGKILL fallback ensures
+  // daemon dies even if SIGTERM-handler hangs; clone+start setup adds ~5s; abandon completes
+  // in <1s when daemon's SIGTERM-handler works (ad-hoc smoke-test verified).
+  it('SD2 regression — abandon() SIGTERMs daemon spawned by start() (daemon process exits)', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const handle = await mc.create('mission', { repo: bareRepoUrl });
+
+    await mc.start(handle.id);
+    const lockfilePath = join(tempRoot, 'locks', 'missions', `${handle.id}.lock`);
+    const lockfileContent = JSON.parse(await readFile(lockfilePath, 'utf8'));
+    const daemonPid = lockfileContent.pid;
+
+    // Pre-abandon: daemon is alive
+    expect(() => process.kill(daemonPid, 0)).not.toThrow();
+
+    // abandon() — must SIGTERM daemon via inherited lockfile-pid (slice (i.5) substrate)
+    const result = await mc.abandon(handle.id, 'sd2-regression-test');
+    expect(result.lifecycleState).toBe('abandoned');
+
+    // Post-abandon: daemon is dead. Poll briefly for async shutdown completion.
+    let daemonAlive = true;
+    for (let i = 0; i < 50; i++) {
+      try {
+        process.kill(daemonPid, 0);
+        await new Promise((r) => setTimeout(r, 100));
+      } catch {
+        daemonAlive = false;
+        break;
+      }
+    }
+    expect(daemonAlive).toBe(false);
+
+    // Lockfile cleaned up post-abandon
+    expect(existsSync(lockfilePath)).toBe(false);
+  }, 90_000);
 });

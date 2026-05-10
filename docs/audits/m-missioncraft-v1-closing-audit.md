@@ -294,3 +294,86 @@ Maps closest to architect-alternative (P3) explicit realpath resolve but applied
 - slice (ii) — `2721f19` regression test (3 tests)
 - slice (iii) — this §9 doc revision
 - slice (iv) — tag `v1.0.1` + push → release.yml fires → npm publishes
+
+---
+
+## §10 v1.0.2 patch trail — 3 scenario-test fixes + D1 slim-deps cheap-win
+
+**Defects surfaced:** 2026-05-10 22:48Z — architect scenario-01 execution against v1.0.1 install revealed 3 shipped-defects beyond the v1.0.1 isMainModule-guard:
+
+| ID | Defect | Layer |
+|---|---|---|
+| **SD1** | `msn workspace <id>` happy-path zero-stdout; SDK works | CLI output-dispatch |
+| **SD2** | `msn abandon` orphans daemon (SIGTERM no-op; manual `kill` required) | Daemon shutdown via lockfile-pid lookup |
+| **SD3** | `~/.missioncraft/locks/missions/` empty during mission-active state | start() Step 8 over-deleted lockfile |
+
+**Hub coordinates:** thread-531 (architect-issued v1.0.2 PATCH directive) + task-403 (Director-authorized "Fix the bugs. Go for a quick win on deps" 2026-05-10).
+
+**Slim-deps cheap-win bundled** per architect Triage-Protocol route-a ratified idea-266 (slim-deps cycle filed via thread-530 / sourceThreadId thread-529): **D1 vitest@4 → vitest@3 downgrade** eliminates the @emnapi optional-peer-dep chain that caused the recurring lockfile-sync substrate-defect at v1.0.0 slice (vii) + v1.0.1 slice (iv').
+
+### §10.1 SD3 root cause + fix (slice (i))
+
+start() Step 8 finally-block unconditionally called `releaseLock(missionLock)` which UNLINKED the lockfile at `locks/missions/<id>.lock`. Design v4.9 §2.6.5 dual-purposes the mission-lockfile as BOTH a start()-mutex AND the daemon-watcher IPC channel — the latter writes pid/startTime/daemonExpiresAt fields via spawnDaemonWatcher at Step 6. Step 8's unconditional release destroyed the daemon-IPC state. watcher-entry.ts comment-block confirms: *"Lockfile-cleanup is PARENT-CLI responsibility (parent invokes SIGTERM as part of complete-flow Step 4 / abandon-flow Step 2; same parent-CLI then ... releases lock entirely via storage.releaseLock)."*
+
+**Fix mechanism (slice (i) — commit `3966c6e`):** track `daemonSpawned` boolean; finally-block releases repo-locks unconditionally (mutex-only) but skips missionLock release when daemonSpawned=true. Mutex-purpose preserved on pre-Step-6 throws + spawn-failure-rollback paths.
+
+### §10.2 SD2 root cause + fix (slice (i.5))
+
+After slice (i) shipped, engineer-side downstream smoke-test (pre-slice-(ii) verification) revealed `abandon()`'s `acquireMissionLock(id, { waitMs: 0 })` at line 743 + `complete()` line 433 FAIL with `LockTimeoutError` — the lockfile persists with 24h TTL from start() → fresh acquire hits EEXIST. The acquire-call was **vestigial-from-pre-W4.4-substrate**: pre-W4.4 lockfile was mutex-only; W4.4 added `abandonInProgress` flag (v3.6 MEDIUM-R6.1) + `_engineMutate` atomicity (W4.3) which IS the cross-operation guard now. Architect-disposition at thread-531 round 5: Option (B) acquire-removal.
+
+**Fix mechanism (slice (i.5) — commit `924c538`):** replace `storage.acquireMissionLock(id, { waitMs: 0 })` with `storage.inspectLocks({ missionId: id })` → find handle; throw MissionStateError if absent (precondition: start() must have created the lockfile). Inherited handle is released at Step 4 finally as before, cleanly cleaning up the daemon-IPC channel post-SIGTERM. Tests use `seedMissionLockfile` helper for substrate-bypass discipline.
+
+**SD2 auto-resolves** end-to-end: with the lockfile persisting through abandon's entry + inherited via inspect, `terminateDaemon(missionLockfilePath)` reads daemon-pid → SIGTERM fires → daemon shuts down cleanly + lockfile cleaned up at Step 4 release.
+
+### §10.3 SD1 root cause + fix (slice (iii))
+
+`bin.ts` line 326 `case 'workspace':` discarded the SDK return value: `await mc.workspace(...)` without capturing the resolved path. SDK API returned the path correctly; CLI dispatcher dropped it. Pre-fix the operator saw exit-0 with 0 bytes stdout.
+
+**Fix mechanism (slice (iii) — commit `3a9b8dc`):** capture return value + `console.log(path)`. Single-line dispatcher fix per dispositive bisector pattern (engineer-side SDK direct-call confirmed SDK works → defect localized to CLI dispatcher).
+
+### §10.4 D1 slim-deps fix (slice (iv))
+
+`devDependencies.vitest`: `^4.0.0` → `^3.2.4`. vitest@3 uses rollup (not rolldown) — no `@rolldown/binding-wasm32-wasi` → no `@emnapi/core` + `@emnapi/runtime` optional-peer-dep chain. `package-lock.json` regenerated; 0 `@emnapi` references (was 6 pre-fix). 267/267 tests pass on vitest@3 (no API-port required — drop-in compat).
+
+**v4.10 PATCH bundle item #2 substrate-defect-class CLOSED.** Future patches no longer need the pre-tag-push `rm -rf node_modules && npm ci` discipline — though it remains a useful release-prep verification step per `feedback_lockfile_optional_peer_dep_ci_strict_validate.md`.
+
+### §10.5 Regression coverage
+
+| Test | File | Slice |
+|---|---|---|
+| SD3 lockfile-persistence post-start | `w6-real-engine-start.test.ts` | (i) |
+| inherit-missing precondition | `v1.0.2-slice-i5-regression.test.ts` | (i.5) |
+| abandon-retry hits abandonInProgress retry-path | `v1.0.2-slice-i5-regression.test.ts` | (i.5) |
+| concurrent complete-vs-abandon mutex via repo-lock + _engineMutate validate | `v1.0.2-slice-i5-regression.test.ts` | (i.5) |
+| 8 substrate-bypass tests reseeded with `seedMissionLockfile` | `complete-abandon-integration.test.ts` | (i.5) |
+| 1 multi-participant abandon test reseeded | `w5b-integration.test.ts` | (i.5) |
+| SD2 daemon-SIGTERM end-to-end | `w6-real-engine-start.test.ts` | (ii) |
+| SD1 `msn workspace` stdout via real CLI invocation | `bin-shim-bootstrap.test.ts` | (iii) |
+
+Suite: 262 → 267 (+5 net new tests).
+
+### §10.6 Out-of-scope observation — spawn-failure-rollback daemon-orphan
+
+Engineer-finding during slice (i) audit at `src/missioncraft-sdk/core/missioncraft.ts` lines 322-335: start()'s catch-block reverts lifecycle 'started' → 'configured' but does NOT SIGTERM the partially-spawned daemon. Same SD2-class defect-shape. **Architect-disposition:** file as separate idea post-v1.0.2 ship per Triage-Protocol route-a (cheap-win cadence preserved). Architect-side idea-filing dispatch scheduled.
+
+### §10.7 v4.10 PATCH bundle evolution
+
+- **Item #2** — lockfile-generation discipline — **CLOSED** via D1 vitest@3 swap (substrate-level closure)
+- **Item #16** — main-module guard discipline — unchanged from v1.0.1 §9
+- **Item #15** — TypeDoc deploy via release.yml — still pending (Pages enablement at repo-settings)
+
+### §10.8 Methodology candidates captured
+
+- `feedback_downstream_path_verification_post_substrate_fix.md` — when fixing a substrate-component, verify EVERY downstream caller, not just the forward-path. Slice-internal tests verify the fix-site invariant; downstream smoke-tests verify the invariant doesn't break consumers. **Provenance: slice (i) regression test passed; abandon-after-start ad-hoc smoke-test caught the downstream failure** that necessitated slice (i.5).
+
+### §10.9 v1.0.2 ship trail
+
+- slice (i) — `3966c6e` SD3 fix (start() daemonSpawned flag)
+- slice (i.5) — `924c538` abandon/complete acquireMissionLock-removal (SD2 auto-resolution)
+- slices (ii)+(iii) — `3a9b8dc` SD2 regression test + SD1 workspace stdout fix
+- slice (iv) — `3cfe0cf` D1 vitest@4 → @3 downgrade (@emnapi chain eliminated)
+- slice (v) — this §10 doc + version bump 1.0.1 → 1.0.2 + scenario doc placeholders + tag v1.0.2
+
+### §10.10 v1.0.1 deprecation — Director-disposition post-publish-verify
+
+Architect-recommendation: `npm deprecate @apnex/missioncraft@1.0.1 "CLI workspace dispatch + abandon daemon-orphan + lockfile-persistence defects fixed in v1.0.2+"`. Surface to Director at v1.0.2 publish-verify alongside v1.0.0 + v1.0.1 deprecation-state inventory.

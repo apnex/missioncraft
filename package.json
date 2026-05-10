@@ -1,6 +1,6 @@
 {
   "name": "@apnex/missioncraft",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Sovereign mission-orchestration substrate — declarative mission resources spanning 1+ git repos",
   "license": "Apache-2.0",
   "type": "module",

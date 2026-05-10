@@ -429,8 +429,21 @@ export class Missioncraft {
     const effectiveMessage = initialConfig.mission.publishMessage ?? message;
     const messageWasOverridden = initialConfig.mission.publishMessage !== undefined && initialConfig.mission.publishMessage !== message;
 
-    // Acquire mission-lock + repo-locks (idempotent finally-block release)
-    const missionLock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
+    // SD2/SD3 follow-on (v1.0.2 slice i.5): inherit the mission-lock from start() rather than
+    // acquire-fresh. Slice (i) made start() persist the lockfile as the daemon-IPC channel
+    // (Design v4.9 §2.6.5); complete() operates as the cleanup-side of that channel per
+    // watcher-entry.ts comment-block invariant. Cross-operation guard provided by
+    // `abandonInProgress` flag (v3.6 MEDIUM-R6.1; abandon-vs-complete race) + `_engineMutate`
+    // atomicity (W4.3 substrate). The pre-W4.4 acquire-release-cycle was mutex-only; W4.4
+    // added the flag-based guard which made this acquire vestigial.
+    const inheritedHandles = await this.storage.inspectLocks({ missionId: id });
+    const missionLock = inheritedHandles.find((h) => h.missionId === id);
+    if (!missionLock) {
+      throw new MissionStateError(
+        `Missioncraft.complete: mission-lock absent at '${this.missionLockfilePath(id)}'; ` +
+          `mission may not be active (verify start() was called and lockfile not externally deleted)`,
+      );
+    }
     const repoLocks: LockHandle[] = [];
     try {
       for (const repo of initialConfig.repos) {
@@ -739,8 +752,19 @@ export class Missioncraft {
     const effectiveMessage = initialConfig.mission.abandonMessage ?? message;
     const messageWasOverridden = initialConfig.mission.abandonMessage !== undefined && initialConfig.mission.abandonMessage !== message;
 
-    // First lock-cycle: Steps 2-4 (acquire + Steps 1-3 + release at Step 4)
-    const missionLock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
+    // First lock-cycle: Steps 1-3 (inherit + Steps 1-3 + release at Step 4).
+    // SD2/SD3 follow-on (v1.0.2 slice i.5): inherit the mission-lock from start() rather than
+    // acquire-fresh per Design v4.9 §2.6.5 + watcher-entry.ts comment-block invariant. Cross-
+    // operation guard provided by `abandonInProgress` flag (v3.6 MEDIUM-R6.1; this exact flag
+    // is set BELOW at line ~760 within this same cycle) + `_engineMutate` atomicity (W4.3).
+    const inheritedHandles = await this.storage.inspectLocks({ missionId: id });
+    const missionLock = inheritedHandles.find((h) => h.missionId === id);
+    if (!missionLock) {
+      throw new MissionStateError(
+        `Missioncraft.abandon: mission-lock absent at '${this.missionLockfilePath(id)}'; ` +
+          `mission may not be active (verify start() was called and lockfile not externally deleted)`,
+      );
+    }
     const repoLocks: LockHandle[] = [];
     try {
       for (const repo of initialConfig.repos) {

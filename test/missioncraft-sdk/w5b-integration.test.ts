@@ -9,7 +9,7 @@
 // defers to W5c per (α) disposition.
 
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, readFile, writeFile, stat } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, stat, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -56,6 +56,33 @@ async function seedMultiParticipantMission(
     .replace(/lifecycle-state: \w+/, `lifecycle-state: ${lifecycleState}`)
     .replace(/^repos:/m, `${block}repos:`);
   await writeFile(path, updated, 'utf8');
+}
+
+/**
+ * Helper: seed the mission-lockfile to mimic start()'s post-Step-6 state (v1.0.2 slice i.5
+ * substrate-discipline). abandon()/complete() inherit the lockfile from start() rather than
+ * acquire-fresh — substrate-bypass tests must seed the lockfile or the inherit-check throws.
+ */
+async function seedMissionLockfile(workspaceRoot: string, missionId: string): Promise<void> {
+  const lockfileDir = join(workspaceRoot, 'locks', 'missions');
+  await mkdir(lockfileDir, { recursive: true });
+  const lockfilePath = join(lockfileDir, `${missionId}.lock`);
+  const now = new Date();
+  const expires = new Date(now.getTime() + 86_400_000);
+  await writeFile(
+    lockfilePath,
+    JSON.stringify(
+      {
+        id: `seed-${missionId}`,
+        missionId,
+        acquiredAt: now.toISOString(),
+        expiresAt: expires.toISOString(),
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  );
 }
 
 describe('W5b slice (iii) — full join/leave lifecycle integration', () => {
@@ -143,6 +170,7 @@ describe('W5b slice (iii) — abandon() triggers terminated-tag emission', () =>
       author: { name: 'Test', email: 't@x.com' },
     });
     await seedMultiParticipantMission(tempRoot, handle.id, 'in-progress', 'https://github.com/example/coord.git');
+    await seedMissionLockfile(tempRoot, handle.id);
 
     // Mock push + tag (real-engine push to remote URL not viable per W4.3 slice (iv) discipline)
     const pushSpy = vi.fn().mockResolvedValue(undefined);

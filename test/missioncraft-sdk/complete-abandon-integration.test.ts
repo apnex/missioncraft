@@ -48,6 +48,28 @@ async function advanceLifecycle(workspaceRoot: string, missionId: string, lifecy
 }
 
 /**
+ * Helper: seed the mission-lockfile to mimic start()'s post-Step-6 state (v1.0.2 slice i.5
+ * substrate-discipline). complete()/abandon() now INHERIT the lockfile from start() rather than
+ * acquire-fresh — substrate-bypass tests must also seed the lockfile or the inherit-check throws.
+ */
+async function seedMissionLockfile(workspaceRoot: string, missionId: string): Promise<void> {
+  const lockfileDir = join(workspaceRoot, 'locks', 'missions');
+  await mkdir(lockfileDir, { recursive: true });
+  const lockfilePath = join(lockfileDir, `${missionId}.lock`);
+  const now = new Date();
+  const expires = new Date(now.getTime() + 86_400_000);  // 24h TTL per DEFAULT_VALIDITY_MS
+  const contents = {
+    id: `seed-${missionId}`,
+    missionId,
+    acquiredAt: now.toISOString(),
+    expiresAt: expires.toISOString(),
+    // No daemon-IPC fields — daemon never spawned (substrate-bypass). complete/abandon's
+    // terminateDaemon will no-op when pid absent; this is the expected substrate-bypass behavior.
+  };
+  await writeFile(lockfilePath, JSON.stringify(contents, null, 2), 'utf8');
+}
+
+/**
  * Helper: pre-allocate workspace + initialize git repo for a mission's repo (substrate-bypass for clone).
  * Mirrors what start() Step 3-4 would do via storage.allocate + gitEngine.clone.
  */
@@ -82,6 +104,7 @@ describe('W4.3 slice (iv) — abandon() real-engine integration', () => {
 
     // Substrate-bypass: seed lifecycle 'in-progress' (start() can't clone over file://)
     await advanceLifecycle(tempRoot, handle.id, 'in-progress');
+    await seedMissionLockfile(tempRoot, handle.id);
 
     // Real-engine wire-flow: abandon executes 7-step + actual gitEngine.deleteBranch + storage.cleanup
     const result = await mc.abandon(handle.id, 'Abandoning mission for test reasons');
@@ -104,6 +127,7 @@ describe('W4.3 slice (iv) — abandon() real-engine integration', () => {
     const handle = await mc.create('mission', { repo: repoUrl });
     const wsPath = await preAllocateWorkspace(mc, handle.id, repoUrl);
     await advanceLifecycle(tempRoot, handle.id, 'in-progress');
+    await seedMissionLockfile(tempRoot, handle.id);
 
     const result = await mc.abandon(handle.id, 'msg', { retain: true });
 
@@ -122,6 +146,7 @@ describe('W4.3 slice (iv) — abandon() real-engine integration', () => {
 
     await preAllocateWorkspace(mc, handle.id, repoUrl);
     await advanceLifecycle(tempRoot, handle.id, 'in-progress');
+    await seedMissionLockfile(tempRoot, handle.id);
 
     await mc.abandon(handle.id, 'msg', { purgeConfig: true });
 
@@ -135,6 +160,7 @@ describe('W4.3 slice (iv) — abandon() real-engine integration', () => {
     const handle = await mc.create('mission', { repo: repoUrl });
     await preAllocateWorkspace(mc, handle.id, repoUrl);
     await advanceLifecycle(tempRoot, handle.id, 'in-progress');
+    await seedMissionLockfile(tempRoot, handle.id);
 
     // First abandon — persists 'first-msg'
     await mc.abandon(handle.id, 'first-msg');
@@ -155,6 +181,7 @@ describe('W4.3 slice (iv) — abandon() real-engine integration', () => {
     await preAllocateWorkspace(mc, handle.id, repoUrl1);
     // Intentionally NOT pre-allocating workspace for repoUrl2; abandon should mark it 'cleaned' (no workspace = nothing to clean)
     await advanceLifecycle(tempRoot, handle.id, 'in-progress');
+    await seedMissionLockfile(tempRoot, handle.id);
 
     const result = await mc.abandon(handle.id, 'msg');
 
@@ -174,6 +201,7 @@ describe('W4.3 slice (iv) — complete() real-engine integration (push-failure p
     const handle = await mc.create('mission', { repo: repoUrl });
     await preAllocateWorkspace(mc, handle.id, repoUrl);
     await advanceLifecycle(tempRoot, handle.id, 'in-progress');
+    await seedMissionLockfile(tempRoot, handle.id);
 
     // complete() will: persist publishMessage → squash succeeds → push fails (no HTTP transport for file://)
     // Verify partial-failure preserves publishStatus state for idempotent retry
@@ -192,11 +220,17 @@ describe('W4.3 slice (iv) — complete() real-engine integration (push-failure p
     const handle = await mc.create('mission', { repo: repoUrl });
     await preAllocateWorkspace(mc, handle.id, repoUrl);
     await advanceLifecycle(tempRoot, handle.id, 'in-progress');
+    await seedMissionLockfile(tempRoot, handle.id);
 
     // First complete — persists publishMessage; push fails
     await expect(mc.complete(handle.id, 'first-publish-msg')).rejects.toThrow();
     const after1 = await mc.get('mission', handle.id);
     expect(after1.publishMessage).toBe('first-publish-msg');
+
+    // v1.0.2 slice (i.5) substrate-discipline: complete()'s finally-release unlinked the
+    // inherited lockfile post-throw. Reseed for retry per substrate-bypass pattern (matches
+    // operator-flow where retry typically follows a fresh `msn start` re-spawn).
+    await seedMissionLockfile(tempRoot, handle.id);
 
     // Retry with different message — should use persisted; ignores new arg with stderr warning
     const stderrChunks: string[] = [];

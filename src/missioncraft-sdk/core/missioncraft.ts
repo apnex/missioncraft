@@ -475,6 +475,17 @@ export class Missioncraft {
         await clearDaemonIpcFields(this.missionLockfilePath(id));
       }
 
+      // W5b slice (ii) item #3: state-machine cascade — emit terminated-tag to coord-remote so
+      // reader-daemon Loop B can cascade `'reading' → 'readonly-completed'` per HIGH-R2.3.
+      // Conditional + best-effort: no-op for solo-writer; failure non-aborting (terminal state
+      // already persisted at Step 3).
+      try {
+        await this.emitTerminatedTag(id);
+      } catch {
+        // Cascade-signal failure non-aborting; reader-daemon Loop B will fall back to wip-branch
+        // staleness detection on next sync-cycle.
+      }
+
       // Step 6: cleanup local mission-branches (best-effort; non-aborting)
       for (let i = 0; i < initialConfig.repos.length; i++) {
         const lock = repoLocks[i];
@@ -820,6 +831,16 @@ export class Missioncraft {
       try { await this.storage.releaseLock(step6Lock); } catch { /* idempotent */ }
     }
 
+    // W5b slice (ii) item #3: state-machine cascade — emit terminated-tag to coord-remote.
+    // Fires post-Step-6 atomic-advance to 'abandoned'; conditional + best-effort no-op for
+    // solo-writer missions. Must precede Step 7 --purge-config since config-purge wipes
+    // coordinationRemote source-of-truth.
+    try {
+      await this.emitTerminatedTag(id);
+    } catch {
+      // Cascade-signal failure non-aborting; terminal state already persisted at Step 6.
+    }
+
     // Step 7: --purge-config delete config + symlink (separate lock-cycle; lifecycle already terminal)
     if (opts.purgeConfig) {
       const step7Lock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
@@ -894,6 +915,57 @@ export class Missioncraft {
   async workspace(idOrCoordinate: string, _repoName?: string): Promise<string> {
     void idOrCoordinate;
     throw new MissionStateError('Missioncraft.workspace: workspace-path-resolution not yet implemented (W4)');
+  }
+
+  /**
+   * Emit `refs/tags/missioncraft/<missionId>/terminated` to coord-remote on writer-side terminal
+   * transition (complete or abandon). Reader-daemon Loop B detects this tag and cascades reader's
+   * lifecycle to `'readonly-completed'` per HIGH-R2.3 (Loop B detection lands W5c).
+   *
+   * Conditional: no-op IF coordinationRemote unset OR no reader participants. Best-effort:
+   * per-repo failure is non-aborting (terminal-state already persisted; tag-emission is the
+   * cascade-signal but local state is authoritative).
+   *
+   * Tag is created against current HEAD of the local repo (terminal commit); pushed via refspec
+   * `refs/tags/missioncraft/<id>/terminated:refs/tags/missioncraft/<id>/terminated`.
+   */
+  async emitTerminatedTag(missionId: string): Promise<number> {
+    const path = this.missionConfigPath(missionId);
+    if (!existsSync(path)) return 0;
+    const content = await readFile(path, 'utf8');
+    const config = parseMissionConfig(content, path, 'auto');
+
+    const coordRemote = config.mission.coordinationRemote;
+    if (!coordRemote) return 0;
+    const hasReader = config.mission.participants?.some((p) => p.role === 'reader') ?? false;
+    if (!hasReader) return 0;
+
+    const tagName = `missioncraft/${missionId}/terminated`;
+    const tagRef = `refs/tags/${tagName}`;
+    const identity = await this.identity.resolve();
+    let successCount = 0;
+    for (const repo of config.repos) {
+      const handle = await this.storage.allocate(missionId, repo.url);
+      try {
+        // Create lightweight tag locally against current HEAD (best-effort if already exists)
+        try {
+          await this.gitEngine.tag(handle, tagName, { force: true });
+        } catch {
+          // Tag-create failure: skip push for this repo (e.g., HEAD doesn't exist yet)
+          continue;
+        }
+        await this.pushWithRetry(handle, {
+          branch: tagRef,
+          url: coordRemote,
+          remoteRef: tagRef,
+        });
+        successCount++;
+      } catch {
+        // Per-repo tag-emit failure non-aborting; terminal state already persisted
+      }
+      void identity;
+    }
+    return successCount;
   }
 
   /**

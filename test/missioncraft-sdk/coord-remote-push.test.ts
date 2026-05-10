@@ -133,6 +133,59 @@ describe('W5b slice (ii) item #2 — pushWipToCoordRemote', () => {
   });
 });
 
+describe('W5b slice (ii) item #3 — emitTerminatedTag', () => {
+  it('no-op when coordinationRemote unset (returns 0)', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const handle = await mc.create('mission', { repo: 'file:///tmp/w5b-ii-tag-1' });
+    const count = await mc.emitTerminatedTag(handle.id);
+    expect(count).toBe(0);
+  });
+
+  it('no-op when no reader participants (solo writer mission)', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const handle = await mc.create('mission', { repo: 'file:///tmp/w5b-ii-tag-2' });
+    await seedMissionWithReader(tempRoot, handle.id, 'https://github.com/example/coord.git', { withReader: false });
+    const count = await mc.emitTerminatedTag(handle.id);
+    expect(count).toBe(0);
+  });
+
+  it('emits refs/tags/missioncraft/<id>/terminated to coord-remote per repo', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const repoUrl = 'file:///tmp/w5b-ii-tag-3';
+    const handle = await mc.create('mission', { repo: repoUrl });
+    await mc.storage.allocate(handle.id, repoUrl);
+    await seedMissionWithReader(tempRoot, handle.id, 'https://github.com/example/coord.git');
+
+    const tagSpy = vi.fn().mockResolvedValue(undefined);
+    const pushSpy = vi.fn().mockResolvedValue(undefined);
+    (mc.gitEngine as unknown as { tag: typeof tagSpy }).tag = tagSpy;
+    (mc.gitEngine as unknown as { push: typeof pushSpy }).push = pushSpy;
+
+    const count = await mc.emitTerminatedTag(handle.id);
+    expect(count).toBe(1);
+
+    expect(tagSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ missionId: handle.id }),
+      `missioncraft/${handle.id}/terminated`,
+      expect.objectContaining({ force: true }),
+    );
+    expect(pushSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ missionId: handle.id }),
+      expect.objectContaining({
+        branch: `refs/tags/missioncraft/${handle.id}/terminated`,
+        url: 'https://github.com/example/coord.git',
+        remoteRef: `refs/tags/missioncraft/${handle.id}/terminated`,
+      }),
+    );
+  });
+
+  it('returns 0 when mission config does not exist (graceful)', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const count = await mc.emitTerminatedTag('msn-deadbeef');
+    expect(count).toBe(0);
+  });
+});
+
 describe('W5b slice (ii) — daemon-state.yaml read/write helpers', () => {
   it('readDaemonState returns null for non-existent file', async () => {
     const state = await readDaemonState(tempRoot, 'msn-nope');

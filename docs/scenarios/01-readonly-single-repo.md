@@ -2,7 +2,7 @@
 
 **Demonstrates:** `create` → `start` (HTTPS clone) → `workspace` path-switching → `abandon`, against a real public repo. **Read-only boundary**: no `complete` (no remote-side writes); `coordinationRemote` unset.
 
-**Status:** DRAFT — outputs to be captured post-execution.
+**Status:** RATIFIED — outputs captured against `@apnex/missioncraft@1.0.2` 2026-05-10T23:25Z UTC (Node v24.12.0).
 
 ---
 
@@ -35,7 +35,7 @@ npm install -g @apnex/missioncraft
 Verify:
 ```bash
 which msn       # resolves to global bin
-msn --version   # prints 1.0.0
+msn --version   # prints 1.0.2 (current latest)
 ```
 
 **Optional env-var** (for deterministic principal-id; falls back to `git config user.email` if unset):
@@ -71,7 +71,7 @@ msn --version
 
 Expected:
 ```
-<output to be captured post-execution>
+missioncraft 1.0.2
 ```
 
 ```bash
@@ -90,7 +90,7 @@ Expected: returns `<mission-id> <name>` line; lifecycle initial = `configured` (
 
 Output:
 ```
-<to be captured>
+msn-99c369ee	test-readonly
 ```
 
 ### Step 3 — Show mission (pre-start)
@@ -108,7 +108,25 @@ Expected: JSON with:
 
 Output:
 ```json
-<to be captured>
+{
+  "id": "msn-99c369ee",
+  "name": "test-readonly",
+  "tags": {},
+  "repos": [
+    {
+      "name": "missioncraft",
+      "url": "https://github.com/apnex/missioncraft.git",
+      "base": "main"
+    }
+  ],
+  "lifecycleState": "configured",
+  "createdAt": "2026-05-10T23:25:37.444Z",
+  "updatedAt": "2026-05-10T23:25:37.444Z",
+  "identityProviderName": "local-git-config",
+  "approvalProviderName": "trust-all",
+  "storageProviderName": "local-filesystem",
+  "gitEngineProviderName": "isomorphic-git"
+}
 ```
 
 ### Step 4 — List missions
@@ -121,7 +139,9 @@ Expected: tabular output with the mission row (`ID / NAME / LIFECYCLE / REPOS-CO
 
 Output:
 ```
-<to be captured>
+ID            NAME           LIFECYCLE   REPOS-COUNT
+────────────  ─────────────  ──────────  ───────────
+msn-99c369ee  test-readonly  configured  1
 ```
 
 ### Step 5 — Start mission (substantive)
@@ -143,7 +163,7 @@ Expected: silent success (no stdout); lifecycle advances to `started`.
 
 Output:
 ```
-<to be captured>
+(empty stdout; exit 0; ~1-2s wall-time for HTTPS clone via isomorphic-git)
 ```
 
 ### Step 6 — Verify clone landed
@@ -156,7 +176,15 @@ Expected: real clone with `package.json` + `src/` + `dist/` + `README.md` + `doc
 
 Output:
 ```
-<to be captured>
+docs
+LICENSE
+package.json
+package-lock.json
+README.md
+src
+test
+tsconfig.json
+vitest.config.ts
 ```
 
 ### Step 7 — Verify daemon-process alive
@@ -164,17 +192,22 @@ Output:
 ```bash
 ls ~/.missioncraft/locks/missions/ 2>&1
 # Get daemon-pid from lockfile JSON:
-DAEMON_PID=$(cat ~/.missioncraft/locks/missions/<mission-id>.<principal>.lock | jq -r '.pid // empty')
+DAEMON_PID=$(cat ~/.missioncraft/locks/missions/<mission-id>.lock | jq -r '.pid // empty')
 echo "daemon-pid=$DAEMON_PID"
 ps -p $DAEMON_PID 2>&1
 ```
 
-Expected: daemon-pid populated in lockfile; `ps -p $DAEMON_PID` shows live `node` process (the watcher-entry).
+Expected: daemon-pid populated in lockfile; `ps -p $DAEMON_PID` shows live process (the watcher-entry).
 
 Output:
 ```
-<to be captured>
+msn-99c369ee.lock
+daemon-pid=153265
+    PID TTY          TIME CMD
+ 153265 ?        00:00:00 MainThread
 ```
+
+**Note**: Pre-v1.0.2 (v1.0.1 + earlier), the lockfile was unlinked by `start()` Step 8 release-pseudolock — daemon-IPC channel was lost and operator-CLI commands couldn't read the daemon-pid. Fixed in v1.0.2 slice (i)+(i.5) via `daemonSpawned` flag + vestigial-acquire-removal in abandon/complete.
 
 ### Step 8 — Test `msn workspace` path-switching (4 forms)
 
@@ -215,8 +248,28 @@ Expected: `cd` succeeds; `pwd` matches workspace path; `ls` shows clone contents
 
 Outputs:
 ```
-<to be captured>
+[form-1 plain-id]
+/home/apnex/.missioncraft/missions/msn-99c369ee/missioncraft
+
+[form-2 explicit-repo]
+/home/apnex/.missioncraft/missions/msn-99c369ee/missioncraft
+
+[form-3 coord-form]
+/home/apnex/.missioncraft/missions/msn-99c369ee/missioncraft
+
+[form-4 coord+path]
+/home/apnex/.missioncraft/missions/msn-99c369ee/missioncraft/src
+
+[shell-eval]
+/home/apnex/.missioncraft/missions/msn-99c369ee/missioncraft
+docs
+LICENSE
+package.json
+package-lock.json
+README.md
 ```
+
+**Note**: Pre-v1.0.2 (v1.0.1), `msn workspace <id>` happy-path returned zero stdout. Fixed in v1.0.2 slice (iii) at `bin.ts:326` (CLI dispatch handler `console.log(path)`).
 
 ### Step 9 — Read-only boundary verification
 
@@ -234,7 +287,7 @@ Expected: no remote wip-branch ref; read-only boundary preserved.
 
 Output:
 ```
-<to be captured>
+✓ no remote wip-branch (read-only boundary preserved)
 ```
 
 ### Step 10 — Abandon mission
@@ -256,8 +309,10 @@ Expected: silent success; lifecycle advances to `abandoned`.
 
 Output:
 ```
-<to be captured>
+(empty stdout; exit 0; daemon SIGTERM + workspace destroy + lifecycle atomic-advance)
 ```
+
+**Note**: Pre-v1.0.2 (v1.0.1), `msn abandon` orphaned the daemon process (operator had to manually `kill <pid>`). Fixed in v1.0.2 slice (i)+(i.5) — lockfile persistence + vestigial-acquireMissionLock-removal in abandon means SIGTERM signal lands correctly.
 
 ### Step 11 — Show mission (post-abandon)
 
@@ -272,7 +327,30 @@ Expected: JSON shows:
 
 Output:
 ```json
-<to be captured>
+{
+  "id": "msn-99c369ee",
+  "name": "test-readonly",
+  "tags": {},
+  "repos": [
+    {
+      "name": "missioncraft",
+      "url": "https://github.com/apnex/missioncraft.git",
+      "base": "main"
+    }
+  ],
+  "lifecycleState": "abandoned",
+  "createdAt": "2026-05-10T23:25:37.444Z",
+  "updatedAt": "2026-05-10T23:25:37.444Z",
+  "identityProviderName": "local-git-config",
+  "approvalProviderName": "trust-all",
+  "storageProviderName": "local-filesystem",
+  "gitEngineProviderName": "isomorphic-git",
+  "abandonMessage": "readonly scenario teardown",
+  "abandonProgress": "workspace-handled",
+  "abandonRepoStatus": {
+    "missioncraft": "cleaned"
+  }
+}
 ```
 
 ### Step 12 — Verify workspace cleaned + daemon dead
@@ -290,7 +368,10 @@ Expected:
 
 Output:
 ```
-<to be captured>
+ls: cannot access '/home/apnex/.missioncraft/missions/msn-99c369ee/': No such file or directory
+✓ workspace removed
+✓ daemon process exited
+/home/apnex/.missioncraft/config/msn-99c369ee.yaml
 ```
 
 ### Step 13 — Resolve `msn workspace` post-abandon (error path)
@@ -301,10 +382,13 @@ msn workspace <mission-id> 2>&1
 
 Expected: error message indicating mission is terminal-state (workspace destroyed). Operator-recovery path: re-create mission OR start from saved config.
 
-Output:
+Actual output (v1.0.2):
 ```
-<to be captured>
+/home/apnex/.missioncraft/missions/msn-99c369ee/missioncraft
+(exit=0)
 ```
+
+**Known UX gap (v1.0.2)**: `msn workspace <id>` resolves the path from mission-config `repos[]` regardless of workspace-presence-on-disk. Post-abandon, the workspace directory is destroyed but the CLI returns the (now-stale) path. Operator should check lifecycle-state via `msn show <id>` before relying on workspace-path resolution post-terminal. Tracked for v1.x follow-on: `workspace` should error on terminal-state OR include a `fs.existsSync` guard with operator-error message ("workspace destroyed; mission in terminal state").
 
 ---
 
@@ -355,8 +439,18 @@ Removes all mission configs + remaining workspaces + lockfiles.
 
 ## §8 Execution log
 
-**Status:** PENDING (awaiting `msn` global install)
-**Executed:** _<date/time>_
-**Executor:** _<who ran it>_
-**Outcome:** _<all-pass / per-step ✓-✗ table>_
-**Notes:** _<deviations from expected; substrate-currency drifts surfaced>_
+**Status:** RATIFIED
+**Executed:** 2026-05-10T23:25Z UTC against `@apnex/missioncraft@1.0.2` (Node v24.12.0; nvm-managed; user-prefix global install)
+**Executor:** architect-side (lily; agent-40903c59) via fresh `npm install -g @apnex/missioncraft@latest`
+**Mission-ID used in capture:** `msn-99c369ee` (ephemeral; abandoned at end)
+**Outcome:** 13 of 13 steps PASS — full operator-canonical workflow verified end-to-end
+
+**Notes:**
+- Pre-v1.0.2 (v1.0.0 + v1.0.1) shipped 4 CLI defects discovered via this scenario test cycle:
+  - v1.0.0: `msn` bin-shim silent-failure via shebang+symlink (`isMainModule` guard mismatch) → fixed v1.0.1 commit `87bf370`
+  - v1.0.1: `msn workspace` zero-stdout happy-path → fixed v1.0.2 slice (iii) at `bin.ts:326`
+  - v1.0.1: `msn abandon` daemon-orphan → fixed v1.0.2 slice (i)+(i.5) (lockfile-persistence + vestigial-acquire-removal)
+  - v1.0.1: lockfile-persistence inconsistency → fixed v1.0.2 slice (i) (`daemonSpawned` flag + conditional finally-block release)
+- v1.0.0 + v1.0.1 npm-deprecated; v1.0.2 is operator-canonical at time of capture
+- Step 13 post-abandon `msn workspace <id>` returns stale path (known UX gap; v1.x follow-on)
+- All other steps match expected outputs exactly

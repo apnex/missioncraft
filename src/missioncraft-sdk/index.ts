@@ -94,6 +94,11 @@ export {
 // ─── Default implementations (Design v4.8 §2.1.x — operator imports + injects via Missioncraft constructor) ───
 export { TrustAllPolicy } from './defaults/trust-all-policy.js';
 export { LocalGitConfigIdentity } from './defaults/local-git-config-identity.js';
+export {
+  LocalFilesystemStorage,
+  type LocalFilesystemStorageOptions,
+} from './defaults/local-filesystem-storage.js';
+export { IsomorphicGitEngine } from './defaults/isomorphic-git-engine.js';
 
 // ─── RemoteProvider implementations (Design v4.8 §2.1.5) ───
 export { PureGitRemoteProvider } from './providers/pure-git-remote-provider.js';
@@ -101,3 +106,10 @@ export {
   GitHubRemoteProvider,
   type GitHubRemoteProviderOptions,
 } from './providers/github-remote-provider.js';
+
+// ─── PROVIDER_REGISTRY string-name dispatch (Design v4.8 §2.3.1 v1.3 fold per HIGH-R3.1 — closed registry at v1) ───
+export {
+  instantiateProvider,
+  listProviderNames,
+  type PluggableCategory,
+} from './core/provider-registry.js';

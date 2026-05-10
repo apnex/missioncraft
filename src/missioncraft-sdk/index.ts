@@ -119,3 +119,6 @@ export {
   listProviderNames,
   type PluggableCategory,
 } from './core/provider-registry.js';
+
+// ─── Missioncraft SDK class — primary contract surface (Design v4.8 §2.3.1) ───
+export { Missioncraft, type ResourceType, type ResourceMap, type DeletableResource } from './core/missioncraft.js';

@@ -36,3 +36,29 @@ export type {
   RemoteUser,
   RemoteProvider,
 } from './pluggables/index.js';
+
+// ─── SDK-INTERNAL constructor types (§2.3.1) ───
+export type { MissioncraftConfig, StateDurabilityConfig } from './core/types.js';
+
+// ─── Mission resource (k8s-shape primary resource) ───
+export type {
+  MissionStatePhase,
+  MissionHandle,
+  MissionParticipant,        // v4.0 NEW per idea-265
+  RepoSpec,
+  MissionRepoState,          // v4.0 NEW per MINOR-R1.2
+  MissionState,
+  MissionFilter,
+  MissionConfig,
+  MissionMutation,
+} from './core/mission-types.js';
+
+// ─── Scope resource (v2.0 NEW per Refinement C) ───
+export type {
+  ScopeStatePhase,
+  ScopeHandle,
+  ScopeState,
+  ScopeFilter,
+  ScopeConfig,
+  ScopeMutation,
+} from './core/scope-types.js';

@@ -53,3 +53,65 @@ export async function setReaderWorkspaceWritable(workspacePath: string): Promise
     );
   }
 }
+
+// applyReaderRefUpdate — 5-step sentinel-guarded checkout sequence (Design v4.9 §2.10 W5c Q4).
+//
+// Applies an updated coord-remote ref into the reader's chmod-down workspace via git-native checkout.
+// `.daemon-tx-active` sentinel guards Loop A (chokidar fs-watch) self-event re-trigger per v4.6
+// MEDIUM-R7.2 (the chmod + checkout activity itself would otherwise fire chokidar 'change' events
+// against the same workspace and re-enter the wip-commit pipeline).
+//
+// Per Design v4.9 §2.10: writer-daemon's wip-commit-on-debounce uses parallel sentinel-guard pattern;
+// reader-daemon's apply-ref-update is the symmetric reader-mode counterpart.
+//
+// Steps:
+//   1. Touch `.daemon-tx-active` sentinel at parent (mission-level, OUTSIDE chmod-down scope so
+//      cleanup at Step 5 isn't blocked by 0555 dir-mode)
+//   2. setReaderWorkspaceWritable (chmod-up u+wx) on workspacePath
+//   3. `git --git-dir=<coordMirrorGitDir> --work-tree=<workspacePath> checkout -f <ref>`
+//   4. setReaderWorkspaceMode (chmod-down 0444/0555) on workspacePath
+//   5. Remove `.daemon-tx-active` sentinel at parent
+//
+// Best-effort: any step failure is wrapped in StorageAllocationError; sentinel cleanup attempted
+// in finally-block to avoid stuck state if an intermediate step throws.
+import { writeFile, unlink, mkdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+
+export async function applyReaderRefUpdate(
+  workspacePath: string,
+  coordMirrorGitDir: string,
+  ref: string,
+): Promise<void> {
+  // Sentinel placed at parent dir (mission-level), OUTSIDE the chmod-down scope. Cleanup at Step 5
+  // doesn't EACCES on 0555 workspace dir.
+  const sentinelDir = dirname(workspacePath);
+  const sentinel = join(sentinelDir, '.daemon-tx-active');
+  try {
+    // Step 1: touch sentinel
+    await mkdir(sentinelDir, { recursive: true });
+    await writeFile(sentinel, new Date().toISOString(), 'utf8');
+
+    // Step 2: chmod-up
+    await setReaderWorkspaceWritable(workspacePath);
+
+    // Step 3: git checkout from cached git-dir into work-tree
+    await execFileAsync('git', [
+      `--git-dir=${coordMirrorGitDir}`,
+      `--work-tree=${workspacePath}`,
+      'checkout',
+      '-f',
+      ref,
+    ]);
+
+    // Step 4: chmod-down
+    await setReaderWorkspaceMode(workspacePath);
+  } catch (err: unknown) {
+    throw new StorageAllocationError(
+      `applyReaderRefUpdate(${workspacePath}, ${ref}) failed: ${err instanceof Error ? err.message : 'unknown'}`,
+      { cause: err instanceof Error ? err : undefined },
+    );
+  } finally {
+    // Step 5: remove sentinel (idempotent on already-removed)
+    try { await unlink(sentinel); } catch { /* idempotent */ }
+  }
+}

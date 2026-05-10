@@ -71,6 +71,8 @@ const StateDurabilityConfigSchema = z.object({
       backoffMs: z.number().int().nonnegative().optional(),
     })
     .optional(),
+  // W5c — reader-daemon Loop B coord-poll cadence (1000-300_000ms; default 5000ms)
+  coordPollMs: z.number().int().min(1000).max(300_000).optional(),
 });
 
 // ─── MissionConfigSchema factory (v4.5 fold per MEDIUM-R6.4) ───

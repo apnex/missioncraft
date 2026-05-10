@@ -918,6 +918,79 @@ export class Missioncraft {
   }
 
   /**
+   * Reader-side cascade: writer terminated (refs/tags/missioncraft/<id>/terminated detected on
+   * coord-remote by Loop B). Advances reader's lifecycleState `'reading' → 'readonly-completed'`
+   * via `_engineMutate` per HIGH-R2.3 + Design v4.9 §2.10 W5c Q2 disposition. Idempotent on
+   * already-readonly-completed.
+   */
+  async cascadeTerminated(missionId: string): Promise<void> {
+    const path = this.missionConfigPath(missionId);
+    if (!existsSync(path)) return;
+    try {
+      await this._engineMutate(
+        missionId,
+        (config) => ({ ...config, mission: { ...config.mission, lifecycleState: 'readonly-completed' } }),
+        {
+          validate: (config) => {
+            const s = config.mission.lifecycleState;
+            if (s === 'readonly-completed') return null;     // idempotent
+            if (s === 'reading') return null;
+            return `cascade-terminated rejected: lifecycle '${s}' not in [reading, readonly-completed]`;
+          },
+          sourceLabel: `Missioncraft.cascadeTerminated('${missionId}')`,
+          role: 'reader',
+        },
+      );
+    } catch {
+      // Idempotent best-effort; daemon-cascade firing is non-aborting
+    }
+  }
+
+  /**
+   * Reader-side cascade: config-update (refs/heads/config/<id> HEAD-move detected by Loop B).
+   * Re-applies mission-config from the coord-mirror's `mission.yaml` blob into the reader's local
+   * config via `_engineMutate` (preserves substrate-currency discipline; atomic-write through engine).
+   * Best-effort; failure non-aborting (Loop B retries on next tick if mtime still divergent).
+   */
+  async cascadeConfigUpdate(missionId: string, mirrorYaml: string): Promise<void> {
+    const path = this.missionConfigPath(missionId);
+    if (!existsSync(path)) return;
+    let mirrorConfig: MissionConfig;
+    try {
+      mirrorConfig = parseMissionConfig(mirrorYaml, undefined, 'auto');
+    } catch {
+      // Malformed mirror-yaml; skip cascade-cycle (non-aborting)
+      return;
+    }
+    try {
+      await this._engineMutate(
+        missionId,
+        (currentConfig) => ({
+          ...currentConfig,
+          mission: {
+            ...mirrorConfig.mission,
+            // Preserve reader-side state (don't overwrite reader's lifecycleState with writer's)
+            lifecycleState: currentConfig.mission.lifecycleState,
+          },
+          repos: mirrorConfig.repos,
+        }),
+        {
+          validate: (currentConfig) => {
+            const s = currentConfig.mission.lifecycleState;
+            // Reader-side states only; writer-state config rejected per HIGH-R2.3
+            if (s === 'reading' || s === 'joined' || s === 'readonly-completed' || s === 'leaving') return null;
+            return `cascade-config-update rejected: lifecycle '${s}' not reader-side`;
+          },
+          sourceLabel: `Missioncraft.cascadeConfigUpdate('${missionId}')`,
+          role: 'reader',
+        },
+      );
+    } catch {
+      // Best-effort; next Loop B tick retries
+    }
+  }
+
+  /**
    * Propagate mission-config to coord-remote `refs/heads/config/<missionId>` branch + emit
    * `refs/tags/missioncraft/<missionId>/config-update` cascade-tag (Design v4.9 §2.10 W5b
    * MINOR-R6.2). Reader-daemon Loop B fetches the config-branch + applies changes to reader's
@@ -1085,6 +1158,127 @@ export class Missioncraft {
       }
     }
     return successCount;
+  }
+
+  /**
+   * Reader-daemon Loop B tick — single coord-fetch + 3-path ref-detection + cascade dispatch
+   * (Design v4.9 §2.10 W5c MEDIUM-R8.1).
+   *
+   * Steps:
+   *   1. Ensure `.coord-mirror/` initialized (idempotent; uses mission's coordinationRemote URL)
+   *   2. Capture pre-fetch SHAs for tracked refs
+   *   3. `git fetch --tags --prune coord-remote`
+   *   4. Capture post-fetch SHAs for tracked refs
+   *   5. Detect changes → fan out:
+   *      - terminated-tag appearance → cascadeTerminated
+   *      - config-branch HEAD-move → cascadeConfigUpdate (read mission.yaml from mirror)
+   *      - per-repo wip-branch HEAD-move → applyReaderRefUpdate(workspace, mirror-ref)
+   *
+   * Conditional gating: no-op IF coordinationRemote unset OR principal is not a reader of this
+   * mission (writer-mode missions don't run Loop B). Returns count of detected changes (0 on no-op
+   * or no-changes).
+   *
+   * Best-effort: fetch failure non-aborting; per-path detection failure logged via swallow + skip;
+   * next tick retries.
+   */
+  async readerLoopBTick(missionId: string, principal: string): Promise<number> {
+    const path = this.missionConfigPath(missionId);
+    if (!existsSync(path)) return 0;
+    const content = await readFile(path, 'utf8');
+    const config = parseMissionConfig(content, path, 'auto');
+
+    const coordRemote = config.mission.coordinationRemote;
+    if (!coordRemote) return 0;
+    const isReader = config.mission.participants?.some((p) => p.principal === principal && p.role === 'reader') ?? false;
+    if (!isReader) return 0;
+
+    const {
+      ensureCoordMirrorInit,
+      fetchCoordRemote,
+      revparseMirrorRef,
+      showMirrorRefFile,
+      coordMirrorPath: cmPath,
+      terminatedTagRef,
+      configBranchMirrorRef,
+      repoWipMirrorRef,
+    } = await import('./coord-mirror.js');
+
+    // Step 1: ensure mirror init
+    await ensureCoordMirrorInit(this.workspaceRoot, missionId, coordRemote);
+    const mirrorGitDir = `${cmPath(this.workspaceRoot, missionId)}/.git`;
+
+    // Step 2: capture pre-fetch SHAs (3 ref types: terminated, config, per-repo wip)
+    const preFetch = {
+      terminated: await revparseMirrorRef(this.workspaceRoot, missionId, terminatedTagRef(missionId)),
+      config: await revparseMirrorRef(this.workspaceRoot, missionId, configBranchMirrorRef(missionId)),
+      perRepoWip: new Map<string, string | null>(),
+    };
+    for (const repo of config.repos) {
+      const repoName = repo.name ?? repoNameFromUrl(repo.url);
+      preFetch.perRepoWip.set(repoName, await revparseMirrorRef(this.workspaceRoot, missionId, repoWipMirrorRef(missionId, repoName)));
+    }
+
+    // Step 3: fetch coord-remote (best-effort)
+    try {
+      await fetchCoordRemote(this.workspaceRoot, missionId);
+    } catch {
+      return 0;        // fetch failure → skip cycle; next tick retries
+    }
+
+    // Step 4: capture post-fetch SHAs
+    const postFetch = {
+      terminated: await revparseMirrorRef(this.workspaceRoot, missionId, terminatedTagRef(missionId)),
+      config: await revparseMirrorRef(this.workspaceRoot, missionId, configBranchMirrorRef(missionId)),
+      perRepoWip: new Map<string, string | null>(),
+    };
+    for (const repo of config.repos) {
+      const repoName = repo.name ?? repoNameFromUrl(repo.url);
+      postFetch.perRepoWip.set(repoName, await revparseMirrorRef(this.workspaceRoot, missionId, repoWipMirrorRef(missionId, repoName)));
+    }
+
+    // Step 5: detect changes + fan out
+    let changeCount = 0;
+
+    // Path 1: terminated-tag appearance (null → SHA)
+    if (preFetch.terminated === null && postFetch.terminated !== null) {
+      try {
+        await this.cascadeTerminated(missionId);
+        changeCount++;
+      } catch { /* best-effort */ }
+    }
+
+    // Path 2: config-branch HEAD-move
+    if (postFetch.config !== null && preFetch.config !== postFetch.config) {
+      const mirrorYaml = await showMirrorRefFile(
+        this.workspaceRoot,
+        missionId,
+        configBranchMirrorRef(missionId),
+        'mission.yaml',
+      );
+      if (mirrorYaml !== null) {
+        try {
+          await this.cascadeConfigUpdate(missionId, mirrorYaml);
+          changeCount++;
+        } catch { /* best-effort */ }
+      }
+    }
+
+    // Path 3: per-repo wip-branch HEAD-move → applyReaderRefUpdate
+    const { applyReaderRefUpdate } = await import('./reader-workspace-mode.js');
+    for (const repo of config.repos) {
+      const repoName = repo.name ?? repoNameFromUrl(repo.url);
+      const pre = preFetch.perRepoWip.get(repoName) ?? null;
+      const post = postFetch.perRepoWip.get(repoName) ?? null;
+      if (post !== null && pre !== post) {
+        const handle = await this.storage.allocate(missionId, repo.url);
+        try {
+          await applyReaderRefUpdate(handle.path, mirrorGitDir, repoWipMirrorRef(missionId, repoName));
+          changeCount++;
+        } catch { /* best-effort; per-repo failure non-aborting */ }
+      }
+    }
+
+    return changeCount;
   }
 
   /**

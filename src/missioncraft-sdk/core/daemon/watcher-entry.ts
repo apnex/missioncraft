@@ -1,29 +1,32 @@
 // watcher-entry.ts — daemon-watcher process entry-point (Design v4.9 §2.6.5; W4.4 slice (i)).
 //
-// Invoked via `node <path>/watcher-entry.js <missionId> <workspaceRoot>` from spawnDaemonWatcher.
-// Daemon discipline:
-//   - Reads mission-config from <workspaceRoot>/config/<missionId>.yaml
-//   - Sets up chokidar fs-watch on each repo workspace
-//   - On debounce: commits to wip/<missionId> branch via gitEngine.commitToRef (slice ii enrichment)
-//   - SIGTERM handler: graceful-shutdown (final flush + lockfile cleanup + exit 0)
-//   - SIGINT handler: same as SIGTERM (CTRL-C compatibility for dev/test)
-//
-// W4.4 slice (i) MVP: minimal daemon loop with chokidar setup + SIGTERM handler. Real wip-commit
-// on debounce + reader-mode rollback land in slice (i) follow-on commits OR slice (ii) graft.
+// Invoked via `node <path>/watcher-entry.js <missionId> <workspaceRoot> [<principal>]` from
+// spawnDaemonWatcher. Mode-dispatched at boot:
+//   - Writer-mode (default; principal absent OR principal == owning-writer): chokidar Loop A
+//     fs-watch on per-repo workspaces; debounce → wip-commit + push-to-coord-remote +
+//     config-mutation-propagation via mtime-watch.
+//   - Reader-mode (principal present + matches reader participant): Loop B setInterval timer-poll
+//     wrapping `git fetch --tags coord-remote` via cached `.coord-mirror/` git-dir; ref-detection
+//     fans out to cascade-terminated / cascade-config-update / applyReaderRefUpdate per W5c
+//     MEDIUM-R8.1.
 
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
 
 import { updateLockfileState } from '../state-machine/lockfile-state.js';
 import { Missioncraft } from '../missioncraft.js';
+import { parseMissionConfig } from '../yaml-transform.js';
 
 const DEBOUNCE_MS = 1000;        // 1s default; configurable via mission.stateDurability.wipCadenceMs in slice (ii)
 const HEARTBEAT_MS = 60_000;     // 60s lockfile-TTL extension cadence
+const COORD_POLL_DEFAULT_MS = 5_000;     // W5c reader-daemon Loop B default (configurable via mission.stateDurability.coordPollMs)
 
 async function main(): Promise<void> {
-  const [, , missionId, workspaceRoot] = process.argv;
+  const [, , missionId, workspaceRoot, principalArg] = process.argv;
   if (!missionId || !workspaceRoot) {
-    process.stderr.write(`usage: watcher-entry.js <missionId> <workspaceRoot>\n`);
+    process.stderr.write(`usage: watcher-entry.js <missionId> <workspaceRoot> [<principal>]\n`);
     process.exit(2);
   }
 
@@ -73,6 +76,56 @@ async function main(): Promise<void> {
     await mcTick.daemonTickAdvance(missionId);
   } catch {
     // Daemon-tick advance is best-effort; failure doesn't crash daemon
+  }
+
+  // W5c mode-dispatch: detect reader-mode at boot via per-principal role lookup against
+  // mission-config participants. Reader-mode runs Loop B only (no Loop A wip-commit in v1;
+  // tamper-detect-rollback is a deeper concern deferred to W5c follow-on).
+  let role: 'writer' | 'reader' = 'writer';
+  let coordPollMs = COORD_POLL_DEFAULT_MS;
+  try {
+    const configPath = join(workspaceRoot, 'config', `${missionId}.yaml`);
+    if (existsSync(configPath)) {
+      const cfgContent = await readFile(configPath, 'utf8');
+      const cfg = parseMissionConfig(cfgContent, configPath, 'auto');
+      if (principalArg) {
+        const matched = cfg.mission.participants?.find((p) => p.principal === principalArg);
+        if (matched && matched.role === 'reader') role = 'reader';
+      }
+      if (typeof cfg.stateDurability?.coordPollMs === 'number') {
+        coordPollMs = cfg.stateDurability.coordPollMs;
+      }
+    }
+  } catch {
+    // Mode-detection failure → default writer-mode (legacy single-principal compat)
+  }
+
+  // Reader-mode dispatch: Loop B setInterval timer-poll; SIGTERM/SIGINT handlers reused.
+  if (role === 'reader' && principalArg) {
+    let mcReader: Missioncraft;
+    try {
+      mcReader = new Missioncraft({ workspaceRoot, principal: principalArg });
+    } catch {
+      process.stderr.write(`watcher-entry: SDK bootstrap failed for reader-mode; daemon exiting\n`);
+      process.exit(1);
+    }
+    const loopBTimer = setInterval(() => {
+      void mcReader.readerLoopBTick(missionId, principalArg).catch(() => {
+        // Loop B tick failure non-aborting; next tick retries
+      });
+    }, coordPollMs);
+    const readerShutdown = async (_sig: string): Promise<void> => {
+      if (shutdownInProgress) return;
+      shutdownInProgress = true;
+      clearInterval(loopBTimer);
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      process.exit(0);
+    };
+    process.removeAllListeners('SIGTERM');
+    process.removeAllListeners('SIGINT');
+    process.on('SIGTERM', () => { void readerShutdown('SIGTERM'); });
+    process.on('SIGINT', () => { void readerShutdown('SIGINT'); });
+    return;        // reader-mode boots Loop B + heartbeat only; no Loop A / wip-commit / push / config-watcher
   }
 
   // chokidar fs-watch on per-mission workspaces

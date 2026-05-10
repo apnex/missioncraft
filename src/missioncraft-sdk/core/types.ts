@@ -44,4 +44,8 @@ export interface StateDurabilityConfig {
     readonly maxAttempts?: number;               // default 5 (v1.5 fold per MEDIUM-R4.3 aligned with §2.5 + §2.6.3)
     readonly backoffMs?: number;                 // default 1000
   };
+  // v4.0+ NEW per idea-265 multi-participant + W5c MEDIUM-R8.1 — reader-daemon Loop B coord-poll cadence.
+  // Reader-mode setInterval timer-poll fires `git fetch --tags <coord-remote>` every coordPollMs.
+  // Bounds: 1000ms (1s) to 300_000ms (5min); default 5000ms (5s).
+  readonly coordPollMs?: number;
 }

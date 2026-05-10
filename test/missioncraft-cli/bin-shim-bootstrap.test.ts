@@ -56,4 +56,47 @@ describe('CLI bin-shim symlink-bootstrap regression', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/^missioncraft 1\.0\.\d+/);
   });
+
+  // SD1 regression (v1.0.2 slice iii): `msn workspace <id>` must print the resolved workspace
+  // path to stdout. Pre-fix the CLI dispatcher discarded the SDK return value → silent exit-0.
+  // Verified via real CLI invocation against a tmp workspace-root with a pre-staged mission.
+  it('SD1 regression — `msn workspace <id>` prints the resolved workspace path to stdout', () => {
+    const wsRoot = mkdtempSync(join(tmpdir(), 'msn-sd1-ws-'));
+    try {
+      // Step 1: create a mission via SDK direct invocation (subprocess so it runs against the
+      // same dist bundle the CLI uses; CLI's `msn create` works fine — see v1.0.1 verified
+      // create+list flow). Embed the script inline to keep test self-contained.
+      const createResult = spawnSync(
+        process.execPath,
+        [
+          '-e',
+          `(async () => {
+            const { Missioncraft } = await import('${process.cwd()}/dist/missioncraft-sdk/index.js');
+            const mc = new Missioncraft({ workspaceRoot: ${JSON.stringify(wsRoot)} });
+            const h = await mc.create('mission', { repo: 'file:///tmp/sd1-repo' });
+            await mc.storage.allocate(h.id, 'file:///tmp/sd1-repo');
+            console.log(h.id);
+          })().catch((e) => { console.error(e); process.exit(1); });`,
+        ],
+        { encoding: 'utf8', timeout: 15000 },
+      );
+      expect(createResult.status).toBe(0);
+      const missionId = createResult.stdout.trim();
+      expect(missionId).toMatch(/^msn-[a-f0-9]{8}$/);
+
+      // Step 2: run `msn workspace <id> --workspace-root <wsRoot>` via symlinked bin
+      const workspaceResult = spawnSync(
+        process.execPath,
+        [symlinkPath, 'workspace', missionId, '--workspace-root', wsRoot],
+        { encoding: 'utf8', timeout: 10000 },
+      );
+      expect(workspaceResult.status).toBe(0);
+      expect(workspaceResult.stderr).toBe('');
+      // stdout must contain the resolved workspace path (allocated under wsRoot)
+      expect(workspaceResult.stdout.trim()).toContain(wsRoot);
+      expect(workspaceResult.stdout.trim()).toContain(missionId);
+    } finally {
+      rmSync(wsRoot, { recursive: true, force: true });
+    }
+  });
 });

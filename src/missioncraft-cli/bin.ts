@@ -322,9 +322,13 @@ async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): P
     case 'tick':
       await mc.tick(parsed.positionals[0]);
       return;
-    case 'workspace':
-      await mc.workspace(parsed.positionals[0], parsed.positionals[1]);
+    case 'workspace': {
+      // SD1 fix (v1.0.2 slice iii): print the resolved workspace path to stdout. Pre-fix the
+      // return value was discarded → silent exit-0; SDK API worked but CLI never emitted output.
+      const path = await mc.workspace(parsed.positionals[0], parsed.positionals[1]);
+      console.log(path);
       return;
+    }
     case 'join': {
       const coordRemote = String(parsed.flags.get('--coord-remote') ?? '');
       const principal = parsed.flags.get('--principal');

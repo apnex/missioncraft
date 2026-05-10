@@ -186,6 +186,69 @@ describe('W5b slice (ii) item #3 — emitTerminatedTag', () => {
   });
 });
 
+describe('W5b slice (ii) item #4 — propagateConfigToCoordRemote', () => {
+  it('returns false when coordinationRemote unset', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const handle = await mc.create('mission', { repo: 'file:///tmp/w5b-ii-prop-1' });
+    const ok = await mc.propagateConfigToCoordRemote(handle.id);
+    expect(ok).toBe(false);
+  });
+
+  it('returns false when no reader participants (solo writer)', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const handle = await mc.create('mission', { repo: 'file:///tmp/w5b-ii-prop-2' });
+    await seedMissionWithReader(tempRoot, handle.id, 'https://github.com/example/coord.git', { withReader: false });
+    const ok = await mc.propagateConfigToCoordRemote(handle.id);
+    expect(ok).toBe(false);
+  });
+
+  it('happy-path: commits to mirror + pushes config-branch + emits config-update tag', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const repoUrl = 'file:///tmp/w5b-ii-prop-3';
+    const handle = await mc.create('mission', { repo: repoUrl });
+    await mc.storage.allocate(handle.id, repoUrl);
+    await seedMissionWithReader(tempRoot, handle.id, 'https://github.com/example/coord.git');
+
+    const pushSpy = vi.fn().mockResolvedValue(undefined);
+    const tagSpy = vi.fn().mockResolvedValue(undefined);
+    (mc.gitEngine as unknown as { push: typeof pushSpy }).push = pushSpy;
+    (mc.gitEngine as unknown as { tag: typeof tagSpy }).tag = tagSpy;
+
+    const ok = await mc.propagateConfigToCoordRemote(handle.id);
+    expect(ok).toBe(true);
+
+    // 2 pushes: branch + tag
+    expect(pushSpy).toHaveBeenCalledTimes(2);
+    const pushCalls = pushSpy.mock.calls;
+    expect(pushCalls[0][1]).toEqual(expect.objectContaining({
+      branch: `refs/heads/config/${handle.id}`,
+      url: 'https://github.com/example/coord.git',
+      remoteRef: `refs/heads/config/${handle.id}`,
+    }));
+    expect(pushCalls[1][1]).toEqual(expect.objectContaining({
+      branch: `refs/tags/missioncraft/${handle.id}/config-update`,
+      url: 'https://github.com/example/coord.git',
+      remoteRef: `refs/tags/missioncraft/${handle.id}/config-update`,
+    }));
+
+    expect(tagSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      `missioncraft/${handle.id}/config-update`,
+      expect.objectContaining({ force: true }),
+    );
+
+    // Mirror repo + sentinel were created
+    expect(existsSync(join(tempRoot, 'missions', handle.id, '.config-mirror', 'mission.yaml'))).toBe(true);
+    expect(existsSync(join(tempRoot, 'missions', handle.id, '.config-mirror', '.last-propagated-at'))).toBe(true);
+  });
+
+  it('returns false when mission config does not exist (graceful)', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const ok = await mc.propagateConfigToCoordRemote('msn-deadbeef');
+    expect(ok).toBe(false);
+  });
+});
+
 describe('W5b slice (ii) — daemon-state.yaml read/write helpers', () => {
   it('readDaemonState returns null for non-existent file', async () => {
     const state = await readDaemonState(tempRoot, 'msn-nope');

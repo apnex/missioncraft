@@ -139,6 +139,42 @@ async function main(): Promise<void> {
     }, DEBOUNCE_MS);
   });
 
+  // W5b slice (ii) item #4: config-mtime-watch — propagate non-participant config-mutation
+  // to coord-remote per MINOR-R6.4. Watches `<workspaceRoot>/config/<missionId>.yaml` directly
+  // (separate from per-repo workspace watcher which targets working-tree changes only).
+  let configWatcher: FSWatcher | undefined;
+  let configDebounceTimer: NodeJS.Timeout | undefined;
+  if (mcSdk) {
+    const configPath = join(workspaceRoot, 'config', `${missionId}.yaml`);
+    configWatcher = chokidar.watch(configPath, {
+      ignoreInitial: true,
+      awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 100 },
+    });
+    configWatcher.on('change', () => {
+      if (configDebounceTimer) clearTimeout(configDebounceTimer);
+      configDebounceTimer = setTimeout(() => {
+        configDebounceTimer = undefined;
+        void mcSdk.propagateConfigToCoordRemote(missionId).catch(() => {
+          // Propagation failure non-aborting; next mtime-touch retries
+        });
+      }, DEBOUNCE_MS);
+    });
+  }
+
+  // Extend shutdown to close config-watcher + clear its timer
+  const originalShutdown = shutdown;
+  process.removeAllListeners('SIGTERM');
+  process.removeAllListeners('SIGINT');
+  const extendedShutdown = async (sig: string): Promise<void> => {
+    if (configDebounceTimer) clearTimeout(configDebounceTimer);
+    if (configWatcher) {
+      try { await configWatcher.close(); } catch { /* best-effort */ }
+    }
+    await originalShutdown(sig);
+  };
+  process.on('SIGTERM', () => { void extendedShutdown('SIGTERM'); });
+  process.on('SIGINT', () => { void extendedShutdown('SIGINT'); });
+
   // Daemon process stays alive via active timers + watcher event-loop registrations;
   // exits only via SIGTERM/SIGINT signal-handler.
 }

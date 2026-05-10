@@ -918,6 +918,80 @@ export class Missioncraft {
   }
 
   /**
+   * Propagate mission-config to coord-remote `refs/heads/config/<missionId>` branch + emit
+   * `refs/tags/missioncraft/<missionId>/config-update` cascade-tag (Design v4.9 §2.10 W5b
+   * MINOR-R6.2). Reader-daemon Loop B fetches the config-branch + applies changes to reader's
+   * local config copy (Loop B detection lands W5c).
+   *
+   * Conditional: no-op IF coordinationRemote unset OR no reader participants. Best-effort:
+   * commit + push failure non-aborting (mission-config local state is authoritative; next
+   * mtime-watch tick OR explicit re-propagate will retry).
+   *
+   * Mirror-repo discipline: per-mission dedicated git repo at
+   * `<workspaceRoot>/missions/<missionId>/.config-mirror/` keeps coord-remote
+   * `refs/heads/config/<id>` single-writer-per-mission (avoids per-repo-workspace race).
+   */
+  async propagateConfigToCoordRemote(missionId: string): Promise<boolean> {
+    const path = this.missionConfigPath(missionId);
+    if (!existsSync(path)) return false;
+    const content = await readFile(path, 'utf8');
+    const config = parseMissionConfig(content, path, 'auto');
+
+    const coordRemote = config.mission.coordinationRemote;
+    if (!coordRemote) return false;
+    const hasReader = config.mission.participants?.some((p) => p.role === 'reader') ?? false;
+    if (!hasReader) return false;
+
+    const {
+      commitConfigToMirror,
+      configBranchRef,
+      configUpdateTagName,
+      configUpdateTagRef,
+      recordPropagationTimestamp,
+    } = await import('./config-mirror.js');
+
+    const identity = await this.identity.resolve();
+    try {
+      // Step 1: commit latest mission-config YAML into mirror repo on refs/heads/config/<id>
+      await commitConfigToMirror(
+        { workspaceRoot: this.workspaceRoot, missionId, gitEngine: this.gitEngine, identity },
+        path,
+      );
+
+      const mirrorHandle: WorkspaceHandle = {
+        missionId,
+        repoUrl: '',
+        path: (await import('./config-mirror.js')).configMirrorPath(this.workspaceRoot, missionId),
+      };
+
+      // Step 2: push refs/heads/config/<id> branch to coord-remote
+      await this.pushWithRetry(mirrorHandle, {
+        branch: configBranchRef(missionId),
+        url: coordRemote,
+        remoteRef: configBranchRef(missionId),
+      });
+
+      // Step 3: create + push refs/tags/missioncraft/<id>/config-update cascade-tag
+      try {
+        await this.gitEngine.tag(mirrorHandle, configUpdateTagName(missionId), { force: true });
+        await this.pushWithRetry(mirrorHandle, {
+          branch: configUpdateTagRef(missionId),
+          url: coordRemote,
+          remoteRef: configUpdateTagRef(missionId),
+        });
+      } catch {
+        // Tag-emit failure non-aborting; reader-daemon Loop B falls back to branch-mtime detection
+      }
+
+      await recordPropagationTimestamp(this.workspaceRoot, missionId);
+      return true;
+    } catch {
+      // Best-effort: commit/push failure non-aborting; local state authoritative
+      return false;
+    }
+  }
+
+  /**
    * Emit `refs/tags/missioncraft/<missionId>/terminated` to coord-remote on writer-side terminal
    * transition (complete or abandon). Reader-daemon Loop B detects this tag and cascades reader's
    * lifecycle to `'readonly-completed'` per HIGH-R2.3 (Loop B detection lands W5c).
@@ -1549,6 +1623,15 @@ export class Missioncraft {
         sourceLabel: `Missioncraft.update('mission', '${id}')`,
       },
     );
+
+    // W5b slice (ii) item #4: config-mutation propagation to coord-remote.
+    // Best-effort: failure non-aborting (local state authoritative; daemon-mtime-watch retry).
+    try {
+      await this.propagateConfigToCoordRemote(id);
+    } catch {
+      // Propagation failure non-aborting; mtime-watch tick will retry on next config-touch
+    }
+
     return this.missionConfigToState(updated, this.principal);
   }
 

@@ -2,7 +2,7 @@
 // PRIMARY contract surface: 5 pluggable interfaces + Mission/Scope resource-types + Mutation discriminated-unions + zod schemas.
 // Strict-1.0 commitment per Q2=a — every export is committed contract; breaking changes post-v1 require major-bump.
 
-export const VERSION = '1.0.4';
+export const VERSION = '1.0.5';
 
 // ─── Pluggable interfaces (§2.1) ───
 export type {

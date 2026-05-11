@@ -538,3 +538,106 @@ Architect-recommended message: `npm deprecate @apnex/missioncraft@1.0.3 "CLI pre
 ### §12.8 DEFERRED to v1.0.5
 
 Per architect thread-533 directive: bug-65 (scope-impl audit); idea-271 (layout migration); idea-273 (progress/log during long-running ops).
+
+---
+
+## §13 v1.0.5 patch trail — operator-UX stability (bug-65 + bug-67 + idea-271 + idea-273)
+
+**Defects + features surfaced:** Architect-side scenario 01 re-execution audit against v1.0.4 (2026-05-11) surfaced 4 Hub-tracked items. Director-disposed Option (A) = "operator-UX stability" full bundle.
+
+- **bug-65** — Scope-namespace SDK-impl audit + completion (scope update + scope delete stubs)
+- **bug-67** — CLI-UX class-name leakage + silent-error-paths + arg-detection class (5 items)
+- **idea-271** — Operator-state layout consolidation under `config/{missions,scopes}/`
+- **idea-273** — Progress/log output during long-running ops (start/abandon/complete)
+
+**Hub coordinates:** thread-534 (v1.0.5 PATCH directive 2026-05-11; maxRounds=15).
+
+### §13.1 bug-65 — scope-namespace SDK-impl completion (slice (i) — commit `6a81a31`)
+
+Audit result: scope create/show/list already worked; ONLY scope update + scope delete were stubs.
+
+Slice (i) implements both:
+- **applyScopeMutation** — parallel to applyMissionMutation; 6 mutation kinds (add-repo, remove-repo, rename, set-description, set-tag, remove-tag). Auto-updates `scope.updatedAt`. Handles name-symlink rotation for rename (unlink old + symlink new; EEXIST → collision error).
+- **deleteScope** — cascade-protection scans `config/missions/` for missions referencing the scope-id via `scope-id` field. Operator-actionable error names the referencing missions + suggests `msn update <mission-id> scope-id ""` to clear before delete.
+
+NO scope-extension surfaced (scope show/list already worked).
+
+### §13.2 idea-271 — operator-state layout consolidation NO MIGRATION (slice (ii) — commit `7dab92b`)
+
+**Director-direct disposition (mid-slice):** perfection only — no backwards-compat, no migration, no legacy debt. Architect-spec auto-migration logic DROPPED. New layout adopted directly; operators with pre-v1.0.5 state upgrade by manual `mv` (release-note will reference).
+
+Layout change:
+```
+~/.missioncraft/config/<mission-id>.yaml   →   ~/.missioncraft/config/missions/<mission-id>.yaml
+~/.missioncraft/scopes/<scope-id>.yaml     →   ~/.missioncraft/config/scopes/<scope-id>.yaml
+~/.missioncraft/config/.names/             →   ~/.missioncraft/config/missions/.names/
+~/.missioncraft/scopes/.names/             →   ~/.missioncraft/config/scopes/.names/
+```
+
+Unchanged: `~/.missioncraft/locks/missions/`, `~/.missioncraft/missions/` (workspaces), `~/.missioncraft/operator-config.yaml`.
+
+SDK impl: `missionConfigPath` + `scopeConfigPath` updated; new `missionNamesDir()` / `scopeNamesDir()` private helpers; `listMissions` scans `config/missions/`; `listScopes` scans `config/scopes/`; `deleteScope` cascade-scan + `applyScopeMutation` name-symlink rotation use new paths.
+
+11 test files updated to new layout (substrate-bypass discipline; bulk-sed across complete-abandon-integration, w5b-integration, v1.0.2-slice-i5-regression, w6-slice-ii, w5c-real-engine-integration, workspace-resolution, v1.0.4-slice-i-per-verb-help, grammar, join-leave-runtime, w6-real-engine-start, v1.0.5-slice-i-scope-completion).
+
+### §13.3 bug-67 items 1+2+5 — error-message cleanup (slice (iii) — commit `0ba8fa5`)
+
+- **Item 1** — bin.ts main() catch strips SDK class-name + method-path prefixes via regex (`^Missioncraft\.\w+(\(.*?\))?:\s+` and `^\w+Error:\s+`). Single fix-site covers all SDK throw paths.
+- **Item 2** — Catch detects `<resource> '<name>' not found` pattern + appends discovery hint pointing at `msn list` or `msn scope list`.
+- **Item 5** — Replaced internal `(W4)` markers with `(planned for v1.x roadmap)`; dropped redundant `Missioncraft.` class-prefix from `apply()` + `tick()` since dispatch catch strips it anyway.
+
+### §13.4 bug-67 item 3 — parser missing-arg correct positional (slice (iv) — commit `0ba8fa5`)
+
+`validateArgCount` missing-arg branch uses `spec.argLabels?.[positionals.length]?.label` (next-expected after already-provided) instead of always `argLabels[0]`. Example: `msn abandon <id>` (id provided, message missing) now reports `'abandon' requires <message>` instead of the wrong `'abandon' requires <id|name>`.
+
+### §13.5 bug-67 item 4 — input validation (slice (v) — commit `0ba8fa5`)
+
+Three new validation helpers in bin.ts:
+- `validateMissionStatus(value)` — `msn list --status` enum {created, configured, in-progress, started, completed, abandoned}
+- `validateConfigKey(key)` — `msn config get|set <key>` registry {wip-cadence-ms, snapshot-cadence-ms, lock-wait-ms, lock-validity-ms}
+- `validateRepoUrl(url)` — `--repo` value parseable via `new URL(...)`. Applied at `msn create --repo`, `msn scope create --repo`, `msn update repo-add <url>`.
+
+### §13.6 idea-273 — progress callback (slice (vi) — commit `4ee69da`)
+
+SDK API extension (Option (a) — operator-pluggable callback):
+- `ProgressEvent` type: `{ phase, message, percent?, bytes?, duration? }`
+- `ProgressCallback` type: `(event: ProgressEvent) => void`
+- `start` / `complete` / `abandon` accept `opts.onProgress?` — emits at canonical phase boundaries
+
+Phases:
+- start: validate / acquire-lock / allocate-workspace / clone / write-lifecycle / spawn-daemon
+- complete: final-tick / publish / write-lifecycle / daemon-sigterm
+- abandon: final-tick / daemon-sigterm / cleanup-branches / destroy-workspace
+
+CLI default sink: `makeProgressSink(parsed)` emits `[<phase>] <message>` to stderr in cyan when stderr-isTTY AND --quiet/-q not set. Pipe-safe: no-ops when piped/redirected. Stdout/stderr separation preserved (success-lines on stdout; progress on stderr).
+
+`--quiet` / `-q` flag added to GLOBAL_FLAGS.
+
+### §13.7 Test coverage delta
+
+325 → 339 tests (+14 net):
+- slice (i): +9 (v1.0.5-slice-i-scope-completion.test.ts)
+- slice (ii): no count delta (all path-update sed)
+- slices (iii)+(iv)+(v): +10 (v1.0.5-bug-67-error-cleanup.test.ts)
+- slice (vi): +4 (v1.0.5-slice-vi-progress.test.ts)
+- 2 bin-shim-bootstrap timeout-bumps (collateral flake-fix)
+
+### §13.8 v1.0.5 ship trail
+
+- slice (i) — `6a81a31` bug-65 scope-namespace completion (applyScopeMutation + deleteScope)
+- slice (ii) — `7dab92b` idea-271 layout consolidation NO MIGRATION (Director-direct)
+- slices (iii)+(iv)+(v) — `0ba8fa5` bug-67 items 1+2+3+4+5 error-cleanup + input-validation
+- slice (vi) — `4ee69da` idea-273 progress callback + CLI sink + --quiet flag
+- slice (vii) — this §13 doc + version bump 1.0.4 → 1.0.5 + tag v1.0.5
+
+### §13.9 v1.0.4 deprecation recommendation
+
+Architect-recommended message: `npm deprecate @apnex/missioncraft@1.0.4 "Scope-namespace completion + layout consolidation + CLI error-cleanup + progress callback shipped in v1.0.5+"`. Cumulative inventory: v1.0.0 deprecated; v1.0.1+v1.0.2+v1.0.3+v1.0.4 pending deprecation; v1.0.5 latest stable.
+
+### §13.10 v1.0.x queue post-v1.0.5
+
+Per architect thread-534 directive: ONLY idea-270 (substrate-composition; needs Survey) remains in v1.0.x queue. Operator-UX is **feature-complete** at v1.0.5.
+
+### §13.11 Director-direct mid-slice deviation — captured for retrospective
+
+Slice (ii) auto-migration logic DROPPED per Director-direct directive "no backwards-compat, no migration, no legacy debt — perfection only". Architect-spec auto-migration was DESIGNED-IN at thread-534 directive; Director's mid-cycle disposition tightens it. Methodology note: this is one of few cases where Director engages mid-cycle outside gate-points. Engineer accepted the disposition + surfaces it in this closing-audit + the closing-bundle thread-534 reply.

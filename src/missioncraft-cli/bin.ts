@@ -218,6 +218,20 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
       console.log(emitShellInit(parsed.positionals[0]));
       return;
     }
+    case 'tree': {
+      // v1.0.4 idea-272: tree-style verb-hierarchy visualization. Walks the same arg-spec tree
+      // as the per-verb help renderer (idea-274). --depth N limits recursion.
+      const { renderTree } = await import('./grammar/tree-renderer.js');
+      const depthRaw = parsed.flags.get('--depth');
+      const depth = typeof depthRaw === 'string' ? parseInt(depthRaw, 10) : undefined;
+      console.log(renderTree(Number.isFinite(depth) ? depth : undefined));
+      return;
+    }
+    case 'version': {
+      // v1.0.4 bug-66 item 1 alias-handler (defensive; parser usually short-circuits version → --version)
+      console.log(`missioncraft ${VERSION}`);
+      return;
+    }
     default:
       throw new ConfigValidationError(`internal: dispatcher missing case for verb '${parsed.verb}'`);
   }

@@ -80,21 +80,30 @@ export async function spawnDaemonWatcher(opts: SpawnDaemonOptions): Promise<Spaw
   // Default daemon-TTL = 24h (extended by daemon-heartbeat); align with lock TTL discipline
   const daemonExpiresAt = startTime + 86_400_000;
 
-  // Atomic write of daemon-IPC fields to lockfile (preserves W2-baseline lock fields)
-  const { readLockfileState } = await import('../state-machine/lockfile-state.js');
-  const current = await readLockfileState(opts.lockfilePath);
-  if (!current) {
-    // Lockfile must exist (acquired via storage.acquireMissionLock prior to spawn)
-    child.kill('SIGKILL');
-    throw new Error(`spawnDaemonWatcher(${opts.missionId}): lockfile absent at ${opts.lockfilePath}; acquire mission-lock first`);
+  // idea-267 (v1.0.3 slice v): symmetric-cleanup discipline — if ANY post-spawn step fails,
+  // SIGKILL the partially-spawned child before re-throwing. Pre-fix only the lockfile-absent
+  // branch killed the child; writeLockfileStateAtomic failure left the daemon orphaned (same
+  // operator-UX hazard class as SD2 v1.0.1 abandon-orphan).
+  try {
+    // Atomic write of daemon-IPC fields to lockfile (preserves W2-baseline lock fields)
+    const { readLockfileState } = await import('../state-machine/lockfile-state.js');
+    const current = await readLockfileState(opts.lockfilePath);
+    if (!current) {
+      // Lockfile must exist (acquired via storage.acquireMissionLock prior to spawn)
+      throw new Error(`spawnDaemonWatcher(${opts.missionId}): lockfile absent at ${opts.lockfilePath}; acquire mission-lock first`);
+    }
+    const next: LockfileState = {
+      ...current,
+      pid,
+      startTime,
+      daemonExpiresAt,
+    };
+    await writeLockfileStateAtomic(opts.lockfilePath, next);
+  } catch (postSpawnErr) {
+    // Partial-spawn cleanup: SIGKILL child before re-throwing to prevent orphan
+    try { child.kill('SIGKILL'); } catch { /* best-effort; child may have died on its own */ }
+    throw postSpawnErr;
   }
-  const next: LockfileState = {
-    ...current,
-    pid,
-    startTime,
-    daemonExpiresAt,
-  };
-  await writeLockfileStateAtomic(opts.lockfilePath, next);
 
   // Detach child from event loop (allows parent CLI to exit while daemon continues)
   child.unref();

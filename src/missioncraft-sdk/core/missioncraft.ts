@@ -2075,7 +2075,7 @@ export class Missioncraft {
     };
   }
 
-  private async getScope(id: string, _opts?: ResourceMap['scope']['getOpts']): Promise<ScopeState> {
+  private async getScope(id: string, opts?: ResourceMap['scope']['getOpts']): Promise<ScopeState> {
     const path = this.scopeConfigPath(id);
     if (!existsSync(path)) {
       throw new MissionStateError(`scope not found: '${id}' (no config at ${path})`);
@@ -2085,6 +2085,11 @@ export class Missioncraft {
     const raw = yamlMod.parse(content);
     const camel = kebabToCamelObject(raw);
     const config = ScopeConfigSchema.parse(camel);
+    // v1.0.6 bug-70: compute-on-demand referencedByMissions scan when --include-references set.
+    // Architect-pre-disposed: simpler than a maintained ledger; missions are O(10-100s) so scan is fast.
+    const referencedByMissions = opts?.includeReferences === true
+      ? await this.computeReferencingMissions(id)
+      : [];
     return {
       id: config.scope.id,
       ...(config.scope.name !== undefined && { name: config.scope.name }),
@@ -2094,11 +2099,41 @@ export class Missioncraft {
       lifecycleState: config.scope.lifecycleState as ScopeStatePhase,
       createdAt: config.scope.createdAt,
       updatedAt: config.scope.updatedAt,
-      referencedByMissions: [],                                                              // W4: cross-mission scan
+      referencedByMissions,
     };
   }
 
-  private async listScopes(filter?: ScopeFilter, _opts?: ResourceMap['scope']['listOpts']): Promise<ScopeState[]> {
+  /**
+   * v1.0.6 bug-70 — scan `<workspace>/config/missions/*.yaml` for mission.scope-id matching this scope-id.
+   * Returns mission-ids (canonical msn-<hex> form). Compute-on-demand vs. maintained ledger
+   * (architect-pre-disposed) — missions are O(10-100s) and the scan is sub-ms.
+   *
+   * Used by:
+   * - getScope (opt-in via --include-references)
+   * - listScopes (opt-in via --include-references)
+   * - deleteScope cascade-protection (always; v1.0.5 bug-65 — uses raw kebab-case read)
+   */
+  private async computeReferencingMissions(scopeId: string): Promise<string[]> {
+    const missionsDir = join(this.workspaceRoot, 'config', 'missions');
+    if (!existsSync(missionsDir)) return [];
+    const entries = await readdir(missionsDir);
+    const refs: string[] = [];
+    for (const name of entries) {
+      if (!name.endsWith('.yaml') || name.startsWith('.')) continue;
+      const missionPath = join(missionsDir, name);
+      try {
+        const content = await readFile(missionPath, 'utf8');
+        const { parse: yamlParse } = await import('yaml');
+        const raw = yamlParse(content) as { mission?: { 'scope-id'?: string } };
+        if (raw?.mission?.['scope-id'] === scopeId) {
+          refs.push(name.slice(0, -5));
+        }
+      } catch { /* skip unparseable */ }
+    }
+    return refs;
+  }
+
+  private async listScopes(filter?: ScopeFilter, opts?: ResourceMap['scope']['listOpts']): Promise<ScopeState[]> {
     // v1.0.5 idea-271: scopes now live under config/scopes/
     const dir = join(this.workspaceRoot, 'config', 'scopes');
     if (!existsSync(dir)) return [];
@@ -2108,7 +2143,8 @@ export class Missioncraft {
       if (!name.endsWith('.yaml') || name.startsWith('.')) continue;
       const id = name.slice(0, -5);
       try {
-        const state = await this.getScope(id);
+        // v1.0.6 bug-70: propagate includeReferences opt to getScope for compute-on-demand scan
+        const state = await this.getScope(id, opts);
         if (this.matchesScopeFilter(state, filter)) {
           states.push(state);
         }

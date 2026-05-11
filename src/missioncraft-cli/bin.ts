@@ -346,12 +346,16 @@ async function dispatchScope(mc: Missioncraft, parsed: ParsedCommand, format: Ou
       return;
     }
     case 'list': {
-      const states = await mc.list('scope');
+      // v1.0.6 bug-70: --include-references triggers compute-on-demand scan per scope
+      const includeReferences = parsed.flags.has('--include-references');
+      const states = await mc.list('scope', undefined, includeReferences ? { includeReferences: true } : undefined);
       console.log(formatValue(states, format));
       return;
     }
     case 'show': {
-      const state = await mc.get('scope', parsed.positionals[0]);
+      // v1.0.6 bug-70: --include-references triggers compute-on-demand scan of missions referencing this scope
+      const includeReferences = parsed.flags.has('--include-references');
+      const state = await mc.get('scope', parsed.positionals[0], includeReferences ? { includeReferences: true } : undefined);
       console.log(formatValue(state, format));
       return;
     }

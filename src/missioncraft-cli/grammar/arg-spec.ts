@@ -209,9 +209,10 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
     optional: 0,
     flags: [
       { name: '--purge-config', takesValue: false, description: 'Delete config + symlink at terminal' },
+      { name: '--purge-workspace', takesValue: false, description: 'Remove workspace at terminal (default: preserve for forensic-history)' },
     ],
     shortDesc: 'Complete a mission — squash, push, open PRs, terminate daemon',
-    longDesc: 'Transitions lifecycle "in-progress|started" → "completed". Per-repo: squash wip-commits, push, open PR via RemoteProvider. SIGTERMs the daemon-watcher, cleans up local mission-branches, destroys the workspace (unless --retain). publishMessage is recorded immutably on first invocation.',
+    longDesc: 'Transitions lifecycle "in-progress|started" → "completed". Per-repo: squash wip-commits, push, open PR via RemoteProvider. SIGTERMs the daemon-watcher, cleans up local mission-branches. Workspace preserved by default (forensic-history); pass --purge-workspace to remove. publishMessage is recorded immutably on first invocation.',
     argLabels: [
       { label: '<id|name>', description: 'Mission identifier or name' },
       { label: '<message>', description: 'Publish message (immutable; used as PR title)' },
@@ -219,6 +220,7 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
     examples: [
       { cmd: 'msn complete alpha "feat: add login flow"', comment: 'squash + push + open PRs across all repos' },
       { cmd: 'msn complete alpha "..." --purge-config', comment: 'delete the mission config after completion' },
+      { cmd: 'msn complete alpha "..." --purge-workspace --purge-config', comment: 'full cleanup (workspace + config)' },
     ],
     seeAlso: ['abandon', 'start'],
   },

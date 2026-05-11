@@ -410,7 +410,7 @@ export class Missioncraft {
   async complete(
     idOrName: string,
     message: string,
-    opts: { purgeConfig?: boolean; retain?: boolean; onProgress?: ProgressCallback } = {},
+    opts: { purgeConfig?: boolean; purgeWorkspace?: boolean; retain?: boolean; onProgress?: ProgressCallback } = {},
   ): Promise<MissionState> {
     if (!message) {
       throw new ConfigValidationError("Missioncraft.complete: message is required (per v3.0 Refinement #4)");
@@ -418,6 +418,12 @@ export class Missioncraft {
     if (opts.retain && opts.purgeConfig) {
       throw new ConfigValidationError(
         "Missioncraft.complete: --retain and --purge-config are mutually exclusive (purge implies destroy)",
+      );
+    }
+    // v1.0.6 bug-72: --purge-workspace and --retain are mutually exclusive (destroy ↔ preserve).
+    if (opts.retain && opts.purgeWorkspace) {
+      throw new ConfigValidationError(
+        "Missioncraft.complete: --retain and --purge-workspace are mutually exclusive",
       );
     }
     const id = this.resolveMissionRef(idOrName);                           // v1.0.3 bug-64 item 5
@@ -547,8 +553,18 @@ export class Missioncraft {
         void lock;
       }
 
-      // Step 7: destroy workspace (per --retain not set)
-      if (!opts.retain) {
+      // v1.0.6 bug-72: workspace preserved by default at terminal `complete`; --purge-workspace
+      // opts-in to destroy (symmetric with abandon Step 6 substrate). The previous default-destroy
+      // behavior was never operator-reachable (CLI didn't expose --retain), so flipping the
+      // default to preserve is invisible to existing operator-paths.
+      if (opts.purgeWorkspace) {
+        // v1.0.6 bug-71-symmetry: cwd-rug-pull guard when destroying workspace.
+        const workspacePath = join(this.workspaceRoot, 'missions', id);
+        try {
+          if (process.cwd().startsWith(workspacePath)) {
+            process.chdir(join(this.workspaceRoot, 'missions'));
+          }
+        } catch { /* cwd-resolve failure non-aborting */ }
         await this.storage.cleanup(id);
       }
 

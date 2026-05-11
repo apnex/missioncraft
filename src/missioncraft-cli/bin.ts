@@ -521,10 +521,15 @@ async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): P
       return;
     case 'complete': {
       const progressSink = makeProgressSink(parsed);                       // v1.0.5 idea-273
+      // v1.0.6 bug-72: --purge-workspace flag; default preserves workspace at terminal.
       const result = await mc.complete(
         parsed.positionals[0],
         parsed.positionals[1],
-        { onProgress: progressSink, ...(parsed.flags.has('--purge-config') && { purgeConfig: true }) },
+        {
+          onProgress: progressSink,
+          ...(parsed.flags.has('--purge-config') && { purgeConfig: true }),
+          ...(parsed.flags.has('--purge-workspace') && { purgeWorkspace: true }),
+        },
       );
       // bug-64 item 6+7 scope-extension (architect-pre-approved): symmetric `complete` line
       const nameSuffix = result.name ? ` ('${result.name}')` : '';

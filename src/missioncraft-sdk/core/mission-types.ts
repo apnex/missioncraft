@@ -72,6 +72,8 @@ export interface MissionState {
   readonly id: string;
   readonly name?: string;
   readonly hubId?: string;
+  // v1.0.6 bug-70: eager-inline scope reference; absent when not scope-bound.
+  readonly scopeId?: string;
   readonly description?: string;
   readonly tags: Record<string, string>;
   readonly repos: readonly MissionRepoState[];           // v4.0 fold per MINOR-R1.2 — type widened from RepoSpec[] to MissionRepoState[]
@@ -138,6 +140,8 @@ export interface MissionConfig {
     readonly id: string;
     readonly name?: string;
     readonly hubId?: string;
+    // v1.0.6 bug-70: eager-inline scope reference; absent when not scope-bound.
+    readonly scopeId?: string;
     readonly description?: string;
     readonly lifecycleState: MissionStatePhase;
     readonly createdAt: Date;

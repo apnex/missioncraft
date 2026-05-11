@@ -144,6 +144,13 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
       if (parsed.flags.has('--repo')) {
         validateRepoUrl(String(parsed.flags.get('--repo')));
       }
+      // v1.0.6 bug-70: --scope and --repo are mutually exclusive on `msn create`. Scope acts as the
+      // repo-template; combining with --repo yields ambiguous attach-semantics (replace vs. append).
+      if (parsed.flags.has('--scope') && parsed.flags.has('--repo')) {
+        throw new ConfigValidationError(
+          "'msn create --scope <id|name> --repo <url>' rejected: --scope and --repo are mutually exclusive (scope provides the repo template)",
+        );
+      }
       const handle = await mc.create('mission', {
         ...(parsed.flags.has('--name') && { name: String(parsed.flags.get('--name')) }),
         ...(parsed.flags.has('--repo') && { repo: String(parsed.flags.get('--repo')) }),

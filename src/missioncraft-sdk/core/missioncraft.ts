@@ -1875,14 +1875,37 @@ export class Missioncraft {
   private async createMission(opts: ResourceMap['mission']['createOpts'] = {}): Promise<MissionHandle> {
     const id = generateMissionId();
     const now = new Date();
-    const repos = opts.repo
-      ? (Array.isArray(opts.repo) ? opts.repo : [opts.repo]).map((url) => ({ url, name: repoNameFromUrl(url) }))
-      : [];
+
+    // v1.0.6 bug-70: eager-inline scope expansion. When opts.scope set, the scope acts as a
+    // TEMPLATE at attach-time: repos[] are COPIED into mission YAML + scopeId persisted as metadata.
+    // Combination with explicit opts.repo rejected at CLI level for unambiguous attach-semantics.
+    let scopeBoundRepos: RepoSpec[] | null = null;
+    let resolvedScopeId: string | undefined;
+    if (opts.scope !== undefined && opts.scope !== '') {
+      resolvedScopeId = this.resolveScopeRef(opts.scope);
+      const scopePath = this.scopeConfigPath(resolvedScopeId);
+      if (!existsSync(scopePath)) {
+        throw new MissionStateError(`scope '${opts.scope}' not found`);
+      }
+      const scopeContent = await readFile(scopePath, 'utf8');
+      const { parse: yamlParse } = await import('yaml');
+      const scopeRaw = yamlParse(scopeContent);
+      const scopeCamel = kebabToCamelObject(scopeRaw);
+      const scopeConfig = ScopeConfigSchema.parse(scopeCamel);
+      scopeBoundRepos = scopeConfig.repos.map((r) => ({ ...r }));
+    }
+
+    const repos: RepoSpec[] = scopeBoundRepos ?? (
+      opts.repo
+        ? (Array.isArray(opts.repo) ? opts.repo : [opts.repo]).map((url) => ({ url, name: repoNameFromUrl(url) }))
+        : []
+    );
     const config: MissionConfig = {
       missionConfigSchemaVersion: 1,
       mission: {
         id,
         ...(opts.name !== undefined && { name: opts.name }),
+        ...(resolvedScopeId !== undefined && { scopeId: resolvedScopeId }),
         lifecycleState: repos.length === 0 ? 'created' : 'configured',
         createdAt: now,
       },
@@ -2028,6 +2051,7 @@ export class Missioncraft {
       id: m.id,
       ...(m.name !== undefined && { name: m.name }),
       ...(m.hubId !== undefined && { hubId: m.hubId }),
+      ...(m.scopeId !== undefined && { scopeId: m.scopeId }),
       ...(m.description !== undefined && { description: m.description }),
       tags: m.tags ?? {},
       repos,
@@ -2252,9 +2276,40 @@ export class Missioncraft {
    * callback; FSM auto-advance (add-first-repo / remove-last-repo) lives in apply callback.
    */
   private async applyMissionMutation(id: string, mutation: MissionMutation): Promise<MissionState> {
+    // v1.0.6 bug-70: set-scope attach requires async scope-config read for eager-inline repo copy.
+    // Resolve scope-name → canonical id + load repos[] BEFORE entering pure-mutation closure.
+    // Detach (scopeId === null) stays on the pure-mutation path.
+    let resolvedAttachScopeId: string | undefined;
+    let attachScopeRepos: RepoSpec[] | undefined;
+    if (mutation.kind === 'set-scope' && mutation.scopeId !== null) {
+      resolvedAttachScopeId = this.resolveScopeRef(mutation.scopeId);
+      const scopePath = this.scopeConfigPath(resolvedAttachScopeId);
+      if (!existsSync(scopePath)) {
+        throw new MissionStateError(`scope '${mutation.scopeId}' not found`);
+      }
+      const scopeContent = await readFile(scopePath, 'utf8');
+      const { parse: yamlParse } = await import('yaml');
+      const scopeRaw = yamlParse(scopeContent);
+      const scopeCamel = kebabToCamelObject(scopeRaw);
+      const scopeConfig = ScopeConfigSchema.parse(scopeCamel);
+      attachScopeRepos = scopeConfig.repos.map((r) => ({ ...r }));
+    }
+
     const updated = await this._engineMutate(
       id,
-      (config) => this.applyMissionMutationToConfig(config, mutation),
+      (config) => {
+        // set-scope attach: REPLACE repos[] with scope's; persist scopeId; auto-advance lifecycle
+        // 'created' → 'configured' if attached scope has ≥1 repo.
+        if (mutation.kind === 'set-scope' && mutation.scopeId !== null) {
+          const nextRepos = attachScopeRepos!;
+          const baseMission = { ...config.mission, scopeId: resolvedAttachScopeId! };
+          const nextMission = nextRepos.length > 0 && baseMission.lifecycleState === 'created'
+            ? { ...baseMission, lifecycleState: 'configured' as MissionStatePhase }
+            : baseMission;
+          return { ...config, mission: nextMission, repos: nextRepos };
+        }
+        return this.applyMissionMutationToConfig(config, mutation);
+      },
       {
         validate: (config) => validateMutationAllowed(mutation, config.mission.lifecycleState),
         sourceLabel: `Missioncraft.update('mission', '${id}')`,
@@ -2371,13 +2426,21 @@ export class Missioncraft {
       case 'set-hub-id':
         nextMission = { ...m, hubId: mutation.hubId };
         break;
-      case 'set-scope':
-        // W4.2+: scope-id validation against existing scope-config
+      case 'set-scope': {
+        // v1.0.6 bug-70: detach (null) clears scopeId; repos[] preserved (mission is self-contained
+        // post-attach; scope is just an initial template). Attach (non-null) handled in async pre-step
+        // of applyMissionMutation — pure path is never reached for attach.
         if (mutation.scopeId === null) {
-          // Clear scope-id (set to undefined)
-          nextMission = m;          // schema doesn't have scope-id field currently; W4.2+ will add
+          const { scopeId: _drop, ...rest } = m;
+          void _drop;
+          nextMission = rest as MissionConfig['mission'];
+        } else {
+          throw new ConfigValidationError(
+            `internal: set-scope attach must be resolved by applyMissionMutation async pre-step before applyMissionMutationToConfig`,
+          );
         }
         break;
+      }
       case 'set-tag': {
         const tags = { ...(m.tags ?? {}), [mutation.key]: mutation.value };
         nextMission = { ...m, tags };

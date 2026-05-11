@@ -86,6 +86,9 @@ const baseMissionConfigShape = z.object({
       .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, 'mission.name MUST match DNS-style slug')
       .optional(),
     hubId: z.string().optional(),
+    // v1.0.6 bug-70: optional eager-inline scope reference (omitted when not scope-bound).
+    // YAML wire-format is `scope-id` per kebab-case transform.
+    scopeId: z.string().regex(/^scp-[a-f0-9]{8}$/, 'mission.scopeId MUST match scp-<8-char-hex>').optional(),
     description: z.string().optional(),
     lifecycleState: MissionStatePhaseSchema.default('created'),
     createdAt: z.coerce.date(),

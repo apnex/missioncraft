@@ -27,6 +27,29 @@ export interface MissioncraftConfig {
   readonly principal?: string;                // opaque-string per MissionParticipant.principal format
 }
 
+/**
+ * v1.0.5 idea-273 — progress-event for long-running SDK ops.
+ *
+ * Emitted by start() / abandon() / complete() at phase-boundaries when caller supplies
+ * `onProgress` callback. Operator-pluggable sink (CLI installs default stderr-emit sink;
+ * IDEs/GUIs can install custom sinks per Design v4.8 5-pluggable-interfaces philosophy).
+ */
+export interface ProgressEvent {
+  /** Canonical phase identifier (e.g., "clone", "spawn-daemon", "squash"). */
+  readonly phase: string;
+  /** Operator-readable phase description. */
+  readonly message: string;
+  /** Optional: 0-100 for trackable progress like clone-with-bytes. */
+  readonly percent?: number;
+  /** Optional: bytes-transferred / total for clone/push. */
+  readonly bytes?: { transferred: number; total: number };
+  /** Optional: ms duration of completed phase. */
+  readonly duration?: number;
+}
+
+/** v1.0.5 idea-273 — caller-supplied progress sink. */
+export type ProgressCallback = (event: ProgressEvent) => void;
+
 export interface StateDurabilityConfig {
   readonly mechanism?: 'layered';                // v1: 'layered' only (single mechanism in v1)
   readonly wipCadenceMs?: number;                // default 30_000 (per F4)

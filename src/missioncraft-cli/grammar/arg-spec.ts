@@ -73,6 +73,8 @@ export const GLOBAL_FLAGS: readonly FlagSpec[] = [
   { name: '--lock-wait-ms', takesValue: true, description: 'Override lock-acquire wait timeout' },
   { name: '--lock-validity-ms', takesValue: true, description: 'Override lock-validity TTL' },
   { name: '--output', takesValue: true, description: 'Override default output format (text|json|yaml; for read-verbs only)' },
+  { name: '--quiet', takesValue: false, description: 'Suppress progress output on stderr (v1.0.5 idea-273)' },
+  { name: '-q', takesValue: false, description: 'Alias for --quiet' },
 ];
 
 /** Per-verb help example (idea-274). */

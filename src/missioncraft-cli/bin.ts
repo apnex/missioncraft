@@ -418,6 +418,22 @@ function validateRepoUrl(url: string): void {
   }
 }
 
+/**
+ * v1.0.5 idea-273 — CLI default progress sink. Emits `[<phase>] <message>` to stderr in cyan
+ * when stdout-isTTY AND --quiet/-q not set AND NO_COLOR not set. No-op otherwise (machine-
+ * consumers piping stdout get clean output; `$(msn workspace <id>)` shell-eval not polluted).
+ */
+function makeProgressSink(parsed: ParsedCommand): (event: import('@apnex/missioncraft').ProgressEvent) => void {
+  const quietFlag = parsed.flags.has('--quiet') || parsed.flags.has('-q')
+    || parsed.globalFlags.has('--quiet') || parsed.globalFlags.has('-q');
+  if (quietFlag) return (): void => undefined;
+  if (process.stderr.isTTY !== true) return (): void => undefined;
+  return (event): void => {
+    const line = `[${event.phase}] ${event.message}`;
+    process.stderr.write(`${colors.info(line)}\n`);
+  };
+}
+
 function readDaemonPid(workspaceRoot: string, missionId: string): number | undefined {
   // bug-64 item 6: lookup daemon-pid from mission-lockfile (populated by start() spawnDaemonWatcher
   // per v1.0.2 SD3 fix). Undefined when lockfile absent or unparseable (substrate-bypass tests, etc.).
@@ -434,11 +450,12 @@ async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): P
   // the dispatch let-throws and main() catches.
   switch (parsed.verb) {
     case 'start': {
+      const progressSink = makeProgressSink(parsed);                       // v1.0.5 idea-273
       let handle;
       if (parsed.flags.has('-f')) {
-        handle = await mc.start({ config: { missionConfigSchemaVersion: 1, mission: { id: 'placeholder', lifecycleState: 'created', createdAt: new Date() }, repos: [] } });
+        handle = await mc.start({ config: { missionConfigSchemaVersion: 1, mission: { id: 'placeholder', lifecycleState: 'created', createdAt: new Date() }, repos: [] } }, { onProgress: progressSink });
       } else {
-        handle = await mc.start(parsed.positionals[0]);
+        handle = await mc.start(parsed.positionals[0], { onProgress: progressSink });
       }
       // bug-64 item 6 (v1.0.3 slice iv): emit success-confirmation line on stdout
       const nameSuffix = handle.name ? ` ('${handle.name}')` : '';
@@ -452,10 +469,11 @@ async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): P
       await mc.apply({ missionConfigSchemaVersion: 1, mission: { id: 'placeholder', lifecycleState: 'created', createdAt: new Date() }, repos: [] });
       return;
     case 'complete': {
+      const progressSink = makeProgressSink(parsed);                       // v1.0.5 idea-273
       const result = await mc.complete(
         parsed.positionals[0],
         parsed.positionals[1],
-        parsed.flags.has('--purge-config') ? { purgeConfig: true } : undefined,
+        { onProgress: progressSink, ...(parsed.flags.has('--purge-config') && { purgeConfig: true }) },
       );
       // bug-64 item 6+7 scope-extension (architect-pre-approved): symmetric `complete` line
       const nameSuffix = result.name ? ` ('${result.name}')` : '';
@@ -467,9 +485,10 @@ async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): P
       return;
     }
     case 'abandon': {
-      const opts = parsed.flags.has('--purge-config')
-        ? { purgeConfig: true }
-        : (parsed.flags.has('--retain') ? { retain: true } : undefined);
+      const progressSink = makeProgressSink(parsed);                       // v1.0.5 idea-273
+      const opts: { purgeConfig?: boolean; retain?: boolean; onProgress?: typeof progressSink } = { onProgress: progressSink };
+      if (parsed.flags.has('--purge-config')) opts.purgeConfig = true;
+      if (parsed.flags.has('--retain')) opts.retain = true;
       const result = await mc.abandon(parsed.positionals[0], parsed.positionals[1], opts);
       // bug-64 item 7 (v1.0.3 slice iv): emit success-confirmation line on stdout
       const nameSuffix = result.name ? ` ('${result.name}')` : '';

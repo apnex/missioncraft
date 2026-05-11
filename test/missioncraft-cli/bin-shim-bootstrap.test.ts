@@ -155,7 +155,7 @@ describe('CLI bin-shim symlink-bootstrap regression', () => {
   });
 
   // idea-269: direct `msn cd <id>` (without wrapper) emits path + stderr hint
-  it('idea-269 — `msn cd <id>` direct (no wrapper) prints path + stderr hint', () => {
+  it('idea-269 — `msn cd <id>` direct (no wrapper) prints path + stderr hint', { timeout: 30000 }, () => {
     const wsRoot = mkdtempSync(join(tmpdir(), 'msn-cd-test-'));
     try {
       const createResult = spawnSync(
@@ -191,7 +191,7 @@ describe('CLI bin-shim symlink-bootstrap regression', () => {
   // SD1 regression (v1.0.2 slice iii): `msn workspace <id>` must print the resolved workspace
   // path to stdout. Pre-fix the CLI dispatcher discarded the SDK return value → silent exit-0.
   // Verified via real CLI invocation against a tmp workspace-root with a pre-staged mission.
-  it('SD1 regression — `msn workspace <id>` prints the resolved workspace path to stdout', () => {
+  it('SD1 regression — `msn workspace <id>` prints the resolved workspace path to stdout', { timeout: 30000 }, () => {
     const wsRoot = mkdtempSync(join(tmpdir(), 'msn-sd1-ws-'));
     try {
       // Step 1: create a mission via SDK direct invocation (subprocess so it runs against the

@@ -38,7 +38,7 @@ export type {
 } from './pluggables/index.js';
 
 // ─── SDK-INTERNAL constructor types (§2.3.1) ───
-export type { MissioncraftConfig, StateDurabilityConfig } from './core/types.js';
+export type { MissioncraftConfig, StateDurabilityConfig, ProgressEvent, ProgressCallback } from './core/types.js';
 
 // ─── Mission resource (k8s-shape primary resource) ───
 export type {

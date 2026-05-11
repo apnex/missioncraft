@@ -34,7 +34,7 @@ import type {
   StorageProvider,
   WorkspaceHandle,
 } from '../pluggables/index.js';
-import type { MissioncraftConfig } from './types.js';
+import type { MissioncraftConfig, ProgressCallback } from './types.js';
 import type {
   MissionConfig,
   MissionFilter,
@@ -248,13 +248,15 @@ export class Missioncraft {
    *   7. (W4.4 territory) `started → in-progress` advance fired by daemon-tick (NOT start())
    *   8. Release locks
    */
-  async start(input: string | { config: MissionConfig }): Promise<MissionHandle> {
+  async start(input: string | { config: MissionConfig }, opts?: { onProgress?: ProgressCallback }): Promise<MissionHandle> {
     if (typeof input !== 'string') {
       throw new ConfigValidationError(
         'Missioncraft.start: config-input form (apply()-equivalent) not yet implemented; pass mission-id string for W4.3',
       );
     }
     const missionId = this.resolveMissionRef(input);                       // v1.0.3 bug-64 item 5
+    const emit = opts?.onProgress ?? ((): void => undefined);              // v1.0.5 idea-273
+    emit({ phase: 'validate', message: `validating mission '${missionId}'` });
 
     // Step 1: validate pre-state via direct config-read (locks not yet acquired)
     const path = this.missionConfigPath(missionId);
@@ -275,6 +277,7 @@ export class Missioncraft {
     }
 
     // Step 2: acquire mission-lock + per-repo locks
+    emit({ phase: 'acquire-lock', message: 'acquiring mission + repo locks' });
     const missionLock = await this.storage.acquireMissionLock(missionId, { waitMs: 0 });
     const repoLocks: LockHandle[] = [];
     const workspaceHandles: WorkspaceHandle[] = [];
@@ -297,8 +300,10 @@ export class Missioncraft {
       // Step 3: allocate workspaces + Step 4: clone repos
       const identity = await this.identity.resolve();
       for (const repo of initialConfig.repos) {
+        emit({ phase: 'allocate-workspace', message: `allocating workspace for repo '${repo.name ?? repo.url}'` });
         const workspace = await this.storage.allocate(missionId, repo.url);
         workspaceHandles.push(workspace);
+        emit({ phase: 'clone', message: `cloning ${repo.url}` });
         await this.gitEngine.clone(workspace, repo.url, {
           fs: undefined,
           identity,
@@ -319,11 +324,13 @@ export class Missioncraft {
         },
       );
 
+      emit({ phase: 'write-lifecycle', message: "advancing lifecycle 'configured' → 'started'" });
       // Step 6 (W4.4 slice ii graft): daemon-spawn BEFORE state-yaml-persist Step 7 per v3.2
       // MEDIUM-R2.4 ordering. Spawn-failure rollback: revert lifecycle 'started' → 'configured';
       // throw error; finally-block releases locks → mission stays at 'configured' (clean-rollback
       // invariant preserved per v3.2 MEDIUM-R2.4).
       try {
+        emit({ phase: 'spawn-daemon', message: 'spawning daemon-watcher' });
         await spawnDaemonWatcher({
           missionId,
           workspaceRoot: this.workspaceRoot,
@@ -401,7 +408,7 @@ export class Missioncraft {
   async complete(
     idOrName: string,
     message: string,
-    opts: { purgeConfig?: boolean; retain?: boolean } = {},
+    opts: { purgeConfig?: boolean; retain?: boolean; onProgress?: ProgressCallback } = {},
   ): Promise<MissionState> {
     if (!message) {
       throw new ConfigValidationError("Missioncraft.complete: message is required (per v3.0 Refinement #4)");
@@ -412,6 +419,8 @@ export class Missioncraft {
       );
     }
     const id = this.resolveMissionRef(idOrName);                           // v1.0.3 bug-64 item 5
+    const emit = opts.onProgress ?? ((): void => undefined);               // v1.0.5 idea-273
+    emit({ phase: 'final-tick', message: 'flushing final wip-commit' });
 
     // Pre-flight: load config; verify pre-state
     const path = this.missionConfigPath(id);
@@ -483,9 +492,11 @@ export class Missioncraft {
       void flushResult;        // 'flushed' / 'no-daemon' / 'timeout' — all proceed to publish-loop
 
       // Step 2: per-repo publish-loop (squash + push + openPullRequest)
+      emit({ phase: 'publish', message: 'squash + push + open PRs per repo' });
       await this.runPublishLoop(id, initialConfig, effectiveMessage);
 
       // Step 3: atomic-write 'lifecycle-state: completed' + finalize publishStatus
+      emit({ phase: 'write-lifecycle', message: "advancing lifecycle → 'completed'" });
       const finalConfig = await this._engineMutate(
         id,
         (config) => ({ ...config, mission: { ...config.mission, lifecycleState: 'completed' } }),
@@ -501,6 +512,7 @@ export class Missioncraft {
       // Step 4 (W4.4 slice ii graft): SIGTERM daemon-watcher 60s + SIGKILL fallback per v3.2
       // MEDIUM-R2.1 + MEDIUM-R2.2. Parent-CLI clears daemon-IPC fields from lockfile post-shutdown
       // (per parent-only-ownership contract per slice i).
+      emit({ phase: 'daemon-sigterm', message: 'terminating daemon-watcher' });
       const termResult = await terminateDaemon(this.missionLockfilePath(id));
       if (termResult === 'terminated' || termResult === 'killed') {
         await clearDaemonIpcFields(this.missionLockfilePath(id));
@@ -725,7 +737,7 @@ export class Missioncraft {
   async abandon(
     idOrName: string,
     message: string,
-    opts: { purgeConfig?: boolean; retain?: boolean } = {},
+    opts: { purgeConfig?: boolean; retain?: boolean; onProgress?: ProgressCallback } = {},
   ): Promise<MissionState> {
     if (!message) {
       throw new ConfigValidationError("Missioncraft.abandon: message is required (per v3.0 Refinement #4)");
@@ -736,6 +748,8 @@ export class Missioncraft {
       );
     }
     const id = this.resolveMissionRef(idOrName);                           // v1.0.3 bug-64 item 5
+    const emit = opts.onProgress ?? ((): void => undefined);               // v1.0.5 idea-273
+    emit({ phase: 'final-tick', message: 'flushing final wip-commit + setting abandon-flag' });
 
     // Pre-flight: load config; verify pre-state
     const path = this.missionConfigPath(id);
@@ -785,6 +799,7 @@ export class Missioncraft {
       // dispatch-signal per v3.6 MEDIUM-R6.1) THEN SIGTERM daemon. Parent clears daemon-IPC fields
       // post-shutdown (per parent-only-ownership contract).
       await updateLockfileState(this.missionLockfilePath(id), { abandonInProgress: true });
+      emit({ phase: 'daemon-sigterm', message: 'terminating daemon-watcher' });
       const abandonTermResult = await terminateDaemon(this.missionLockfilePath(id));
       if (abandonTermResult === 'terminated' || abandonTermResult === 'killed') {
         await clearDaemonIpcFields(this.missionLockfilePath(id));
@@ -820,6 +835,7 @@ export class Missioncraft {
     }
     await this.recordAbandonProgress(id, 'locks-released');
 
+    emit({ phase: 'cleanup-branches', message: 'cleaning local mission-branches per repo' });
     // Step 5: per-repo local-branch cleanup (NO LOCK; post-Step-4 dispatch signal is mission-config.abandonProgress)
     let allCleaned = true;
     for (const repo of initialConfig.repos) {
@@ -843,6 +859,7 @@ export class Missioncraft {
       await this.recordAbandonProgress(id, 'branches-cleaned');
     }
 
+    emit({ phase: 'destroy-workspace', message: opts.retain ? 'preserving workspace (--retain)' : 'destroying workspace' });
     // Step 6: atomic single-lock-cycle (v3.6 MINOR-R6.1 option-b)
     const step6Lock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
     let finalConfig: MissionConfig;

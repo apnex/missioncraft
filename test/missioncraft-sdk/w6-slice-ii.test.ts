@@ -55,7 +55,7 @@ async function seedWriterMission(
   missionId: string,
   coordRemote: string,
 ): Promise<void> {
-  const path = join(workspaceRoot, 'config', `${missionId}.yaml`);
+  const path = join(workspaceRoot, 'config', 'missions', `${missionId}.yaml`);
   const content = await readFile(path, 'utf8');
   const ts = new Date().toISOString();
   const block = `  participants:\n    - principal: writer@host\n      role: writer\n      added-at: ${ts}\n    - principal: reader@host\n      role: reader\n      added-at: ${ts}\n  coordination-remote: ${coordRemote}\n`;
@@ -89,9 +89,9 @@ describe('W6 slice (ii) — sync-deletion-handling end-to-end (W5c-deferred carr
 
     // Reader: bootstrap config + workspace; Loop B fetches → applyReaderRefUpdate (real-engine)
     const readerRoot = join(tempRoot, 'reader-ws');
-    await mkdir(join(readerRoot, 'config'), { recursive: true });
-    const writerConfig = await readFile(join(writerRoot, 'config', `${handle.id}.yaml`), 'utf8');
-    const readerConfigPath = join(readerRoot, 'config', `${handle.id}.yaml`);
+    await mkdir(join(readerRoot, 'config', 'missions'), { recursive: true });
+    const writerConfig = await readFile(join(writerRoot, 'config', 'missions', `${handle.id}.yaml`), 'utf8');
+    const readerConfigPath = join(readerRoot, 'config', 'missions', `${handle.id}.yaml`);
     await writeFile(
       readerConfigPath,
       writerConfig.replace(/lifecycle-state: [\w-]+/, 'lifecycle-state: reading'),
@@ -146,9 +146,9 @@ describe('W6 slice (ii) — real-engine join() + leave() happy-path (W5c-deferre
 
     // Reader: bootstrap minimal config + call join()
     const readerRoot = join(tempRoot, 'reader-ws');
-    await mkdir(join(readerRoot, 'config'), { recursive: true });
-    const writerConfig = await readFile(join(writerRoot, 'config', `${handle.id}.yaml`), 'utf8');
-    const readerConfigPath = join(readerRoot, 'config', `${handle.id}.yaml`);
+    await mkdir(join(readerRoot, 'config', 'missions'), { recursive: true });
+    const writerConfig = await readFile(join(writerRoot, 'config', 'missions', `${handle.id}.yaml`), 'utf8');
+    const readerConfigPath = join(readerRoot, 'config', 'missions', `${handle.id}.yaml`);
     // Reader's local config starts at 'configured' (pre-join writer-state)
     await writeFile(
       readerConfigPath,
@@ -188,9 +188,9 @@ describe('W6 slice (ii) — real-engine join() + leave() happy-path (W5c-deferre
 
     // Reader: full join + leave-purge cycle
     const readerRoot = join(tempRoot, 'reader-ws');
-    await mkdir(join(readerRoot, 'config'), { recursive: true });
-    const writerConfig = await readFile(join(writerRoot, 'config', `${handle.id}.yaml`), 'utf8');
-    const readerConfigPath = join(readerRoot, 'config', `${handle.id}.yaml`);
+    await mkdir(join(readerRoot, 'config', 'missions'), { recursive: true });
+    const writerConfig = await readFile(join(writerRoot, 'config', 'missions', `${handle.id}.yaml`), 'utf8');
+    const readerConfigPath = join(readerRoot, 'config', 'missions', `${handle.id}.yaml`);
     await writeFile(
       readerConfigPath,
       writerConfig.replace(/lifecycle-state: [\w-]+/, 'lifecycle-state: configured'),

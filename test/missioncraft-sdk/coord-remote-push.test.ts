@@ -36,7 +36,7 @@ async function seedMissionWithReader(
   coordRemote: string,
   options: { withReader?: boolean } = { withReader: true },
 ): Promise<void> {
-  const path = join(workspaceRoot, 'config', `${missionId}.yaml`);
+  const path = join(workspaceRoot, 'config', 'missions', `${missionId}.yaml`);
   const content = await readFile(path, 'utf8');
   const ts = new Date().toISOString();
   const participantsBlock = options.withReader

@@ -42,7 +42,7 @@ afterEach(async () => {
  * W4.3 slice (iv)). join() will transition this to 'joined' → 'reading' via _engineMutate.
  */
 async function seedConfiguredMission(workspaceRoot: string, missionId: string): Promise<void> {
-  const path = join(workspaceRoot, 'config', `${missionId}.yaml`);
+  const path = join(workspaceRoot, 'config', 'missions', `${missionId}.yaml`);
   const content = await readFile(path, 'utf8');
   // Add coordination-remote (required IFF reader present; for join-test we're seeding the writer-side
   // config but join() reads with writer-role pre-Step-3.5 so coordinationRemote isn't required at this
@@ -97,7 +97,7 @@ describe('W5b slice (i) — join() 7-step runtime', () => {
     expect(r1.lifecycleState).toBe('reading');
 
     // Manually rewind to 'joined' to simulate idempotent-retry partial-failure recovery
-    const path = join(tempRoot, 'config', `${handle.id}.yaml`);
+    const path = join(tempRoot, 'config', 'missions', `${handle.id}.yaml`);
     const content = await readFile(path, 'utf8');
     await writeFile(path, content.replace(/lifecycle-state: reading/, 'lifecycle-state: joined'), 'utf8');
 
@@ -111,7 +111,7 @@ describe('W5b slice (i) — join() 7-step runtime', () => {
     const repoUrl = 'file:///tmp/w5b-test-repo-3';
     const handle = await mc.create('mission', { repo: repoUrl });
     // Direct seed to writer-terminal 'completed' (illegal pre-state for join)
-    const path = join(tempRoot, 'config', `${handle.id}.yaml`);
+    const path = join(tempRoot, 'config', 'missions', `${handle.id}.yaml`);
     const content = await readFile(path, 'utf8');
     await writeFile(path, content.replace(/lifecycle-state: \w+/, 'lifecycle-state: completed'), 'utf8');
 
@@ -144,7 +144,7 @@ describe('W5b slice (i) — leave() runtime', () => {
 
     // Config persists at 'leaving'; readback via direct file (mc.get uses default writer-role
     // which would reject reader-state on parse, so direct YAML read is appropriate here).
-    const path = join(tempRoot, 'config', `${handle.id}.yaml`);
+    const path = join(tempRoot, 'config', 'missions', `${handle.id}.yaml`);
     const content = await readFile(path, 'utf8');
     expect(content).toMatch(/lifecycle-state: leaving/);
   });
@@ -158,7 +158,7 @@ describe('W5b slice (i) — leave() runtime', () => {
     await mc.join(handle.id, 'file:///tmp/coord.git');
 
     expect(existsSync(wsPath)).toBe(true);
-    const configPath = join(tempRoot, 'config', `${handle.id}.yaml`);
+    const configPath = join(tempRoot, 'config', 'missions', `${handle.id}.yaml`);
     expect(existsSync(configPath)).toBe(true);
 
     await mc.leave(handle.id, { purgeWorkspace: true });
@@ -178,7 +178,7 @@ describe('W5b slice (i) — leave() runtime', () => {
     await mc.leave(handle.id);
     await mc.leave(handle.id);            // second invoke; no-op (idempotent on 'leaving')
 
-    const path = join(tempRoot, 'config', `${handle.id}.yaml`);
+    const path = join(tempRoot, 'config', 'missions', `${handle.id}.yaml`);
     const content = await readFile(path, 'utf8');
     expect(content).toMatch(/lifecycle-state: leaving/);
   });

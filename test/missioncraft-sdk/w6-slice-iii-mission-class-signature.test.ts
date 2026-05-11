@@ -61,7 +61,7 @@ describe('W6 slice (iii) — network-partition resilience (Q5=b §2.7.2 mission-
     });
 
     // Seed mission with reader + coord-remote
-    const path = join(tempRoot, 'config', `${handle.id}.yaml`);
+    const path = join(tempRoot, 'config', 'missions', `${handle.id}.yaml`);
     const content = await readFile(path, 'utf8');
     const ts = new Date().toISOString();
     const block = `  participants:\n    - principal: writer@host\n      role: writer\n      added-at: ${ts}\n    - principal: reader@host\n      role: reader\n      added-at: ${ts}\n  coordination-remote: ${coordRemoteUrl}\n`;

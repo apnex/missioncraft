@@ -48,7 +48,7 @@ async function seedMultiParticipantMission(
   lifecycleState: 'configured' | 'in-progress',
   coordRemote: string,
 ): Promise<void> {
-  const path = join(workspaceRoot, 'config', `${missionId}.yaml`);
+  const path = join(workspaceRoot, 'config', 'missions', `${missionId}.yaml`);
   const content = await readFile(path, 'utf8');
   const ts = new Date().toISOString();
   const block = `  participants:\n    - principal: writer@host\n      role: writer\n      added-at: ${ts}\n    - principal: reader@host\n      role: reader\n      added-at: ${ts}\n  coordination-remote: ${coordRemote}\n`;
@@ -107,7 +107,7 @@ describe('W5b slice (iii) — full join/leave lifecycle integration', () => {
 
     // Workspace + config destroyed
     expect(existsSync(ws.path)).toBe(false);
-    expect(existsSync(join(tempRoot, 'config', `${handle.id}.yaml`))).toBe(false);
+    expect(existsSync(join(tempRoot, 'config', 'missions', `${handle.id}.yaml`))).toBe(false);
   });
 });
 

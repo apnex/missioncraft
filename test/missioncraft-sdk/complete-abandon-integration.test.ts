@@ -41,7 +41,7 @@ afterEach(async () => {
  * seeds the post-start state so we can exercise complete()/abandon() wire-flow paths end-to-end.
  */
 async function advanceLifecycle(workspaceRoot: string, missionId: string, lifecycleState: string): Promise<void> {
-  const path = join(workspaceRoot, 'config', `${missionId}.yaml`);
+  const path = join(workspaceRoot, 'config', 'missions', `${missionId}.yaml`);
   const content = await readFile(path, 'utf8');
   const updated = content.replace(/lifecycle-state: \w+/, `lifecycle-state: ${lifecycleState}`);
   await writeFile(path, updated, 'utf8');
@@ -139,8 +139,8 @@ describe('W4.3 slice (iv) — abandon() real-engine integration', () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
     const repoUrl = 'file:///tmp/test-repo-3';
     const handle = await mc.create('mission', { name: 'purge-test', repo: repoUrl });
-    const configPath = join(tempRoot, 'config', `${handle.id}.yaml`);
-    const symlinkPath = join(tempRoot, 'config', '.names', 'purge-test.yaml');
+    const configPath = join(tempRoot, 'config', 'missions', `${handle.id}.yaml`);
+    const symlinkPath = join(tempRoot, 'config', 'missions', '.names', 'purge-test.yaml');
     expect(existsSync(configPath)).toBe(true);
     expect(existsSync(symlinkPath)).toBe(true);
 

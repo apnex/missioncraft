@@ -60,7 +60,7 @@ async function seedReaderMission(
   lifecycleState: 'joined' | 'reading',
   coordRemote: string,
 ): Promise<void> {
-  const path = join(workspaceRoot, 'config', `${missionId}.yaml`);
+  const path = join(workspaceRoot, 'config', 'missions', `${missionId}.yaml`);
   const content = await readFile(path, 'utf8');
   const ts = new Date().toISOString();
   const block = `  participants:\n    - principal: writer@host\n      role: writer\n      added-at: ${ts}\n    - principal: reader@host\n      role: reader\n      added-at: ${ts}\n  coordination-remote: ${coordRemote}\n`;
@@ -202,7 +202,7 @@ describe('W5c slice (i) — cascadeTerminated SDK method', () => {
 
     await mc.cascadeTerminated(handle.id);
 
-    const path = join(tempRoot, 'config', `${handle.id}.yaml`);
+    const path = join(tempRoot, 'config', 'missions', `${handle.id}.yaml`);
     const content = await readFile(path, 'utf8');
     expect(content).toMatch(/lifecycle-state: readonly-completed/);
   });
@@ -215,7 +215,7 @@ describe('W5c slice (i) — cascadeTerminated SDK method', () => {
     await mc.cascadeTerminated(handle.id);
     await mc.cascadeTerminated(handle.id);            // re-call; no-op
 
-    const path = join(tempRoot, 'config', `${handle.id}.yaml`);
+    const path = join(tempRoot, 'config', 'missions', `${handle.id}.yaml`);
     const content = await readFile(path, 'utf8');
     expect(content).toMatch(/lifecycle-state: readonly-completed/);
   });
@@ -255,7 +255,7 @@ repos:
 
     await mc.cascadeConfigUpdate(handle.id, mirrorYaml);
 
-    const path = join(tempRoot, 'config', `${handle.id}.yaml`);
+    const path = join(tempRoot, 'config', 'missions', `${handle.id}.yaml`);
     const content = await readFile(path, 'utf8');
     // Reader's lifecycleState preserved (still 'reading'; not overwritten with writer's 'in-progress')
     expect(content).toMatch(/lifecycle-state: reading/);
@@ -270,7 +270,7 @@ repos:
 
     await mc.cascadeConfigUpdate(handle.id, 'this is not yaml: [[[invalid');
 
-    const path = join(tempRoot, 'config', `${handle.id}.yaml`);
+    const path = join(tempRoot, 'config', 'missions', `${handle.id}.yaml`);
     const content = await readFile(path, 'utf8');
     expect(content).toMatch(/lifecycle-state: reading/);          // unchanged
   });

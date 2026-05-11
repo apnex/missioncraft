@@ -62,7 +62,7 @@ describe('v1.0.5 slice (i) — scope-update runtime (bug-65)', () => {
     expect(renamed.id).toBe(handle.id);
     expect(renamed.name).toBe('new-name');
     // Old symlink should be gone
-    expect(existsSync(join(tempRoot, 'scopes', '.names', 'old-name.yaml'))).toBe(false);
+    expect(existsSync(join(tempRoot, 'config', 'scopes', '.names', 'old-name.yaml'))).toBe(false);
   });
 
   it('rename rejects name collision', async () => {
@@ -94,12 +94,12 @@ describe('v1.0.5 slice (i) — scope-delete with cascade-protection (bug-65)', (
   it('deletes a scope with no referencing missions', async () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
     const handle = await mc.create('scope', { name: 'transient', repo: 'file:///tmp/test-repo' });
-    const scopePath = join(tempRoot, 'scopes', `${handle.id}.yaml`);
+    const scopePath = join(tempRoot, 'config', 'scopes', `${handle.id}.yaml`);
     expect(existsSync(scopePath)).toBe(true);
 
     await mc.delete('scope', handle.id);
     expect(existsSync(scopePath)).toBe(false);
-    expect(existsSync(join(tempRoot, 'scopes', '.names', 'transient.yaml'))).toBe(false);
+    expect(existsSync(join(tempRoot, 'config', 'scopes', '.names', 'transient.yaml'))).toBe(false);
   });
 
   it('cascade-protection: rejects delete when missions reference the scope', async () => {
@@ -108,7 +108,7 @@ describe('v1.0.5 slice (i) — scope-delete with cascade-protection (bug-65)', (
     const missionHandle = await mc.create('mission', { repo: 'file:///tmp/test-mission-repo' });
 
     // Manually edit mission YAML to reference the scope-id (parser-bypass test)
-    const missionPath = join(tempRoot, 'config', `${missionHandle.id}.yaml`);
+    const missionPath = join(tempRoot, 'config', 'missions', `${missionHandle.id}.yaml`);
     const content = await readFile(missionPath, 'utf8');
     await writeFile(missionPath, content.replace(/^repos:/m, `  scope-id: ${scopeHandle.id}\nrepos:`), 'utf8');
 
@@ -116,7 +116,7 @@ describe('v1.0.5 slice (i) — scope-delete with cascade-protection (bug-65)', (
       /scope '.+' has 1 referencing mission/,
     );
     // Scope still exists after rejected delete
-    expect(existsSync(join(tempRoot, 'scopes', `${scopeHandle.id}.yaml`))).toBe(true);
+    expect(existsSync(join(tempRoot, 'config', 'scopes', `${scopeHandle.id}.yaml`))).toBe(true);
   });
 
   it('resolves scope by name for delete', async () => {
@@ -124,6 +124,6 @@ describe('v1.0.5 slice (i) — scope-delete with cascade-protection (bug-65)', (
     const handle = await mc.create('scope', { name: 'by-name-delete', repo: 'file:///tmp/test-repo' });
 
     await mc.delete('scope', 'by-name-delete');
-    expect(existsSync(join(tempRoot, 'scopes', `${handle.id}.yaml`))).toBe(false);
+    expect(existsSync(join(tempRoot, 'config', 'scopes', `${handle.id}.yaml`))).toBe(false);
   });
 });

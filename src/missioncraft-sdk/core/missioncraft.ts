@@ -540,7 +540,7 @@ export class Missioncraft {
       // Step 8: --purge-config delete config + name-symlink atomically
       if (opts.purgeConfig) {
         const symlinkPath = initialConfig.mission.name
-          ? join(this.workspaceRoot, 'config', '.names', `${initialConfig.mission.name}.yaml`)
+          ? join(this.missionNamesDir(), `${initialConfig.mission.name}.yaml`)
           : undefined;
         try { await unlink(this.missionConfigPath(id)); } catch { /* idempotent */ }
         if (symlinkPath) {
@@ -889,7 +889,7 @@ export class Missioncraft {
       const step7Lock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
       try {
         const symlinkPath = initialConfig.mission.name
-          ? join(this.workspaceRoot, 'config', '.names', `${initialConfig.mission.name}.yaml`)
+          ? join(this.missionNamesDir(), `${initialConfig.mission.name}.yaml`)
           : undefined;
         try { await unlink(this.missionConfigPath(id)); } catch { /* idempotent */ }
         if (symlinkPath) {
@@ -1778,7 +1778,13 @@ export class Missioncraft {
   // ─── Internal helpers (private; W3 implementations of universal verbs) ───
 
   private missionConfigPath(id: string): string {
-    return join(this.workspaceRoot, 'config', `${id}.yaml`);
+    // v1.0.5 idea-271: layout consolidation — mission YAMLs now live under config/missions/
+    return join(this.workspaceRoot, 'config', 'missions', `${id}.yaml`);
+  }
+
+  /** v1.0.5 idea-271: mission name-symlink directory. */
+  private missionNamesDir(): string {
+    return join(this.workspaceRoot, 'config', 'missions', '.names');
   }
 
   /** Mission-lockfile path per Design v4.9 §2.4 + §2.6.5; same path used for lock-acquisition + daemon-IPC. */
@@ -1787,7 +1793,13 @@ export class Missioncraft {
   }
 
   private scopeConfigPath(id: string): string {
-    return join(this.workspaceRoot, 'scopes', `${id}.yaml`);
+    // v1.0.5 idea-271: layout consolidation — scope YAMLs now live under config/scopes/
+    return join(this.workspaceRoot, 'config', 'scopes', `${id}.yaml`);
+  }
+
+  /** v1.0.5 idea-271: scope name-symlink directory. */
+  private scopeNamesDir(): string {
+    return join(this.workspaceRoot, 'config', 'scopes', '.names');
   }
 
   /**
@@ -1810,7 +1822,7 @@ export class Missioncraft {
   private resolveMissionRef(idOrName: string): string {
     const directPath = this.missionConfigPath(idOrName);
     if (existsSync(directPath)) return idOrName;
-    const symlinkPath = join(this.workspaceRoot, 'config', '.names', `${idOrName}.yaml`);
+    const symlinkPath = join(this.missionNamesDir(), `${idOrName}.yaml`);
     if (existsSync(symlinkPath)) {
       try {
         return basename(realpathSync(symlinkPath), '.yaml');
@@ -1829,7 +1841,7 @@ export class Missioncraft {
   private resolveScopeRef(idOrName: string): string {
     const directPath = this.scopeConfigPath(idOrName);
     if (existsSync(directPath)) return idOrName;
-    const symlinkPath = join(this.workspaceRoot, 'scopes', '.names', `${idOrName}.yaml`);
+    const symlinkPath = join(this.scopeNamesDir(), `${idOrName}.yaml`);
     if (existsSync(symlinkPath)) {
       try {
         return basename(realpathSync(symlinkPath), '.yaml');
@@ -1859,12 +1871,12 @@ export class Missioncraft {
       },
       repos,
     };
-    await mkdir(join(this.workspaceRoot, 'config'), { recursive: true });
+    await mkdir(join(this.workspaceRoot, 'config', 'missions'), { recursive: true });
     await writeFile(this.missionConfigPath(id), serializeMissionConfig(config), 'utf8');
     // Name-symlink (per §2.4 name-symlink scheme; operator-supplied --name only)
     // W4.2 fold per W3 forward-fold #1: replaces W3 placeholder pointer-file with true POSIX symlink
     if (opts.name) {
-      const namesDir = join(this.workspaceRoot, 'config', '.names');
+      const namesDir = this.missionNamesDir();
       await mkdir(namesDir, { recursive: true });
       const symlinkPath = join(namesDir, `${opts.name}.yaml`);
       // Symlink target = relative path to <id>.yaml (../id.yaml from .names/ subdir)
@@ -1904,12 +1916,12 @@ export class Missioncraft {
       },
       repos,
     };
-    await mkdir(join(this.workspaceRoot, 'scopes'), { recursive: true });
+    await mkdir(join(this.workspaceRoot, 'config', 'scopes'), { recursive: true });
     const kebabed = camelToKebabObject(config);
     await writeFile(this.scopeConfigPath(id), yamlStringify(kebabed), 'utf8');
     // Scope name-symlink per §2.4 (parallel to mission name-symlink scheme; v4.2 POSIX symlink)
     if (opts.name) {
-      const namesDir = join(this.workspaceRoot, 'scopes', '.names');
+      const namesDir = this.scopeNamesDir();
       await mkdir(namesDir, { recursive: true });
       const symlinkPath = join(namesDir, `${opts.name}.yaml`);
       const symlinkTarget = `../${id}.yaml`;
@@ -1939,7 +1951,8 @@ export class Missioncraft {
   }
 
   private async listMissions(filter?: MissionFilter, principal?: string): Promise<MissionState[]> {
-    const dir = join(this.workspaceRoot, 'config');
+    // v1.0.5 idea-271: missions now live under config/missions/
+    const dir = join(this.workspaceRoot, 'config', 'missions');
     if (!existsSync(dir)) return [];
     const entries = await readdir(dir);
     const states: MissionState[] = [];
@@ -2045,7 +2058,8 @@ export class Missioncraft {
   }
 
   private async listScopes(filter?: ScopeFilter, _opts?: ResourceMap['scope']['listOpts']): Promise<ScopeState[]> {
-    const dir = join(this.workspaceRoot, 'scopes');
+    // v1.0.5 idea-271: scopes now live under config/scopes/
+    const dir = join(this.workspaceRoot, 'config', 'scopes');
     if (!existsSync(dir)) return [];
     const entries = await readdir(dir);
     const states: ScopeState[] = [];
@@ -2108,7 +2122,7 @@ export class Missioncraft {
 
     // Handle name-symlink update for rename mutations (parallel to mission name-symlink discipline).
     if (mutation.kind === 'rename') {
-      const namesDir = join(this.workspaceRoot, 'scopes', '.names');
+      const namesDir = this.scopeNamesDir();
       await mkdir(namesDir, { recursive: true });
       // Remove old symlink (config.scope.name was the OLD name); add new
       if (config.scope.name) {
@@ -2167,7 +2181,7 @@ export class Missioncraft {
    */
   private async deleteScope(id: string): Promise<void> {
     // Cascade-protection: find missions referencing this scope-id
-    const missionsDir = join(this.workspaceRoot, 'config');
+    const missionsDir = join(this.workspaceRoot, 'config', 'missions');
     if (existsSync(missionsDir)) {
       const entries = await readdir(missionsDir);
       const referencingMissions: string[] = [];
@@ -2205,7 +2219,7 @@ export class Missioncraft {
     // Unlink scope YAML + name-symlink (if any)
     try { await unlink(scopePath); } catch { /* idempotent */ }
     if (scopeName) {
-      const symlinkPath = join(this.workspaceRoot, 'scopes', '.names', `${scopeName}.yaml`);
+      const symlinkPath = join(this.scopeNamesDir(), `${scopeName}.yaml`);
       try { await unlink(symlinkPath); } catch { /* idempotent */ }
     }
   }

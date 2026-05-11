@@ -76,7 +76,7 @@ async function seedWriterMission(
   missionId: string,
   coordRemote: string,
 ): Promise<void> {
-  const path = join(workspaceRoot, 'config', `${missionId}.yaml`);
+  const path = join(workspaceRoot, 'config', 'missions', `${missionId}.yaml`);
   const content = await readFile(path, 'utf8');
   const ts = new Date().toISOString();
   const block = `  participants:\n    - principal: writer@host\n      role: writer\n      added-at: ${ts}\n    - principal: reader@host\n      role: reader\n      added-at: ${ts}\n  coordination-remote: ${coordRemote}\n`;
@@ -92,7 +92,7 @@ async function seedReaderMission(
   missionId: string,
   coordRemote: string,
 ): Promise<void> {
-  const path = join(workspaceRoot, 'config', `${missionId}.yaml`);
+  const path = join(workspaceRoot, 'config', 'missions', `${missionId}.yaml`);
   const content = await readFile(path, 'utf8');
   const ts = new Date().toISOString();
   const block = `  participants:\n    - principal: writer@host\n      role: writer\n      added-at: ${ts}\n    - principal: reader@host\n      role: reader\n      added-at: ${ts}\n  coordination-remote: ${coordRemote}\n`;
@@ -157,12 +157,12 @@ describe('W5c slice (iii) — Cascade-terminated end-to-end via Loop B', () => {
     expect(refs.has(`refs/tags/missioncraft/${handle.id}/terminated`)).toBe(true);
 
     // Reader: bootstrap config in 'reading' state + run Loop B; should detect tag + cascade
-    await mkdir(join(readerRoot, 'config'), { recursive: true });
+    await mkdir(join(readerRoot, 'config', 'missions'), { recursive: true });
     // Copy writer's mission config to reader's workspace (in real cross-host this happens via
     // Loop B config-update; for slice iii test simplicity we seed directly + set lifecycle 'reading')
-    const writerConfigPath = join(writerRoot, 'config', `${handle.id}.yaml`);
+    const writerConfigPath = join(writerRoot, 'config', 'missions', `${handle.id}.yaml`);
     const writerConfigContent = await readFile(writerConfigPath, 'utf8');
-    const readerConfigPath = join(readerRoot, 'config', `${handle.id}.yaml`);
+    const readerConfigPath = join(readerRoot, 'config', 'missions', `${handle.id}.yaml`);
     await writeFile(
       readerConfigPath,
       writerConfigContent.replace(/lifecycle-state: [\w-]+/, 'lifecycle-state: reading'),
@@ -198,9 +198,9 @@ describe('W5c slice (iii) — Cascade-config-update end-to-end via Loop B', () =
     expect(refs.has(`refs/heads/config/${handle.id}`)).toBe(true);
 
     // Reader: bootstrap with stale config + run Loop B
-    await mkdir(join(readerRoot, 'config'), { recursive: true });
-    const readerConfigPath = join(readerRoot, 'config', `${handle.id}.yaml`);
-    const writerConfigPath = join(writerRoot, 'config', `${handle.id}.yaml`);
+    await mkdir(join(readerRoot, 'config', 'missions'), { recursive: true });
+    const readerConfigPath = join(readerRoot, 'config', 'missions', `${handle.id}.yaml`);
+    const writerConfigPath = join(writerRoot, 'config', 'missions', `${handle.id}.yaml`);
     const writerContent = await readFile(writerConfigPath, 'utf8');
     // Reader has stale-state version with different description (so we can detect re-apply)
     await writeFile(

@@ -205,22 +205,18 @@ export class Missioncraft {
       if (typeof m !== 'object' || m === null || typeof m.kind !== 'string') {
         throw new ConfigValidationError(`Missioncraft.update('scope'): mutation must be a discriminated-union with 'kind' field`);
       }
-      // resolveScopeRef inlined per future-proofing: when scope-mutation runtime lands, the
-      // resolve will already be in place. Currently the error-message uses `id` literal for clarity.
-      // W4.x: scope-mutation runtime apply (parallel to mission-mutation; simpler since 6 kinds vs 11)
-      throw new MissionStateError(
-        `Missioncraft.update('scope', '${id}', kind: '${m.kind}'): mutation-shape validated; runtime apply not yet implemented (W4 follow-on)`,
-      );
+      const resolvedId = this.resolveScopeRef(id);                              // v1.0.4 bug-64 item 5
+      const state = await this.applyScopeMutation(resolvedId, m);                // v1.0.5 bug-65
+      return state as ResourceMap[T]['state'];
     }
     throw new ConfigValidationError(`Missioncraft.update: unknown resource-type '${type as string}'`);
   }
 
   async delete<T extends DeletableResource>(type: T, id: string): Promise<void> {
     if (type === 'scope') {
-      // W4: cascade-protection check (reject if any non-terminal mission references this scope)
-      throw new MissionStateError(
-        `Missioncraft.delete('scope', '${id}'): cascade-protection check + delete not yet implemented (W4)`,
-      );
+      const resolvedId = this.resolveScopeRef(id);                              // v1.0.5 bug-65
+      await this.deleteScope(resolvedId);
+      return;
     }
     // Type-system narrows out 'mission' via DeletableResource; runtime guard for dynamic-invocation
     throw new MissionStateError(
@@ -2090,6 +2086,128 @@ export class Missioncraft {
     const yamlMod = await import('yaml');
     const raw = yamlMod.parse(content);
     return kebabToCamelObject(raw);
+  }
+
+  /**
+   * v1.0.5 bug-65 — apply a ScopeMutation to a scope's persisted config.
+   * Parallel to applyMissionMutation but simpler (no daemon-IPC, no state-machine FSM beyond
+   * 'created'). Read → apply → atomic-write. Updates `updatedAt` automatically.
+   */
+  private async applyScopeMutation(id: string, mutation: ScopeMutation): Promise<ScopeState> {
+    const path = this.scopeConfigPath(id);
+    const content = await readFile(path, 'utf8');
+    const yamlMod = await import('yaml');
+    const raw = yamlMod.parse(content);
+    const camel = kebabToCamelObject(raw);
+    const config = ScopeConfigSchema.parse(camel);
+
+    const nextRaw = this.applyScopeMutationToConfig(config, mutation);
+    const next: ScopeConfig = { ...nextRaw, scope: { ...nextRaw.scope, updatedAt: new Date() } };
+    const kebabed = camelToKebabObject(next);
+    await writeFile(path, yamlStringify(kebabed), 'utf8');
+
+    // Handle name-symlink update for rename mutations (parallel to mission name-symlink discipline).
+    if (mutation.kind === 'rename') {
+      const namesDir = join(this.workspaceRoot, 'scopes', '.names');
+      await mkdir(namesDir, { recursive: true });
+      // Remove old symlink (config.scope.name was the OLD name); add new
+      if (config.scope.name) {
+        try { await unlink(join(namesDir, `${config.scope.name}.yaml`)); } catch { /* idempotent */ }
+      }
+      const symlinkPath = join(namesDir, `${mutation.newName}.yaml`);
+      try {
+        await symlink(`../${id}.yaml`, symlinkPath);
+      } catch (err: unknown) {
+        const e = err as NodeJS.ErrnoException;
+        if (e.code === 'EEXIST') {
+          throw new MissionStateError(`scope name '${mutation.newName}' already taken`);
+        }
+        throw err;
+      }
+    }
+
+    return this.getScope(id);
+  }
+
+  /** Pure mutation-application — returns new ScopeConfig with mutation applied. */
+  private applyScopeMutationToConfig(config: ScopeConfig, mutation: ScopeMutation): ScopeConfig {
+    switch (mutation.kind) {
+      case 'add-repo': {
+        const newRepo = { ...mutation.repo, name: mutation.repo.name ?? repoNameFromUrl(mutation.repo.url) };
+        // Reject duplicate repo-name
+        if (config.repos.some((r) => (r.name ?? repoNameFromUrl(r.url)) === newRepo.name)) {
+          throw new MissionStateError(`scope '${config.scope.id}' already has repo with name '${newRepo.name}'`);
+        }
+        return { ...config, repos: [...config.repos, newRepo] };
+      }
+      case 'remove-repo':
+        return { ...config, repos: config.repos.filter((r) => (r.name ?? repoNameFromUrl(r.url)) !== mutation.repoName) };
+      case 'rename':
+        return { ...config, scope: { ...config.scope, name: mutation.newName } };
+      case 'set-description':
+        return { ...config, scope: { ...config.scope, description: mutation.description } };
+      case 'set-tag': {
+        const tags = { ...(config.scope.tags ?? {}), [mutation.key]: mutation.value };
+        return { ...config, scope: { ...config.scope, tags } };
+      }
+      case 'remove-tag': {
+        const tags = { ...(config.scope.tags ?? {}) };
+        delete tags[mutation.key];
+        return { ...config, scope: { ...config.scope, tags } };
+      }
+    }
+  }
+
+  /**
+   * v1.0.5 bug-65 — delete a scope with cascade-protection.
+   *
+   * Cascade-protection: scan all missions in the workspace; if any references this scope-id via
+   * `scope-id` field, reject with operator-actionable error. Otherwise unlink the scope YAML +
+   * its name-symlink (if any).
+   */
+  private async deleteScope(id: string): Promise<void> {
+    // Cascade-protection: find missions referencing this scope-id
+    const missionsDir = join(this.workspaceRoot, 'config');
+    if (existsSync(missionsDir)) {
+      const entries = await readdir(missionsDir);
+      const referencingMissions: string[] = [];
+      for (const name of entries) {
+        if (!name.endsWith('.yaml') || name.startsWith('.')) continue;
+        const missionPath = join(missionsDir, name);
+        try {
+          const missionContent = await readFile(missionPath, 'utf8');
+          const yamlMod = await import('yaml');
+          const raw = yamlMod.parse(missionContent) as { mission?: { 'scope-id'?: string } };
+          if (raw?.mission?.['scope-id'] === id) {
+            referencingMissions.push(name.slice(0, -5));
+          }
+        } catch { /* skip unparseable */ }
+      }
+      if (referencingMissions.length > 0) {
+        throw new MissionStateError(
+          `scope '${id}' has ${referencingMissions.length} referencing mission(s): ${referencingMissions.join(', ')}. ` +
+            `Remove references via 'msn update <mission-id> scope-id ""' before deleting scope.`,
+        );
+      }
+    }
+
+    // Load scope config to get the name (for symlink cleanup)
+    const scopePath = this.scopeConfigPath(id);
+    let scopeName: string | undefined;
+    try {
+      const content = await readFile(scopePath, 'utf8');
+      const yamlMod = await import('yaml');
+      const raw = yamlMod.parse(content);
+      const camel = kebabToCamelObject(raw) as { scope?: { name?: string } };
+      scopeName = camel?.scope?.name;
+    } catch { /* fall through */ }
+
+    // Unlink scope YAML + name-symlink (if any)
+    try { await unlink(scopePath); } catch { /* idempotent */ }
+    if (scopeName) {
+      const symlinkPath = join(this.workspaceRoot, 'scopes', '.names', `${scopeName}.yaml`);
+      try { await unlink(symlinkPath); } catch { /* idempotent */ }
+    }
   }
 
   /**

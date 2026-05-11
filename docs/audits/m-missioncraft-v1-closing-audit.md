@@ -377,3 +377,97 @@ Engineer-finding during slice (i) audit at `src/missioncraft-sdk/core/missioncra
 ### §10.10 v1.0.1 deprecation — Director-disposition post-publish-verify
 
 Architect-recommendation: `npm deprecate @apnex/missioncraft@1.0.1 "CLI workspace dispatch + abandon daemon-orphan + lockfile-persistence defects fixed in v1.0.2+"`. Surface to Director at v1.0.2 publish-verify alongside v1.0.0 + v1.0.1 deprecation-state inventory.
+
+---
+
+## §11 v1.0.3 patch trail — CLI-UX polish bundle + 2 ideas + 1 new verb
+
+**Defects + features surfaced:** 2026-05-11 Director-side scenario 01 dogfood test against `@apnex/missioncraft@1.0.2` revealed CLI-UX rough edges (operator visibility, error messages, name-resolution gaps) plus operator-quick-jump opportunity. Architect bundled 4 Hub-tracked items into v1.0.3 single-patch (precedent: v1.0.2 mixed CLI+substrate):
+
+- **bug-64** (8 items; minor severity; class: missing-feature) — CLI-UX polish bundle
+- **idea-267** — spawn-failure-rollback daemon-orphan in `start()` catch (engineer-flagged at v1.0.2 slice (i) audit)
+- **idea-268** — `msn workspace <id>` terminal-state-guard (stale path post-abandon)
+- **idea-269** — `msn cd <id|name>` + `msn shell-init <shell>` operator quick-jump
+
+**Hub coordinates:** thread-532 (architect-issued v1.0.3 PATCH directive 2026-05-11; maxRounds=15).
+
+### §11.1 bug-64 items 1+2+3+8 (slice (i) — commit `e24827f`)
+
+- Item 1 — bare `msn` → fall-through to `--help` (parser.ts; mirrors git/npm/docker)
+- Item 2 — `msn list` empty preserves header row + `(no entries)` indicator
+- Item 3 — `<id|name>` verbs missing-arg → enriched LLM-discoverable error
+- Item 8 — `msn help` verb dispatches to identical handler as `--help` flag
+
+### §11.2 bug-64 item 4 (slice (ii) — commit `f53bcc8`)
+
+`msn list` table cosmetics — dropped horizontal separator row; CYAN header (ANSI `\x1b[36m`) under `process.stdout.isTTY === true`; plain output when piped/redirected (operator-pipe + LLM-consumer friendly).
+
+### §11.3 bug-64 item 5 (slice (iii) — commit `412a5e0`)
+
+**Functional bug.** Pre-fix: `createMission` wrote `.names/<name>.yaml → ../<id>.yaml` symlinks but no SDK method ever READ them — `msn show test-readonly` failed with "mission not found" despite the name-symlink existing.
+
+Fix: introduced `private resolveMissionRef(idOrName) → canonical id` + `private resolveScopeRef()` helpers; invoked at entry of every public SDK method taking a mission ref (`get / update / start / complete / abandon / workspace / join / leave`) + `get('scope')` (scope-update/delete still placeholder-throw; resolveScopeRef pre-staged). 12-verb audit per architect spec; NO scope-expansion surfaced.
+
+### §11.4 bug-64 items 6+7 (slice (iv) — commit `80354ec`)
+
+`msn start` + `msn abandon` + (scope-extension) `msn complete` confirmation lines on success:
+- `started mission <id> ['('<name>')'][; daemon-pid <pid>]`
+- `abandoned mission <id> ['('<name>')'][; workspace removed|preserved]; daemon stopped`
+- `completed mission <id> ['('<name>')'][; PRs opened: <pr-urls>]`
+
+`--retain` flag wired through abandon-dispatcher (previously only `--purge-config` was forwarded).
+
+### §11.5 idea-267 spawn-failure rollback daemon-orphan (slice (v) — commit `34535e6`)
+
+Engineer-finding from v1.0.2 slice (i) audit: `spawnDaemonWatcher` had partial-cleanup discipline — the "lockfile absent" branch SIGKILLed the child but `writeLockfileStateAtomic` failure path didn't. If post-spawn lockfile-write threw, the child-process was alive but uncleaned → daemon orphan (SD2-class).
+
+Fix: wrap post-spawn block in try/catch; on any failure SIGKILL the partial-spawn child before re-throwing. Symmetric with v1.0.2 slice (i.5) cleanup discipline. Audit for similar gaps at `complete()` Step 6 + `abandon()` Step 5 — both already try/catch per-repo + non-aborting; NO orphan-class. NO scope-expansion.
+
+### §11.6 idea-268 workspace terminal-state-guard (slice (vi) — commit `9d17105`)
+
+Pre-fix: `mc.workspace(<id>)` called `storage.allocate` which mkdir-p'd the workspace on-demand. Post-abandon: dir would be RE-CREATED (empty) + stale path returned — operator `cd` lands in empty dir with no terminal-state signal.
+
+Fix (Option C combined per architect-disposition):
+1. **Lifecycle-state fast-path** — `if lifecycleState in ['abandoned', 'completed']` → throw `workspace destroyed; mission '<id>' in terminal state '<state>'`
+2. **READ-ONLY safety-net** — `storage.list(missionId)` instead of `storage.allocate` (no mkdir side-effect); match by `basename(h.path) === targetRepoName` (storage.list returns repoUrl=''). If not found → `workspace not found for repo '<name>' in mission '<id>' (try 'msn start' to re-create)`.
+
+Substrate-bypass adjustment: pre-existing tests that relied on `workspace()` create-on-demand updated to pre-allocate via `mc.storage.allocate` (mirrors what `mc.start()` does).
+
+### §11.7 idea-269 msn cd + msn shell-init (slice (vii) — commit `80d92f0`)
+
+New verbs `cd` + `shell-init` added to RESERVED_VERBS + VERB_SPECS + HELP_TEXT. Operator-quick-jump via shell-function wrapper (Option (a) per architect-disposition):
+
+- `msn shell-init bash | zsh | fish` emits a shell-function blob
+- `eval "$(msn shell-init bash)"` in `~/.bashrc` (or shell equivalent) installs the wrapper
+- Installed wrapper intercepts `msn cd <args>` → `cd $(command msn workspace <args>)`; all other verbs transparent via `command msn`
+- Without wrapper: direct `msn cd <id>` falls through to CLI binary which can't change parent shell cwd; emits workspace path to stdout + stderr hint pointing at `msn shell-init` setup
+
+Auto-completion DEFERRED per architect scope-bound.
+
+### §11.8 v1.0.3 ship trail
+
+- slice (i) — `e24827f` bug-64 items 1+2+3+8 (CLI dispatch layer)
+- slice (ii) — `f53bcc8` bug-64 item 4 (table cosmetics)
+- slice (iii) — `412a5e0` bug-64 item 5 (name-alias audit across 12 verbs)
+- slice (iv) — `80354ec` bug-64 items 6+7 + complete symmetric (start/abandon/complete stdout)
+- slice (v) — `34535e6` idea-267 spawn-failure-rollback SIGKILL fix
+- slice (vi) — `9d17105` idea-268 workspace terminal-state-guard
+- slice (vii) — `80d92f0` idea-269 msn cd + msn shell-init
+- slice (viii) — this §11 doc + version bump 1.0.2 → 1.0.3 + tag v1.0.3
+
+### §11.9 Test coverage delta
+
+274 → 294 tests (+20 net):
+- slice (i): +7 (grammar +3; bin-shim-bootstrap +4)
+- slice (iii): +11 (v1.0.3-slice-iii-name-resolution.test.ts NEW)
+- slice (v): +1 (spawn-daemon-watcher orphan-cleanup test)
+- slice (vi): +3 (workspace terminal-state-guard + safety-net)
+- slice (vii): +5 (shell-init bash/zsh/fish/unsupported + cd direct)
+
+### §11.10 v1.0.2 deprecation — Director-disposition post-publish-verify
+
+Architect-recommendation: `npm deprecate @apnex/missioncraft@1.0.2 "CLI-UX polish + name-alias resolution + workspace terminal-state-guard + daemon-orphan SIGKILL fix shipped in v1.0.3+"`. Surface to Director at v1.0.3 publish-verify alongside cumulative deprecation-state inventory (v1.0.0 broken, v1.0.1 + v1.0.2 superseded).
+
+### §11.11 Scenario 01 doc re-ratification (architect-side post-publish)
+
+Per architect thread-532 round 1: scenario 01 outputs change for Step 5 (start has stdout now), Step 10 (abandon has stdout now), Step 13 (workspace post-abandon errors with terminal-state-guard). Architect-side will re-ratify post-v1.0.3 publish; engineer-side scenario-doc placeholders remain in place from v1.0.2 slice (v).

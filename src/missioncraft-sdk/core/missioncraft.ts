@@ -255,10 +255,9 @@ export class Missioncraft {
       );
     }
     const missionId = this.resolveMissionRef(input);                       // v1.0.3 bug-64 item 5
-    const emit = opts?.onProgress ?? ((): void => undefined);              // v1.0.5 idea-273
-    emit({ phase: 'validate', message: `validating mission '${missionId}'` });
 
-    // Step 1: validate pre-state via direct config-read (locks not yet acquired)
+    // v1.0.6 bug-68: FSM pre-flight FIRST — no progress emitted for rejected actions.
+    // Progress events represent ACTIVE work; rejected pre-state must throw before any onProgress fires.
     const path = this.missionConfigPath(missionId);
     if (!existsSync(path)) {
       throw new MissionStateError(`Missioncraft.start: mission '${missionId}' not found`);
@@ -275,6 +274,9 @@ export class Missioncraft {
         `Missioncraft.start: requires at least 1 repo (lifecycle 'configured' but repos[] empty — invariant violation)`,
       );
     }
+
+    const emit = opts?.onProgress ?? ((): void => undefined);              // v1.0.5 idea-273
+    emit({ phase: 'validate', message: `validating mission '${missionId}'` });
 
     // Step 2: acquire mission-lock + per-repo locks
     emit({ phase: 'acquire-lock', message: 'acquiring mission + repo locks' });
@@ -419,10 +421,8 @@ export class Missioncraft {
       );
     }
     const id = this.resolveMissionRef(idOrName);                           // v1.0.3 bug-64 item 5
-    const emit = opts.onProgress ?? ((): void => undefined);               // v1.0.5 idea-273
-    emit({ phase: 'final-tick', message: 'flushing final wip-commit' });
 
-    // Pre-flight: load config; verify pre-state
+    // v1.0.6 bug-68: FSM pre-flight FIRST — no progress emitted for rejected actions.
     const path = this.missionConfigPath(id);
     if (!existsSync(path)) {
       throw new MissionStateError(`Missioncraft.complete: mission '${id}' not found`);
@@ -435,6 +435,9 @@ export class Missioncraft {
         `Missioncraft.complete: requires lifecycle 'in-progress' or 'started' (current: '${currentState}')`,
       );
     }
+
+    const emit = opts.onProgress ?? ((): void => undefined);               // v1.0.5 idea-273
+    emit({ phase: 'final-tick', message: 'flushing final wip-commit' });
 
     // publishMessage immutability per v3.2 MEDIUM-R2.6 — persisted at first-complete
     const effectiveMessage = initialConfig.mission.publishMessage ?? message;
@@ -748,10 +751,8 @@ export class Missioncraft {
       );
     }
     const id = this.resolveMissionRef(idOrName);                           // v1.0.3 bug-64 item 5
-    const emit = opts.onProgress ?? ((): void => undefined);               // v1.0.5 idea-273
-    emit({ phase: 'final-tick', message: 'flushing final wip-commit + setting abandon-flag' });
 
-    // Pre-flight: load config; verify pre-state
+    // v1.0.6 bug-68: FSM pre-flight FIRST — no progress emitted for rejected actions.
     const path = this.missionConfigPath(id);
     if (!existsSync(path)) {
       throw new MissionStateError(`Missioncraft.abandon: mission '${id}' not found`);
@@ -764,6 +765,9 @@ export class Missioncraft {
         `Missioncraft.abandon: requires lifecycle 'in-progress' or 'started' (current: '${currentState}')`,
       );
     }
+
+    const emit = opts.onProgress ?? ((): void => undefined);               // v1.0.5 idea-273
+    emit({ phase: 'final-tick', message: 'flushing final wip-commit + setting abandon-flag' });
 
     // abandonMessage immutability per v3.3 fold + symmetric with publishMessage
     const effectiveMessage = initialConfig.mission.abandonMessage ?? message;

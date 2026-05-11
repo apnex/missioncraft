@@ -13,10 +13,10 @@
 //   - join / leave: throw MissionStateError("not yet implemented; W5")
 
 import { randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, readdir, readFile, writeFile, unlink, symlink } from 'node:fs/promises';
 import { homedir, platform } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 
 import { stringify as yamlStringify } from 'yaml';
 
@@ -160,11 +160,13 @@ export class Missioncraft {
     opts?: ResourceMap[T]['getOpts'],
   ): Promise<ResourceMap[T]['state']> {
     if (type === 'mission') {
+      const resolvedId = this.resolveMissionRef(id);                       // v1.0.3 bug-64 item 5
       const principal = (opts as ResourceMap['mission']['getOpts'] | undefined)?.principal ?? this.principal;
-      return this.getMission(id, principal) as Promise<ResourceMap[T]['state']>;
+      return this.getMission(resolvedId, principal) as Promise<ResourceMap[T]['state']>;
     }
     if (type === 'scope') {
-      return this.getScope(id, opts as ResourceMap['scope']['getOpts'] | undefined) as Promise<ResourceMap[T]['state']>;
+      const resolvedId = this.resolveScopeRef(id);                         // v1.0.3 bug-64 item 5
+      return this.getScope(resolvedId, opts as ResourceMap['scope']['getOpts'] | undefined) as Promise<ResourceMap[T]['state']>;
     }
     throw new ConfigValidationError(`Missioncraft.get: unknown resource-type '${type as string}'`);
   }
@@ -194,7 +196,8 @@ export class Missioncraft {
       if (typeof m !== 'object' || m === null || typeof m.kind !== 'string') {
         throw new ConfigValidationError(`Missioncraft.update('mission'): mutation must be a discriminated-union with 'kind' field`);
       }
-      const state = await this.applyMissionMutation(id, m);
+      const resolvedId = this.resolveMissionRef(id);                       // v1.0.3 bug-64 item 5
+      const state = await this.applyMissionMutation(resolvedId, m);
       return state as ResourceMap[T]['state'];
     }
     if (type === 'scope') {
@@ -202,6 +205,8 @@ export class Missioncraft {
       if (typeof m !== 'object' || m === null || typeof m.kind !== 'string') {
         throw new ConfigValidationError(`Missioncraft.update('scope'): mutation must be a discriminated-union with 'kind' field`);
       }
+      // resolveScopeRef inlined per future-proofing: when scope-mutation runtime lands, the
+      // resolve will already be in place. Currently the error-message uses `id` literal for clarity.
       // W4.x: scope-mutation runtime apply (parallel to mission-mutation; simpler since 6 kinds vs 11)
       throw new MissionStateError(
         `Missioncraft.update('scope', '${id}', kind: '${m.kind}'): mutation-shape validated; runtime apply not yet implemented (W4 follow-on)`,
@@ -253,7 +258,7 @@ export class Missioncraft {
         'Missioncraft.start: config-input form (apply()-equivalent) not yet implemented; pass mission-id string for W4.3',
       );
     }
-    const missionId = input;
+    const missionId = this.resolveMissionRef(input);                       // v1.0.3 bug-64 item 5
 
     // Step 1: validate pre-state via direct config-read (locks not yet acquired)
     const path = this.missionConfigPath(missionId);
@@ -398,7 +403,7 @@ export class Missioncraft {
    * supplied by retry-invocation is IGNORED with operator-warning logged.
    */
   async complete(
-    id: string,
+    idOrName: string,
     message: string,
     opts: { purgeConfig?: boolean; retain?: boolean } = {},
   ): Promise<MissionState> {
@@ -410,6 +415,7 @@ export class Missioncraft {
         "Missioncraft.complete: --retain and --purge-config are mutually exclusive (purge implies destroy)",
       );
     }
+    const id = this.resolveMissionRef(idOrName);                           // v1.0.3 bug-64 item 5
 
     // Pre-flight: load config; verify pre-state
     const path = this.missionConfigPath(id);
@@ -721,7 +727,7 @@ export class Missioncraft {
    * (Steps 2-4 window) → mission-config abandonProgress (Steps 5-8 window) — survives lockfile-delete.
    */
   async abandon(
-    id: string,
+    idOrName: string,
     message: string,
     opts: { purgeConfig?: boolean; retain?: boolean } = {},
   ): Promise<MissionState> {
@@ -733,6 +739,7 @@ export class Missioncraft {
         "Missioncraft.abandon: --retain and --purge-config are mutually exclusive (purge implies destroy)",
       );
     }
+    const id = this.resolveMissionRef(idOrName);                           // v1.0.3 bug-64 item 5
 
     // Pre-flight: load config; verify pre-state
     const path = this.missionConfigPath(id);
@@ -973,7 +980,9 @@ export class Missioncraft {
     }
     const { parseSubstrateCoordinate } = await import('./coordinate.js');
     const coord = parseSubstrateCoordinate(idOrCoordinate);
-    const missionId = coord ? coord.mission : idOrCoordinate;
+    // v1.0.3 bug-64 item 5: resolve id-or-name uniformly (coordinate-form embeds the mission ref
+    // at coord.mission; non-coordinate form is the raw arg). Post-resolve we have the canonical id.
+    const missionId = this.resolveMissionRef(coord ? coord.mission : idOrCoordinate);
     const path = this.missionConfigPath(missionId);
     if (!existsSync(path)) {
       throw new MissionStateError(`Missioncraft.workspace: mission '${missionId}' not found at '${path}'`);
@@ -1504,13 +1513,14 @@ export class Missioncraft {
    *   6. setReaderWorkspaceMode chmod-down per allocated workspace (W2 helper)
    *   7. Atomic-write lifecycle 'reading' via _engineMutate
    */
-  async join(id: string, coordRemote: string, principal?: string): Promise<MissionState> {
+  async join(idOrName: string, coordRemote: string, principal?: string): Promise<MissionState> {
     if (!coordRemote) {
       throw new ConfigValidationError("Missioncraft.join: coordRemote is required (reader-side bootstrap surface)");
     }
-    if (!id) {
+    if (!idOrName) {
       throw new ConfigValidationError("Missioncraft.join: mission-id is required");
     }
+    const id = this.resolveMissionRef(idOrName);                           // v1.0.3 bug-64 item 5
 
     // Step 1: canonicalize coordRemote URL
     const { canonicalizeCoordinationRemote } = await import('./role-derivation.js');
@@ -1635,10 +1645,11 @@ export class Missioncraft {
    *   3. Atomic-write 'leaving' via _engineMutate (idempotent on already 'leaving')
    *   4. (--purge-workspace) chmod-up via setReaderWorkspaceWritable + storage.cleanup + unlink config
    */
-  async leave(id: string, opts?: { purgeWorkspace?: boolean }): Promise<void> {
-    if (!id) {
+  async leave(idOrName: string, opts?: { purgeWorkspace?: boolean }): Promise<void> {
+    if (!idOrName) {
       throw new ConfigValidationError("Missioncraft.leave: mission-id is required");
     }
+    const id = this.resolveMissionRef(idOrName);                           // v1.0.3 bug-64 item 5
     const { resolveCurrentPrincipal } = await import('./principal-resolution.js');
     const currentPrincipal = await resolveCurrentPrincipal({
       constructorPrincipal: this.principal,
@@ -1757,6 +1768,52 @@ export class Missioncraft {
 
   private scopeConfigPath(id: string): string {
     return join(this.workspaceRoot, 'scopes', `${id}.yaml`);
+  }
+
+  /**
+   * Resolve a mission ref (id OR human-readable name) to its canonical id.
+   *
+   * v1.0.3 bug-64 item 5 fix: lifts CLI help-text's `<id|name>` promise into the SDK substrate
+   * so every method taking a mission ref (show/start/abandon/complete/workspace/update/tick/join/leave)
+   * resolves uniformly. Pre-fix the `.names/<name>.yaml` symlink existed (written by createMission)
+   * but no method ever READ it — leading to "mission not found: 'test-readonly'" despite the
+   * symlink being in place.
+   *
+   * Strategy:
+   *   1. If `<workspaceRoot>/config/<idOrName>.yaml` exists → idOrName is already the id; return.
+   *   2. Else if `<workspaceRoot>/config/.names/<idOrName>.yaml` (symlink) exists → realpath-resolve
+   *      to `<id>.yaml`; return basename minus `.yaml`.
+   *   3. Else throw MissionStateError with both paths in the message (LLM-discoverable diagnostic).
+   *
+   * Returns the canonical id (never the name).
+   */
+  private resolveMissionRef(idOrName: string): string {
+    const directPath = this.missionConfigPath(idOrName);
+    if (existsSync(directPath)) return idOrName;
+    const symlinkPath = join(this.workspaceRoot, 'config', '.names', `${idOrName}.yaml`);
+    if (existsSync(symlinkPath)) {
+      try {
+        return basename(realpathSync(symlinkPath), '.yaml');
+      } catch { /* fall through to throw */ }
+    }
+    throw new MissionStateError(
+      `mission '${idOrName}' not found (no config at '${directPath}' or name-symlink at '${symlinkPath}')`,
+    );
+  }
+
+  /** Resolve a scope ref (id OR human-readable name) to its canonical id. Symmetric with resolveMissionRef. */
+  private resolveScopeRef(idOrName: string): string {
+    const directPath = this.scopeConfigPath(idOrName);
+    if (existsSync(directPath)) return idOrName;
+    const symlinkPath = join(this.workspaceRoot, 'scopes', '.names', `${idOrName}.yaml`);
+    if (existsSync(symlinkPath)) {
+      try {
+        return basename(realpathSync(symlinkPath), '.yaml');
+      } catch { /* fall through to throw */ }
+    }
+    throw new MissionStateError(
+      `scope '${idOrName}' not found (no config at '${directPath}' or name-symlink at '${symlinkPath}')`,
+    );
   }
 
   private async createMission(opts: ResourceMap['mission']['createOpts'] = {}): Promise<MissionHandle> {

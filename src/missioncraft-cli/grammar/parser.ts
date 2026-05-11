@@ -221,9 +221,47 @@ export function parse(argv: readonly string[]): ParsedCommand {
       positionals: [],
       flags: new Map(),
       globalFlags: new Map(),
-      subNamespacePath: ['--help'],
+      subNamespacePath: [],
     };
   }
+
+  // v1.0.4 idea-274: multi-syntax per-verb help — `--help` / `-h` flag at any verb-path depth
+  // OR `help <verb-path>` prefix-verb form. Both produce verb='--help' + subNamespacePath
+  // populated with the verb-path so the dispatcher can resolve the per-verb spec.
+  const helpFlagIdx = argv.findIndex((a) => a === '--help' || a === '-h');
+  if (helpFlagIdx >= 0) {
+    // Strip the help-flag; verb-path = everything before it (and after, if any — unusual but accepted)
+    const verbPath = argv.filter((a, i) => i !== helpFlagIdx && !a.startsWith('-'));
+    return {
+      verb: '--help',
+      positionals: verbPath,
+      flags: new Map(),
+      globalFlags: new Map(),
+      subNamespacePath: verbPath,
+    };
+  }
+  // `help <verb-path>` prefix-form
+  if (argv[0] === 'help' && argv.length > 1) {
+    const verbPath = argv.slice(1).filter((a) => !a.startsWith('-'));
+    return {
+      verb: '--help',
+      positionals: verbPath,
+      flags: new Map(),
+      globalFlags: new Map(),
+      subNamespacePath: verbPath,
+    };
+  }
+  // v1.0.4 bug-66 item 1: `version` is the primary version-verb; `--version` retained as alias
+  if (argv[0] === 'version' && argv.length === 1) {
+    return {
+      verb: '--version',
+      positionals: [],
+      flags: new Map(),
+      globalFlags: new Map(),
+      subNamespacePath: ['version'],
+    };
+  }
+
   const verb = argv[0];
   // ─── Rule 1: reserved-verbs ───
   if (!(RESERVED_VERBS as readonly string[]).includes(verb)) {
@@ -238,7 +276,7 @@ export function parse(argv: readonly string[]): ParsedCommand {
       positionals: [],
       flags: new Map(),
       globalFlags: new Map(),
-      subNamespacePath: [verb],
+      subNamespacePath: verb === '--help' || verb === 'help' ? [] : [verb],
     };
   }
   const verbSpec = VERB_SPECS[verb];

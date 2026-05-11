@@ -93,7 +93,13 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   if (parsed.verb === '--help') {
-    console.log(HELP_TEXT);
+    // v1.0.4 idea-274: subNamespacePath populated → per-verb help; empty → global help
+    if (parsed.subNamespacePath.length === 0) {
+      console.log(HELP_TEXT);
+    } else {
+      const { renderVerbHelp } = await import('./grammar/help-renderer.js');
+      console.log(renderVerbHelp(parsed.subNamespacePath));
+    }
     return 0;
   }
   if (parsed.verb === '--version') {

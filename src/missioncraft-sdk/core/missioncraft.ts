@@ -870,6 +870,16 @@ export class Missioncraft {
     try {
       // Workspace handling (destroy default; preserve if --retain)
       if (!opts.retain) {
+        // v1.0.6 bug-71: cwd-rug-pull guard. If the current process cwd is inside the workspace
+        // about to be destroyed, chdir up to the parent first — otherwise `rm -rf workspace/...`
+        // pulls the cwd from under us and subsequent code (or operator's shell prompt) breaks.
+        // --retain branch is exempt: workspace preserved → no rug-pull risk.
+        const workspacePath = join(this.workspaceRoot, 'missions', id);
+        try {
+          if (process.cwd().startsWith(workspacePath)) {
+            process.chdir(join(this.workspaceRoot, 'missions'));
+          }
+        } catch { /* cwd-resolve failure non-aborting — proceed with cleanup */ }
         await this.storage.cleanup(id);
       }
       // Atomic-write lifecycle 'abandoned' + abandonProgress 'workspace-handled' under SAME lock-cycle

@@ -176,13 +176,14 @@ function validateArgCount(spec: VerbArgSpec, positionals: readonly string[], fla
     }
   }
   if (positionals.length < spec.required) {
-    // v1.0.4 bug-66 items 3+5+10: drop "Rule N" jargon + render per-verb help inline for
-    // missing-arg paths. Composes idea-274 help-renderer with a friendly error prefix.
-    const argSummary = spec.argLabels?.[0]?.label
-      ? `'${contextPath.join(' ')}' requires ${spec.argLabels[0].label}`
-      : (spec.required === 2 && contextPath[0] === 'abandon'
-          ? `'abandon' requires a message`
-          : `'${contextPath.join(' ')}' requires ${spec.required} positional(s)`);
+    // v1.0.4 bug-66 items 3+5+10: drop "Rule N" jargon + render per-verb help inline.
+    // v1.0.5 bug-67 item 3: report the ACTUALLY-missing positional (next-expected after
+    // already-provided), not always argLabels[0]. Example: `msn abandon <id>` (id provided,
+    // message missing) now reports `requires <message>` instead of the wrong `requires <id|name>`.
+    const missingLabel = spec.argLabels?.[positionals.length]?.label;
+    const argSummary = missingLabel
+      ? `'${contextPath.join(' ')}' requires ${missingLabel}`
+      : `'${contextPath.join(' ')}' requires ${spec.required} positional(s)`;
     throw new ConfigValidationError(renderMissingArgError(spec, contextPath, argSummary));
   }
   const max = spec.required + spec.optional;

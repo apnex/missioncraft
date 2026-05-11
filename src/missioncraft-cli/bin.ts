@@ -120,7 +120,16 @@ async function main(argv: readonly string[]): Promise<number> {
     await dispatch(mc, parsed, format);
   } catch (err) {
     if (err instanceof MissioncraftError) {
-      console.error(colors.error(`error: ${err.name}: ${err.message}`));
+      // v1.0.5 bug-67 items 1+2: strip SDK class-name + method-path prefixes; append discovery
+      // hint when the error matches the `<resource> '<name>' not found` pattern.
+      const cleaned = err.message
+        .replace(/^Missioncraft\.\w+(\(.*?\))?:\s+/, '')
+        .replace(/^\w+Error:\s+/, '');
+      const nameNotFoundMatch = /^mission '\S+' not found$/.test(cleaned) || /^scope '\S+' not found$/.test(cleaned);
+      const hint = nameNotFoundMatch
+        ? `\n\nhint: run '${cleaned.startsWith('scope') ? 'msn scope list' : 'msn list'}' to see available ${cleaned.startsWith('scope') ? 'scopes' : 'missions'}`
+        : '';
+      console.error(colors.error(`error: ${cleaned}${hint}`));
       return err instanceof MissionStateError ? 65 : 1;                            // EX_DATAERR for state-violations
     }
     throw err;
@@ -131,6 +140,10 @@ async function main(argv: readonly string[]): Promise<number> {
 async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputFormat): Promise<void> {
   switch (parsed.verb) {
     case 'create': {
+      // v1.0.5 bug-67 item 4: validate --repo URL via `new URL(...)` parse
+      if (parsed.flags.has('--repo')) {
+        validateRepoUrl(String(parsed.flags.get('--repo')));
+      }
       const handle = await mc.create('mission', {
         ...(parsed.flags.has('--name') && { name: String(parsed.flags.get('--name')) }),
         ...(parsed.flags.has('--repo') && { repo: String(parsed.flags.get('--repo')) }),
@@ -143,6 +156,8 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
       // 0-positional → list missions; 1-positional → drill-down repos within mission
       if (parsed.positionals.length === 0) {
         const status = parsed.flags.get('--status');
+        // v1.0.5 bug-67 item 4: validate --status enum
+        if (typeof status === 'string') validateMissionStatus(status);
         const filter = typeof status === 'string' ? { status: status as never } : undefined;
         const states = await mc.list('mission', filter);
         if (format === 'text') {
@@ -186,6 +201,8 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
     }
     case 'config': {
       const key = parsed.positionals[0];
+      // v1.0.5 bug-67 item 4: validate config key against known registry
+      validateConfigKey(key);
       if (parsed.subAction === 'get') {
         const value = await mc.configGet(key);
         console.log(value ?? '');
@@ -276,6 +293,7 @@ function buildMissionMutation(parsed: ParsedCommand): MissionMutation {
   const positionals = parsed.positionals;            // [<id>, ...args]
   switch (sub) {
     case 'repo-add': {
+      validateRepoUrl(positionals[1]);                 // v1.0.5 bug-67 item 4
       const repoSpec: { url: string; name?: string; branch?: string; base?: string } = {
         url: positionals[1],
       };
@@ -309,6 +327,9 @@ function buildMissionMutation(parsed: ParsedCommand): MissionMutation {
 async function dispatchScope(mc: Missioncraft, parsed: ParsedCommand, format: OutputFormat): Promise<void> {
   switch (parsed.subAction) {
     case 'create': {
+      if (parsed.flags.has('--repo')) {
+        validateRepoUrl(String(parsed.flags.get('--repo')));                  // v1.0.5 bug-67 item 4
+      }
       const handle = await mc.create('scope', {
         ...(parsed.flags.has('--name') && { name: String(parsed.flags.get('--name')) }),
         ...(parsed.flags.has('--description') && { description: String(parsed.flags.get('--description')) }),
@@ -363,6 +384,37 @@ function buildScopeMutation(parsed: ParsedCommand): ScopeMutation {
       return { kind: 'remove-tag', key: positionals[1] };
     default:
       throw new ConfigValidationError(`internal: unknown 'scope update' sub-action '${sub}'`);
+  }
+}
+
+// v1.0.5 bug-67 item 4: input-validation helpers (operator-facing errors via ConfigValidationError;
+// main() catch emits via colors.error + exit 64).
+const VALID_MISSION_STATUS = ['created', 'configured', 'in-progress', 'started', 'completed', 'abandoned'] as const;
+const VALID_CONFIG_KEYS = ['wip-cadence-ms', 'snapshot-cadence-ms', 'lock-wait-ms', 'lock-validity-ms'] as const;
+
+function validateMissionStatus(value: string): void {
+  if (!(VALID_MISSION_STATUS as readonly string[]).includes(value)) {
+    throw new ConfigValidationError(
+      `'--status ${value}' is not a valid lifecycle state. Valid: ${VALID_MISSION_STATUS.join(', ')}`,
+    );
+  }
+}
+
+function validateConfigKey(key: string): void {
+  if (!(VALID_CONFIG_KEYS as readonly string[]).includes(key)) {
+    throw new ConfigValidationError(
+      `'config' key '${key}' is not recognized. Valid keys: ${VALID_CONFIG_KEYS.join(', ')}`,
+    );
+  }
+}
+
+function validateRepoUrl(url: string): void {
+  try {
+    new URL(url);
+  } catch {
+    throw new ConfigValidationError(
+      `'--repo ${url}' is not a parseable URL (https://, ssh://, git://, file://)`,
+    );
   }
 }
 

@@ -376,7 +376,7 @@ export class Missioncraft {
   }
 
   async apply(_config: MissionConfig): Promise<MissionState> {
-    throw new MissionStateError('Missioncraft.apply: full-config-upsert not yet implemented (W4)');
+    throw new MissionStateError('apply: full-config-upsert not yet implemented (planned for v1.x roadmap)');
   }
 
   /**
@@ -952,7 +952,7 @@ export class Missioncraft {
   }
 
   async tick(_id: string): Promise<{ wipCommitSha?: string; snapshotPath?: string }> {
-    throw new MissionStateError('Missioncraft.tick: explicit cadence-tick not yet implemented (W4)');
+    throw new MissionStateError('tick: explicit cadence-tick not yet implemented (planned for v1.x roadmap)');
   }
 
   /**

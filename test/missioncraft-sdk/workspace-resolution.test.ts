@@ -9,7 +9,7 @@
 //   - createGitHttpFixture starts/stops + URL is reachable + clone roundtrip via real git CLI
 
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -62,10 +62,13 @@ describe('W5c slice (ii) — parseSubstrateCoordinate', () => {
 });
 
 describe('W5c slice (ii) — Missioncraft.workspace() runtime-resolution', () => {
+  // v1.0.3 slice (vi): workspace() now READS existing handles via storage.list (no create-on-
+  // demand); tests must pre-allocate via storage.allocate to substrate-bypass the start() step.
   it('resolves single-repo mission with plain mission-id (auto-pick repo)', async () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
     const repoUrl = 'file:///tmp/w5c-ii-1';
     const handle = await mc.create('mission', { repo: repoUrl });
+    await mc.storage.allocate(handle.id, repoUrl);
 
     const wsPath = await mc.workspace(handle.id);
     expect(wsPath).toMatch(new RegExp(`/missions/${handle.id}/w5c-ii-1$`));
@@ -82,6 +85,7 @@ describe('W5c slice (ii) — Missioncraft.workspace() runtime-resolution', () =>
   it('resolves multi-repo mission with explicit repoName arg', async () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
     const handle = await mc.create('mission', { repo: ['file:///tmp/w5c-ii-3a', 'file:///tmp/w5c-ii-3b'] });
+    await mc.storage.allocate(handle.id, 'file:///tmp/w5c-ii-3b');
 
     const wsPath = await mc.workspace(handle.id, 'w5c-ii-3b');
     expect(wsPath).toMatch(new RegExp(`/missions/${handle.id}/w5c-ii-3b$`));
@@ -90,6 +94,7 @@ describe('W5c slice (ii) — Missioncraft.workspace() runtime-resolution', () =>
   it('resolves coordinate-form `<id>:<repo>`', async () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
     const handle = await mc.create('mission', { repo: ['file:///tmp/w5c-ii-4a', 'file:///tmp/w5c-ii-4b'] });
+    await mc.storage.allocate(handle.id, 'file:///tmp/w5c-ii-4a');
 
     const wsPath = await mc.workspace(`${handle.id}:w5c-ii-4a`);
     expect(wsPath).toMatch(new RegExp(`/missions/${handle.id}/w5c-ii-4a$`));
@@ -98,9 +103,50 @@ describe('W5c slice (ii) — Missioncraft.workspace() runtime-resolution', () =>
   it('resolves coordinate-form `<id>:<repo>/<path>` with path suffix appended', async () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
     const handle = await mc.create('mission', { repo: 'file:///tmp/w5c-ii-5' });
+    await mc.storage.allocate(handle.id, 'file:///tmp/w5c-ii-5');
 
     const wsPath = await mc.workspace(`${handle.id}:w5c-ii-5/src/module.ts`);
     expect(wsPath).toMatch(new RegExp(`/missions/${handle.id}/w5c-ii-5/src/module\\.ts$`));
+  });
+
+  // idea-268 regression (v1.0.3 slice vi): terminal-state-guard
+  it('idea-268 — rejects workspace lookup on abandoned mission (terminal-state-guard)', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const repoUrl = 'file:///tmp/idea-268-abandoned';
+    const handle = await mc.create('mission', { repo: repoUrl });
+    await mc.storage.allocate(handle.id, repoUrl);
+    // Substrate-bypass: seed lifecycle directly via YAML edit (start over file:// would clone-fail)
+    const path = join(tempRoot, 'config', `${handle.id}.yaml`);
+    const content = await readFile(path, 'utf8');
+    await writeFile(path, content.replace(/lifecycle-state: \w+/, 'lifecycle-state: abandoned'), 'utf8');
+
+    await expect(mc.workspace(handle.id)).rejects.toThrow(
+      /workspace destroyed; mission '.+' in terminal state 'abandoned'/,
+    );
+  });
+
+  it('idea-268 — rejects workspace lookup on completed mission (terminal-state-guard)', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const repoUrl = 'file:///tmp/idea-268-completed';
+    const handle = await mc.create('mission', { repo: repoUrl });
+    await mc.storage.allocate(handle.id, repoUrl);
+    const path = join(tempRoot, 'config', `${handle.id}.yaml`);
+    const content = await readFile(path, 'utf8');
+    await writeFile(path, content.replace(/lifecycle-state: \w+/, 'lifecycle-state: completed'), 'utf8');
+
+    await expect(mc.workspace(handle.id)).rejects.toThrow(
+      /workspace destroyed; mission '.+' in terminal state 'completed'/,
+    );
+  });
+
+  it('idea-268 — rejects workspace lookup when workspace dir missing (safety-net)', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    // Mission created but NOT allocated — safety-net should fire (non-terminal-but-missing-workspace)
+    const handle = await mc.create('mission', { repo: 'file:///tmp/idea-268-missing' });
+
+    await expect(mc.workspace(handle.id)).rejects.toThrow(
+      /workspace not found for repo .+ \(try 'msn start' to re-create\)/,
+    );
   });
 
   it('rejects coordinate with non-existent repo', async () => {

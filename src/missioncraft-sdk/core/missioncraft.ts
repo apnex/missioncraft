@@ -990,6 +990,17 @@ export class Missioncraft {
     const content = await readFile(path, 'utf8');
     const config = parseMissionConfig(content, path, 'auto');
 
+    // idea-268 (v1.0.3 slice vi): terminal-state-guard. Pre-fix, `workspace` returned the
+    // resolved path regardless of mission lifecycle — if the mission was abandoned/completed
+    // (workspace destroyed by cleanup), the path was stale and `cd <path>` would fail with a
+    // cryptic shell error. Fast-path: lifecycle-check terminal states + emit clear diagnostic.
+    const lifecycle = config.mission.lifecycleState;
+    if (lifecycle === 'abandoned' || lifecycle === 'completed') {
+      throw new MissionStateError(
+        `Missioncraft.workspace: workspace destroyed; mission '${missionId}' in terminal state '${lifecycle}'`,
+      );
+    }
+
     // Resolve target repo: coordinate.repo > repoName arg > unique repo
     const targetRepoName = coord?.repo ?? repoName ?? (config.repos.length === 1
       ? (config.repos[0].name ?? repoNameFromUrl(config.repos[0].url))
@@ -1009,8 +1020,21 @@ export class Missioncraft {
       );
     }
 
-    const handle = await this.storage.allocate(missionId, targetRepo.url);
-    return coord?.path ? join(handle.path, coord.path) : handle.path;
+    // idea-268 (v1.0.3 slice vi): use READ-ONLY storage.list (no mkdir side-effect) to find an
+    // EXISTING workspace handle. Pre-fix `workspace` called storage.allocate which create-on-
+    // demand'd the directory — returning a stale path that didn't represent reality post-cleanup
+    // OR pre-start. Post-fix: safety-net catches non-terminal-but-missing-workspace.
+    //
+    // Match by repo-name (extracted from path basename) since storage.list returns repoUrl=''
+    // (filesystem layout doesn't preserve original URLs; only repo-names per v4.10 PATCH item #9).
+    const handles = await this.storage.list(missionId);
+    const targetHandle = handles.find((h) => basename(h.path) === targetRepoName);
+    if (!targetHandle) {
+      throw new MissionStateError(
+        `Missioncraft.workspace: workspace not found for repo '${targetRepoName}' in mission '${missionId}' (try 'msn start' to re-create)`,
+      );
+    }
+    return coord?.path ? join(targetHandle.path, coord.path) : targetHandle.path;
   }
 
   /**

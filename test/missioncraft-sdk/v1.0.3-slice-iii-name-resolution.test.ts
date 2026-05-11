@@ -79,7 +79,8 @@ describe('v1.0.3 slice (iii) — name-alias resolution audit per bug-64 item 5',
 
   it('mc.workspace(<name>) resolves name → id (substrate-bypass via lifecycle requirement)', async () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
-    await mc.create('mission', { name: 'test-workspace', repo: 'file:///tmp/test-repo' });
+    const handle = await mc.create('mission', { name: 'test-workspace', repo: 'file:///tmp/test-repo' });
+    await mc.storage.allocate(handle.id, 'file:///tmp/test-repo');  // v1.0.3 slice (vi) substrate-bypass
 
     // workspace pre-flights mission existence; if name not resolved, fails with "mission not found".
     // If resolved, reaches the repo-resolution path (single-repo mission → just returns path).
@@ -90,7 +91,8 @@ describe('v1.0.3 slice (iii) — name-alias resolution audit per bug-64 item 5',
 
   it('mc.workspace(<name>:<repo>) coordinate-form also resolves the mission ref', async () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
-    await mc.create('mission', { name: 'test-coord', repo: 'file:///tmp/coord-repo' });
+    const handle = await mc.create('mission', { name: 'test-coord', repo: 'file:///tmp/coord-repo' });
+    await mc.storage.allocate(handle.id, 'file:///tmp/coord-repo');  // v1.0.3 slice (vi) substrate-bypass
 
     // coordinate form: `<id|name>:<repo>` — the mission part may be name; resolveMissionRef applies
     // post-coord-parse.

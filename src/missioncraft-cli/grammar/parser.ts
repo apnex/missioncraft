@@ -13,6 +13,7 @@ import {
   type VerbArgSpec,
   VERB_SPECS,
 } from './arg-spec.js';
+import { renderVerbHelp } from './help-renderer.js';
 
 /** Substrate-coordinate per Rule 7 (v4.0 NEW per idea-265) — `<mission-id>:<repo>[/<path>]`. */
 export interface SubstrateCoordinate {
@@ -49,7 +50,7 @@ export function parseCoordinate(positional: string): SubstrateCoordinate | undef
   if (!positional.includes(':')) return undefined;
   if (/\s/.test(positional)) {
     throw new ConfigValidationError(
-      `Rule 7 substrate-coordinate parsing: whitespace inside coordinate '${positional}' is rejected`,
+      `substrate-coordinate parsing: whitespace inside coordinate '${positional}' is rejected`,
     );
   }
   const [mission, rest] = positional.split(':', 2);
@@ -82,7 +83,7 @@ export function validateSlugFormat(slug: string): string | undefined {
     return `slug '${slug}' starts with auto-id namespace prefix (msn-/scp-); reserved`;
   }
   if (slug.includes(':')) {
-    return `slug '${slug}' contains ':' which collides with Rule 7 substrate-coordinate parsing`;
+    return `slug '${slug}' contains ':' which collides with substrate-coordinate parsing`;
   }
   if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(slug)) {
     return `slug '${slug}' must match DNS-style pattern [a-z0-9][a-z0-9-]{1,62}`;
@@ -156,55 +157,85 @@ function flagNameSet(spec: VerbArgSpec): Set<string> {
 }
 
 function validateArgCount(spec: VerbArgSpec, positionals: readonly string[], flags: ReadonlyMap<string, string | boolean>, contextPath: readonly string[]): void {
-  // Rule 6 disjunctive arg-shape (v1.6 fold per MEDIUM-R5.4)
+  // disjunctive arg-shape (v1.6 fold per MEDIUM-R5.4)
   if (spec.disjunctive) {
     const flagPresent = flags.has(spec.disjunctive.flagName);
     const altRequired = spec.disjunctive.altRequired;
     if (flagPresent) {
-      // Disjunctive flag mode: positional count = altRequired
       if (positionals.length > altRequired) {
         throw new ConfigValidationError(
-          `Rule 6 mutually-exclusive: '${contextPath.join(' ')} ${spec.disjunctive.flagName} <value>' OR positional form, not both (extra positional '${positionals[altRequired]}')`,
+          `'${contextPath.join(' ')} ${spec.disjunctive.flagName} <value>' is mutually-exclusive with the positional form (extra positional '${positionals[altRequired]}')`,
         );
       }
       if (positionals.length < altRequired) {
         throw new ConfigValidationError(
-          `Rule 6 missing-arg: '${contextPath.join(' ')}' with '${spec.disjunctive.flagName}' requires ${altRequired} positional(s); got ${positionals.length}`,
+          renderMissingArgError(spec, contextPath, `'${contextPath.join(' ')}' with '${spec.disjunctive.flagName}' requires ${altRequired} positional(s)`),
         );
       }
       return;
     }
-    // No disjunctive flag → standard positional count
   }
   if (positionals.length < spec.required) {
-    // bug-64 item 3: enrich missing-arg error for `<id|name>` verbs with discovery hint
-    // (operator + LLM-driven exploration UX). Verbs taking a leading `<id|name>` positional
-    // benefit from a "run `msn list`" pointer when the operator invokes without args.
-    const verb = contextPath[0];
-    const ID_NAME_VERBS = new Set(['show', 'start', 'abandon', 'complete', 'workspace', 'update', 'tick']);
-    if (spec.required === 1 && ID_NAME_VERBS.has(verb)) {
-      throw new ConfigValidationError(
-        `'${contextPath.join(' ')}' requires <id|name> arg; run 'msn list' to see available missions`,
-      );
-    }
-    throw new ConfigValidationError(
-      `Rule 6 missing-arg: '${contextPath.join(' ')}' requires ${spec.required} positional(s); got ${positionals.length}`,
-    );
+    // v1.0.4 bug-66 items 3+5+10: drop "Rule N" jargon + render per-verb help inline for
+    // missing-arg paths. Composes idea-274 help-renderer with a friendly error prefix.
+    const argSummary = spec.argLabels?.[0]?.label
+      ? `'${contextPath.join(' ')}' requires ${spec.argLabels[0].label}`
+      : (spec.required === 2 && contextPath[0] === 'abandon'
+          ? `'abandon' requires a message`
+          : `'${contextPath.join(' ')}' requires ${spec.required} positional(s)`);
+    throw new ConfigValidationError(renderMissingArgError(spec, contextPath, argSummary));
   }
   const max = spec.required + spec.optional;
   if (positionals.length > max) {
     throw new ConfigValidationError(
-      `Rule 6 extra-positional: '${contextPath.join(' ')}' accepts up to ${max} positional(s); got ${positionals.length} (extra: '${positionals[max]}')`,
+      `'${contextPath.join(' ')}' accepts up to ${max} positional(s); got ${positionals.length} (extra: '${positionals[max]}')`,
     );
   }
   // Required-flag check
   for (const flagSpec of spec.flags) {
     if (flagSpec.required && !flags.has(flagSpec.name)) {
       throw new ConfigValidationError(
-        `Rule 6 missing-flag: '${contextPath.join(' ')}' requires flag '${flagSpec.name}'`,
+        renderMissingArgError(spec, contextPath, `'${contextPath.join(' ')}' requires flag '${flagSpec.name}'`),
       );
     }
   }
+}
+
+/**
+ * v1.0.4 bug-66 item 5/10: compose a missing-arg error message that includes the per-verb help
+ * (idea-274 renderer) below the error prefix. Falls back to plain prefix if renderer fails.
+ */
+function renderMissingArgError(spec: VerbArgSpec, contextPath: readonly string[], errorPrefix: string): string {
+  void spec;
+  try {
+    const help = renderVerbHelp(contextPath);
+    const verb = contextPath[0];
+    const ID_NAME_VERBS = new Set(['show', 'start', 'abandon', 'complete', 'workspace', 'update', 'tick', 'cd']);
+    const hint = ID_NAME_VERBS.has(verb)
+      ? `\n\nhint: run 'msn list' to see available missions`
+      : '';
+    return `${errorPrefix}\n\n${help}${hint}`;
+  } catch {
+    return errorPrefix;
+  }
+}
+
+/**
+ * v1.0.4 bug-66 item 4: compose a missing-sub-verb error that includes multi-line listing
+ * of available sub-verbs with their shortDesc (pulled from the arg-spec).
+ */
+function renderMissingSubVerbError(parentSpec: VerbArgSpec, parentPath: readonly string[], errorPrefix: string): string {
+  if (!parentSpec.subActions) return errorPrefix;
+  const subNames = Object.keys(parentSpec.subActions);
+  const width = Math.max(...subNames.map((n) => n.length));
+  const lines = [`error: ${errorPrefix}`, '', `Available sub-${parentPath[0] === 'scope' || parentPath[0] === 'config' ? 'verbs' : 'actions'}:`];
+  for (const name of subNames) {
+    const sub = parentSpec.subActions[name];
+    const desc = sub.shortDesc ?? sub.description ?? '';
+    lines.push(`  ${name.padEnd(width)}  ${desc}`);
+  }
+  // Strip the "error: " prefix since bin.ts main() adds it
+  return lines.join('\n').replace(/^error: /, '');
 }
 
 /**
@@ -266,7 +297,7 @@ export function parse(argv: readonly string[]): ParsedCommand {
   // ─── Rule 1: reserved-verbs ───
   if (!(RESERVED_VERBS as readonly string[]).includes(verb)) {
     throw new ConfigValidationError(
-      `Rule 1 unknown verb '${verb}'; use 'msn --help' for verb list. Reserved-verbs at v4.0: ${RESERVED_VERBS.join(' / ')}`,
+      `unknown verb '${verb}'\n\nhint: run 'msn help' to see the verb list`,
     );
   }
   // Special-case help/version short-circuits; `help` verb dispatches to identical handler as `--help`
@@ -282,7 +313,7 @@ export function parse(argv: readonly string[]): ParsedCommand {
   const verbSpec = VERB_SPECS[verb];
   if (!verbSpec) {
     throw new ConfigValidationError(
-      `Rule 1 internal: verb '${verb}' has no VerbArgSpec entry — VERB_SPECS table out-of-sync with RESERVED_VERBS`,
+      `internal: verb '${verb}' has no VerbArgSpec entry — VERB_SPECS table out-of-sync with RESERVED_VERBS`,
     );
   }
 
@@ -302,14 +333,14 @@ export function parse(argv: readonly string[]): ParsedCommand {
       // Shape: `msn update <id|name> <sub-action> [args]` — sub-action at positional[1]
       if (rawPositionals.length < 2) {
         throw new ConfigValidationError(
-          `Rule 2 'update' requires <id|name> + sub-action; got ${rawPositionals.length} positional(s). Sub-actions: ${Object.keys(activeSpec.subActions).join(' / ')}`,
+          renderMissingSubVerbError(activeSpec, ['update'], `'update' requires <id|name> + sub-action`),
         );
       }
       subAction = rawPositionals[1];
       const subSpec = activeSpec.subActions[subAction];
       if (!subSpec) {
         throw new ConfigValidationError(
-          `Rule 2 unknown 'update' sub-action '${subAction}'; valid: ${Object.keys(activeSpec.subActions).join(' / ')}`,
+          renderMissingSubVerbError(activeSpec, ['update'], `unknown 'update' sub-action '${subAction}'`),
         );
       }
       activeSpec = subSpec;
@@ -319,14 +350,14 @@ export function parse(argv: readonly string[]): ParsedCommand {
       // Shape: `msn scope <sub-verb> [args]` OR `msn config <get|set> <key> [<value>]`
       if (rawPositionals.length < 1) {
         throw new ConfigValidationError(
-          `Rule 2 '${verb}' requires sub-verb; valid: ${Object.keys(activeSpec.subActions).join(' / ')}`,
+          renderMissingSubVerbError(activeSpec, [verb], `'${verb}' requires sub-verb`),
         );
       }
       subAction = rawPositionals[0];
       const subSpec = activeSpec.subActions[subAction];
       if (!subSpec) {
         throw new ConfigValidationError(
-          `Rule 2 unknown '${verb}' sub-verb '${subAction}'; valid: ${Object.keys(activeSpec.subActions).join(' / ')}`,
+          renderMissingSubVerbError(activeSpec, [verb], `unknown '${verb}' sub-verb '${subAction}'`),
         );
       }
       activeSpec = subSpec;
@@ -336,14 +367,14 @@ export function parse(argv: readonly string[]): ParsedCommand {
       if (verb === 'scope' && subAction === 'update' && activeSpec.subActions) {
         if (rawPositionals.length < 3) {
           throw new ConfigValidationError(
-            `Rule 2 'scope update' requires <scope-id|name> + sub-action; got ${rawPositionals.length - 1} positional(s) after 'scope update'`,
+            renderMissingSubVerbError(activeSpec, ['scope', 'update'], `'scope update' requires <scope-id|name> + sub-action`),
           );
         }
         const scopeUpdateSubAction = rawPositionals[2];
         const subSubSpec = activeSpec.subActions[scopeUpdateSubAction];
         if (!subSubSpec) {
           throw new ConfigValidationError(
-            `Rule 2 unknown 'scope update' sub-action '${scopeUpdateSubAction}'; valid: ${Object.keys(activeSpec.subActions).join(' / ')}`,
+            renderMissingSubVerbError(activeSpec, ['scope', 'update'], `unknown 'scope update' sub-action '${scopeUpdateSubAction}'`),
           );
         }
         activeSpec = subSubSpec;
@@ -370,7 +401,7 @@ export function parse(argv: readonly string[]): ParsedCommand {
       // Ambiguity check: coord-form repo-component + a separate positional naming a repo (next positional)
       if (coordinate?.repo && rawPositionals.length > i + 1) {
         throw new ConfigValidationError(
-          `Rule 7 ambiguity: coordinate-form '${rawPositionals[i]}' already specifies repo via colon-notation; extra positional '${rawPositionals[i + 1]}' rejected`,
+          `coordinate-form '${rawPositionals[i]}' already specifies repo via colon-notation; extra positional '${rawPositionals[i + 1]}' rejected`,
         );
       }
       break;
@@ -382,21 +413,21 @@ export function parse(argv: readonly string[]): ParsedCommand {
     const nameFlag = flags.get('--name');
     if (typeof nameFlag === 'string') {
       const err = validateSlugFormat(nameFlag);
-      if (err) throw new ConfigValidationError(`Rule 5 slug-format: ${err}`);
+      if (err) throw new ConfigValidationError(`slug-format: ${err}`);
     }
   }
   if (verb === 'create') {
     const nameFlag = flags.get('--name');
     if (typeof nameFlag === 'string') {
       const err = validateSlugFormat(nameFlag);
-      if (err) throw new ConfigValidationError(`Rule 5 slug-format: ${err}`);
+      if (err) throw new ConfigValidationError(`slug-format: ${err}`);
     }
   }
   if (verb === 'scope' && subAction === 'create') {
     const nameFlag = flags.get('--name');
     if (typeof nameFlag === 'string') {
       const err = validateSlugFormat(nameFlag);
-      if (err) throw new ConfigValidationError(`Rule 5 slug-format: ${err}`);
+      if (err) throw new ConfigValidationError(`slug-format: ${err}`);
     }
   }
 

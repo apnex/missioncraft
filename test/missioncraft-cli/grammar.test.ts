@@ -12,13 +12,13 @@ describe('CLI grammar parser — Rules 1-7 — W3 smoke-tests', () => {
           parse([v]);
         } catch (e) {
           // Should NOT be unknown-verb (Rule 1); Rule 6 missing-arg is expected for verbs requiring positionals
-          expect((e as Error).message).not.toMatch(/Rule 1 unknown verb/);
+          expect((e as Error).message).not.toMatch(/unknown verb/);
         }
       }
     });
 
     it('rejects unknown verb', () => {
-      expect(() => parse(['nonexistent-verb'])).toThrow(/Rule 1 unknown verb/);
+      expect(() => parse(['nonexistent-verb'])).toThrow(/unknown verb/);
     });
 
     it('handles --help and --version short-circuit', () => {
@@ -44,23 +44,23 @@ describe('CLI grammar parser — Rules 1-7 — W3 smoke-tests', () => {
 
     it('show without args: enriched LLM-discoverable error (v1.0.3 bug-64 item 3)', () => {
       expect(() => parse(['show'])).toThrow(
-        /'show' requires <id\|name> arg; run 'msn list' to see available missions/,
+        /'show' requires <id\|name>/,
       );
     });
 
     it('start without args: enriched LLM-discoverable error (v1.0.3 bug-64 item 3)', () => {
       // start is disjunctive (positional OR -f <path>); without either, hits standard path
       expect(() => parse(['start'])).toThrow(
-        /'start' requires <id\|name> arg; run 'msn list' to see available missions/,
+        /'start' requires <id\|name>/,
       );
     });
 
     it('missing-arg: complete requires <id> + <message>', () => {
-      expect(() => parse(['complete', 'msn-foo'])).toThrow(/Rule 6 missing-arg/);
+      expect(() => parse(['complete', 'msn-foo'])).toThrow(/'complete' requires/);
     });
 
     it('extra-positional: list accepts 0 OR 1 (drill-down); rejects 2+', () => {
-      expect(() => parse(['list', 'msn-foo', 'extra'])).toThrow(/Rule 6 extra-positional/);
+      expect(() => parse(['list', 'msn-foo', 'extra'])).toThrow(/accepts up to/);
     });
 
     it('valid: complete <id> "<message>"', () => {
@@ -94,7 +94,7 @@ describe('CLI grammar parser — Rules 1-7 — W3 smoke-tests', () => {
     });
 
     it('mutually-exclusive: start -f <path> + extra positional rejected', () => {
-      expect(() => parse(['start', '-f', '/tmp/m.yaml', 'msn-foo'])).toThrow(/Rule 6 mutually-exclusive/);
+      expect(() => parse(['start', '-f', '/tmp/m.yaml', 'msn-foo'])).toThrow(/mutually-exclusive/);
     });
   });
 
@@ -107,7 +107,7 @@ describe('CLI grammar parser — Rules 1-7 — W3 smoke-tests', () => {
     });
 
     it('update <id> unknown-sub-action rejected', () => {
-      expect(() => parse(['update', 'msn-foo', 'nonexistent', 'arg'])).toThrow(/Rule 2 unknown 'update' sub-action/);
+      expect(() => parse(['update', 'msn-foo', 'nonexistent', 'arg'])).toThrow(/unknown 'update' sub-action/);
     });
 
     it('scope create --name foo', () => {
@@ -164,7 +164,7 @@ describe('CLI grammar parser — Rules 1-7 — W3 smoke-tests', () => {
     it('workspace m-foo:design-repo + extra positional repo rejected (ambiguity)', () => {
       // workspace accepts 1 required + 1 optional; coord-form already specifies repo via colon
       expect(() => parse(['workspace', 'm-foo:design-repo', 'other-repo'])).toThrow(
-        /Rule 7 ambiguity/,
+        /already specifies repo via colon-notation/,
       );
     });
   });
@@ -182,7 +182,7 @@ describe('CLI grammar parser — Rules 1-7 — W3 smoke-tests', () => {
     });
 
     it('rejects slug containing colon (v4.0 colon-protection per Rule 5 + Rule 7 collision)', () => {
-      expect(validateSlugFormat('foo:bar')).toMatch(/collides with Rule 7/);
+      expect(validateSlugFormat('foo:bar')).toMatch(/collides with substrate-coordinate/);
     });
 
     it('rejects slug not matching DNS pattern', () => {
@@ -196,7 +196,7 @@ describe('CLI grammar parser — Rules 1-7 — W3 smoke-tests', () => {
     });
 
     it('create --name <reserved-verb> rejected via parser', () => {
-      expect(() => parse(['create', '--name', 'list'])).toThrow(/Rule 5 slug-format/);
+      expect(() => parse(['create', '--name', 'list'])).toThrow(/slug-format/);
     });
   });
 

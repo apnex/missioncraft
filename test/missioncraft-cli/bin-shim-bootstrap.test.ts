@@ -106,7 +106,8 @@ describe('CLI bin-shim symlink-bootstrap regression', () => {
       timeout: 10000,
     });
     expect(result.status).toBe(64);  // EX_USAGE per bin.ts main()
-    expect(result.stderr).toMatch(/'show' requires <id\|name> arg; run 'msn list'/);
+    expect(result.stderr).toMatch(/'show' requires <id\|name>/);
+    expect(result.stderr).toMatch(/hint: run 'msn list'/);
   });
 
   // idea-269 (v1.0.3 slice vii): `msn shell-init <shell>` emits shell-function blob

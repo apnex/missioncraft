@@ -5,7 +5,8 @@
 // Sovereign-module SDK consumer per v1.1 reshape Refinement #4 — imports `@apnex/missioncraft` package self-reference.
 
 import { fileURLToPath } from 'node:url';
-import { realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { join as pathJoin } from 'node:path';
 import {
   Missioncraft,
   ConfigValidationError,
@@ -298,27 +299,64 @@ function buildScopeMutation(parsed: ParsedCommand): ScopeMutation {
   }
 }
 
+function readDaemonPid(workspaceRoot: string, missionId: string): number | undefined {
+  // bug-64 item 6: lookup daemon-pid from mission-lockfile (populated by start() spawnDaemonWatcher
+  // per v1.0.2 SD3 fix). Undefined when lockfile absent or unparseable (substrate-bypass tests, etc.).
+  const lockfilePath = pathJoin(workspaceRoot, 'locks', 'missions', `${missionId}.lock`);
+  if (!existsSync(lockfilePath)) return undefined;
+  try {
+    const c = JSON.parse(readFileSync(lockfilePath, 'utf8'));
+    return typeof c.pid === 'number' ? c.pid : undefined;
+  } catch { return undefined; }
+}
+
 async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): Promise<void> {
   // These verbs throw MissionStateError("not yet implemented; W4/W5") at SDK level;
   // the dispatch let-throws and main() catches.
   switch (parsed.verb) {
     case 'start': {
+      let handle;
       if (parsed.flags.has('-f')) {
-        await mc.start({ config: { missionConfigSchemaVersion: 1, mission: { id: 'placeholder', lifecycleState: 'created', createdAt: new Date() }, repos: [] } });
+        handle = await mc.start({ config: { missionConfigSchemaVersion: 1, mission: { id: 'placeholder', lifecycleState: 'created', createdAt: new Date() }, repos: [] } });
       } else {
-        await mc.start(parsed.positionals[0]);
+        handle = await mc.start(parsed.positionals[0]);
       }
+      // bug-64 item 6 (v1.0.3 slice iv): emit success-confirmation line on stdout
+      const nameSuffix = handle.name ? ` ('${handle.name}')` : '';
+      const pid = readDaemonPid(mc.workspaceRoot, handle.id);
+      const pidSuffix = pid !== undefined ? `; daemon-pid ${pid}` : '';
+      console.log(`started mission ${handle.id}${nameSuffix}${pidSuffix}`);
       return;
     }
     case 'apply':
       await mc.apply({ missionConfigSchemaVersion: 1, mission: { id: 'placeholder', lifecycleState: 'created', createdAt: new Date() }, repos: [] });
       return;
-    case 'complete':
-      await mc.complete(parsed.positionals[0], parsed.positionals[1], parsed.flags.has('--purge-config') ? { purgeConfig: true } : undefined);
+    case 'complete': {
+      const result = await mc.complete(
+        parsed.positionals[0],
+        parsed.positionals[1],
+        parsed.flags.has('--purge-config') ? { purgeConfig: true } : undefined,
+      );
+      // bug-64 item 6+7 scope-extension (architect-pre-approved): symmetric `complete` line
+      const nameSuffix = result.name ? ` ('${result.name}')` : '';
+      const prs = result.publishedPRs ?? [];
+      const prSuffix = prs.length > 0
+        ? `; PRs opened: ${prs.map((p) => p.prUrl).join(', ')}`
+        : '';
+      console.log(`completed mission ${result.id}${nameSuffix}${prSuffix}`);
       return;
-    case 'abandon':
-      await mc.abandon(parsed.positionals[0], parsed.positionals[1], parsed.flags.has('--purge-config') ? { purgeConfig: true } : undefined);
+    }
+    case 'abandon': {
+      const opts = parsed.flags.has('--purge-config')
+        ? { purgeConfig: true }
+        : (parsed.flags.has('--retain') ? { retain: true } : undefined);
+      const result = await mc.abandon(parsed.positionals[0], parsed.positionals[1], opts);
+      // bug-64 item 7 (v1.0.3 slice iv): emit success-confirmation line on stdout
+      const nameSuffix = result.name ? ` ('${result.name}')` : '';
+      const wsSuffix = parsed.flags.has('--retain') ? '; workspace preserved (--retain)' : '; workspace removed';
+      console.log(`abandoned mission ${result.id}${nameSuffix}${wsSuffix}; daemon stopped`);
       return;
+    }
     case 'tick':
       await mc.tick(parsed.positionals[0]);
       return;

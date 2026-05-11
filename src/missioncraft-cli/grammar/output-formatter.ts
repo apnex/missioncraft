@@ -49,15 +49,18 @@ export function formatTable(
   }
   // text format — simple column-aligned table
   // bug-64 item 2: empty-state preserves header row (operator can see schema; mirrors `docker ps`)
+  // bug-64 item 4: CYAN header (ANSI \x1b[36m) when stdout is a TTY; drop horizontal separator row;
+  // plain output when piped/redirected (operator-pipe + LLM-consumer friendliness).
   const headerCells = columns.map((c) => c.toUpperCase());
   const dataCells = rows.map((r) => columns.map((c) => stringifyCell(r[c])));
   const widths = columns.map((_, ci) =>
     Math.max(headerCells[ci].length, ...dataCells.map((row) => row[ci].length)),
   );
   const pad = (cell: string, w: number): string => cell + ' '.repeat(Math.max(0, w - cell.length));
+  const useTtyDecoration = process.stdout.isTTY === true;
+  const headerLine = headerCells.map((h, ci) => pad(h, widths[ci])).join('  ');
   const lines: string[] = [];
-  lines.push(headerCells.map((h, ci) => pad(h, widths[ci])).join('  '));
-  lines.push(widths.map((w) => '─'.repeat(w)).join('  '));
+  lines.push(useTtyDecoration ? `\x1b[36m${headerLine}\x1b[0m` : headerLine);
   if (dataCells.length === 0) {
     lines.push('(no entries)');
   } else {

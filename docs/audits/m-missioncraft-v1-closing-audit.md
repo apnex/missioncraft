@@ -641,3 +641,91 @@ Per architect thread-534 directive: ONLY idea-270 (substrate-composition; needs 
 ### §13.11 Director-direct mid-slice deviation — captured for retrospective
 
 Slice (ii) auto-migration logic DROPPED per Director-direct directive "no backwards-compat, no migration, no legacy debt — perfection only". Architect-spec auto-migration was DESIGNED-IN at thread-534 directive; Director's mid-cycle disposition tightens it. Methodology note: this is one of few cases where Director engages mid-cycle outside gate-points. Engineer accepted the disposition + surfaces it in this closing-audit + the closing-bundle thread-534 reply.
+
+## §14 v1.0.6 patch trail — bug-cleanup batch (5 bugs; thread-537)
+
+**Defects surfaced:** Director-disposed broader-scope bug-cleanup batch (vs. prior single-issue thread-536 cancellation). 5 cumulative bugs shipped in one cycle.
+
+- **bug-70 (major)** — Scope-mission binding broken (scenario-02-blocker). Director-disposed model (a) eager-inline: scope acts as template at attach-time; repos COPIED into mission YAML; scope-id persisted as metadata.
+- **bug-68** — Progress callback fires pre-FSM-validation.
+- **bug-69** — FSM-rejection error messages need workaround hints.
+- **bug-71** — Cwd-rug-pull guard on `msn abandon`.
+- **bug-72** — `msn complete --purge-workspace` symmetric flag.
+
+**Hub coordinates:** thread-537 (v1.0.6 bug-cleanup batch directive 2026-05-11; maxRounds=15; replaces force-closed thread-536).
+
+### §14.1 bug-70 — mission ↔ scope eager-inline binding (slices (i)+(ii) — commits `f2ba0b1`, `adceec4`)
+
+**Slice (i) — schema + create/update handlers (`f2ba0b1`).** Additive non-breaking `scopeId: scp-<8-char-hex>` field on `mission.*` (YAML wire-format `scope-id` per kebab-case transform). `msn create --scope <id|name>`: resolve via `resolveScopeRef` (v1.0.5 helper), reject ghost-scope, copy `repos[]`, persist `scope-id`, auto-advance lifecycle `created` → `configured`. `--scope` + `--repo` rejected as mutually exclusive (scope IS the template; ambiguous attach-semantics otherwise). `msn update <id> scope-id <id|name>`: REPLACE repos[] (not append) — consistent with template model; async pre-step in `applyMissionMutation` resolves + loads BEFORE `_engineMutate`. `msn update <id> scope-id ""`: clears `scopeId`; preserves `repos[]` (mission self-contained post-attach).
+
+**Slice (ii) — `scope show/list --include-references` compute-on-demand (`adceec4`).** New `computeReferencingMissions(scopeId)` scans `<workspace>/config/missions/*.yaml` for raw kebab-case `scope-id` match. Architect-pre-disposed: simpler than maintained ledger; missions are O(10-100s) so scan is sub-ms. Wired through `getScope` + `listScopes` via `opts.includeReferences`; CLI `--include-references` flag triggers.
+
+**Cascade-protection (v1.0.5 bug-65)** automatically covers the new schema field — `deleteScope` reads raw kebab-case `scope-id` from raw YAML directly, same path as the new schema-field's wire-format. Verified by slice-i tests (block-on-bound + release-after-detach).
+
+### §14.2 bug-68 — FSM pre-flight before progress callback (slice (iii) — commit `0922335`)
+
+Idempotent rule: progress events represent ACTIVE work; no progress fires for rejected actions. Pre-fix, `abandon()` / `complete()` / `start()` emitted a `'final-tick'` or `'validate'` phase BEFORE checking lifecycle-state — terminal-state rejection paths still fired one progress event, polluting operator-DX observability.
+
+Fix: moved lifecycle-state validation to be the FIRST statement post-id-resolution in all three SDK methods, BEFORE constructing the emit closure or firing any onProgress event.
+
+### §14.3 bug-69 — FSM-rejection hint matrix (slice (iv) — commit `e226441`)
+
+Extends v1.0.5 bug-67 name-not-found hint pattern. New `renderFsmHint(verb, currentState, idOrName)` helper pattern-matches FSM error format `requires lifecycle '...' (current: '...')` and emits per-verb operator-actionable hint:
+
+| Verb / rejection-state | Hint |
+|---|---|
+| `abandon` / `complete` on terminal | Manual rm pointer + "msn delete on v1.0.x roadmap" |
+| `complete` on `configured` | "run 'msn start <id>' first" |
+| `start` on non-configured | "run 'msn show <id>' to inspect current lifecycle state" |
+| `tick` on terminal | Same as start |
+
+### §14.4 bug-71 — cwd-rug-pull guard in abandon (slice (v) — commit `1fcd9e7`)
+
+When operator's cwd is inside the workspace about to be destroyed (e.g., post `msn cd <id>`), abandon's `storage.cleanup()` yanks the dir from under them — subsequent shell prompts hit ENOENT.
+
+Fix: in `Missioncraft.abandon()` Step 6, before `storage.cleanup()`: if `process.cwd().startsWith(workspacePath)`, `chdir` to `<workspaceRoot>/missions/`. Try/catch wrapper makes cwd-resolve failures non-aborting. `--retain` branch exempt (workspace preserved → no rug-pull risk).
+
+### §14.5 bug-72 — `msn complete --purge-workspace` symmetric flag (slice (vi) — commit `70355d4`)
+
+Symmetric to abandon's workspace-handling but inverted default: `complete` now PRESERVES workspace by default (forensic-history); `--purge-workspace` opts-in to destroy. Reuses abandon Step 6 cleanup substrate.
+
+Behavior change is operator-invisible: pre-v1.0.6 default destroyed workspace, but the CLI never exposed `--retain`, so the destroy-default was never operator-reachable. Flipping the default to preserve is invisible to all existing operator-paths.
+
+Implementation: complete() SDK accepts `purgeWorkspace?: boolean`; rejects combination with `retain` (mutex); cleanup gated on `opts.purgeWorkspace` only. cwd-rug-pull guard symmetric with slice (v). arg-spec registers `--purge-workspace` on complete verb. New full-cleanup example: `msn complete <id> "..." --purge-workspace --purge-config`.
+
+### §14.6 Test coverage delta
+
+339 → 380 tests (+41 net):
+- slice (i): +13 (v1.0.6-slice-i-scope-binding.test.ts)
+- slice (ii): +6 (v1.0.6-slice-ii-scope-references.test.ts)
+- slice (iii): +5 (v1.0.6-slice-iii-fsm-preflight.test.ts)
+- slice (iv): +5 (v1.0.6-slice-iv-fsm-hints.test.ts)
+- slice (v): +4 (v1.0.6-slice-v-cwd-guard.test.ts)
+- slice (vi): +8 (v1.0.6-slice-vi-purge-workspace.test.ts + v1.0.6-slice-vi-purge-workspace-flag.test.ts)
+
+### §14.7 v1.0.6 ship trail
+
+- slice (i) — `f2ba0b1` bug-70 mission ↔ scope eager-inline binding
+- slice (ii) — `adceec4` bug-70 scope show/list --include-references compute-on-demand
+- slice (iii) — `0922335` bug-68 FSM pre-flight before progress callback
+- slice (iv) — `e226441` bug-69 FSM-rejection hint matrix
+- slice (v) — `1fcd9e7` bug-71 cwd-rug-pull guard
+- slice (vi) — `70355d4` bug-72 --purge-workspace symmetric flag
+- slice (vii) — this §14 doc + version bump 1.0.5 → 1.0.6 + tag v1.0.6 + Director-direct npm publish (γ)
+
+### §14.8 v1.0.5 deprecation recommendation
+
+Architect-recommended message: `npm deprecate @apnex/missioncraft@1.0.5 "Bug-cleanup batch (bug-70 scope-binding + bug-68/69/71/72) shipped in v1.0.6+"`. Cumulative inventory: v1.0.0-v1.0.4 deprecated; v1.0.5 pending deprecation; v1.0.6 latest stable.
+
+### §14.9 v1.0.x queue post-v1.0.6
+
+Per architect thread-537 out-of-scope clause:
+- idea-275 (`msn delete` verb) — future cycle
+- idea-276 + idea-277 paired (repo health-check + intent field) — future cycle; needs Survey-ish design pass
+- idea-270 (event-bridge composition) — needs Survey
+
+Operator-UX bug-cleanup is **complete at v1.0.6**. Substrate is scenario-02-unblock-ready.
+
+### §14.10 Pattern-A discipline + autonomous-execution observations
+
+Pattern-A direct-commit-to-main (apnex/* repos) preserved throughout; cross-approval post-hoc. Engineer-turn discipline (per `feedback_pattern_a_engineer_turn_discipline.md`): combined ack + first-milestone surface in slice (i) reply — no ack-only turn burn. Round budget: 2/15 used (1 architect open + 1 architect ratify); subsequent slices shipped autonomous without architect round-trips (per architect's "Continue autonomous execution per Pattern-A turn-discipline" disposition). Will surface for round-3 at v1.0.6 publish gate-point.

@@ -109,6 +109,84 @@ describe('CLI bin-shim symlink-bootstrap regression', () => {
     expect(result.stderr).toMatch(/'show' requires <id\|name> arg; run 'msn list'/);
   });
 
+  // idea-269 (v1.0.3 slice vii): `msn shell-init <shell>` emits shell-function blob
+  it('idea-269 — `msn shell-init bash` emits bash shell-function wrapper blob', () => {
+    const result = spawnSync(process.execPath, [symlinkPath, 'shell-init', 'bash'], {
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toMatch(/msn\(\)\s*{/);
+    expect(result.stdout).toMatch(/cd "\$\(command msn workspace/);
+    expect(result.stdout).toMatch(/command msn "\$@"/);
+  });
+
+  it('idea-269 — `msn shell-init zsh` emits zsh shell-function wrapper (same POSIX syntax as bash)', () => {
+    const result = spawnSync(process.execPath, [symlinkPath, 'shell-init', 'zsh'], {
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/zshrc/);
+    expect(result.stdout).toMatch(/msn\(\)\s*{/);
+  });
+
+  it('idea-269 — `msn shell-init fish` emits fish-specific function syntax', () => {
+    const result = spawnSync(process.execPath, [symlinkPath, 'shell-init', 'fish'], {
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/^function msn$/m);
+    expect(result.stdout).toMatch(/cd \(command msn workspace/);
+    expect(result.stdout).toMatch(/^end$/m);
+  });
+
+  it('idea-269 — `msn shell-init powershell` rejects unsupported shell', () => {
+    const result = spawnSync(process.execPath, [symlinkPath, 'shell-init', 'powershell'], {
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+    // Non-zero exit; emitShellInit throws ConfigValidationError → main() catch returns 1
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/supports bash \/ zsh \/ fish/);
+  });
+
+  // idea-269: direct `msn cd <id>` (without wrapper) emits path + stderr hint
+  it('idea-269 — `msn cd <id>` direct (no wrapper) prints path + stderr hint', () => {
+    const wsRoot = mkdtempSync(join(tmpdir(), 'msn-cd-test-'));
+    try {
+      const createResult = spawnSync(
+        process.execPath,
+        [
+          '-e',
+          `(async () => {
+            const { Missioncraft } = await import('${process.cwd()}/dist/missioncraft-sdk/index.js');
+            const mc = new Missioncraft({ workspaceRoot: ${JSON.stringify(wsRoot)} });
+            const h = await mc.create('mission', { repo: 'file:///tmp/cd-repo' });
+            await mc.storage.allocate(h.id, 'file:///tmp/cd-repo');
+            console.log(h.id);
+          })().catch((e) => { console.error(e); process.exit(1); });`,
+        ],
+        { encoding: 'utf8', timeout: 15000 },
+      );
+      expect(createResult.status).toBe(0);
+      const missionId = createResult.stdout.trim();
+
+      const cdResult = spawnSync(
+        process.execPath,
+        [symlinkPath, 'cd', missionId, '--workspace-root', wsRoot],
+        { encoding: 'utf8', timeout: 10000 },
+      );
+      expect(cdResult.status).toBe(0);
+      expect(cdResult.stdout.trim()).toContain(wsRoot);
+      expect(cdResult.stderr).toMatch(/shell-function wrapper.*msn shell-init/);
+    } finally {
+      rmSync(wsRoot, { recursive: true, force: true });
+    }
+  });
+
   // SD1 regression (v1.0.2 slice iii): `msn workspace <id>` must print the resolved workspace
   // path to stdout. Pre-fix the CLI dispatcher discarded the SDK return value → silent exit-0.
   // Verified via real CLI invocation against a tmp workspace-root with a pre-staged mission.

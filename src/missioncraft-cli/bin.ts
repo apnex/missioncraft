@@ -65,6 +65,10 @@ Operator-config:
   msn config get <key>
   msn config set <key> <value>
 
+Operator quick-jump (v1.0.3):
+  msn cd <id|name> [<repo-name>]              Requires shell-function wrapper (one-time setup)
+  msn shell-init bash | zsh | fish            Emit shell-fn blob; \`eval "$(msn shell-init bash)"\`
+
 Global flags (apply to all verbs):
   --workspace-root <path>    Override workspace-root for this invocation
   --wip-cadence-ms <ms>      Override WIP commit cadence
@@ -195,13 +199,54 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
     case 'abandon':
     case 'tick':
     case 'workspace':
+    case 'cd':
     case 'join':
     case 'leave':
       await invokeRuntimeDeferred(mc, parsed);
       return;
+    case 'shell-init': {
+      // v1.0.3 idea-269: emit shell-function blob for bash/zsh/fish. Operator runs
+      // `eval "$(msn shell-init bash)"` in their rc-file to enable `msn cd <id>` quick-jump.
+      console.log(emitShellInit(parsed.positionals[0]));
+      return;
+    }
     default:
       throw new ConfigValidationError(`internal: dispatcher missing case for verb '${parsed.verb}'`);
   }
+}
+
+function emitShellInit(shell: string): string {
+  // Shell-function wrapper: intercepts `msn cd <args>` to `cd "$(command msn workspace <args>)"`.
+  // All other verbs pass through transparently via `command msn`.
+  // bash + zsh share POSIX function syntax; fish requires the function-builtin form.
+  if (shell === 'bash' || shell === 'zsh') {
+    return [
+      `# missioncraft ${shell} shell-init — adds \`msn cd <id|name>\` quick-jump.`,
+      `# Install: append \`eval "$(msn shell-init ${shell})"\` to your ~/.${shell}rc`,
+      `msn() {`,
+      `  if [ "$1" = "cd" ]; then`,
+      `    shift`,
+      `    cd "$(command msn workspace "$@")" || return $?`,
+      `  else`,
+      `    command msn "$@"`,
+      `  fi`,
+      `}`,
+    ].join('\n');
+  }
+  if (shell === 'fish') {
+    return [
+      `# missioncraft fish shell-init — adds \`msn cd <id|name>\` quick-jump.`,
+      `# Install: append \`eval (msn shell-init fish)\` to your ~/.config/fish/config.fish`,
+      `function msn`,
+      `  if test "$argv[1]" = "cd"`,
+      `    cd (command msn workspace $argv[2..])`,
+      `  else`,
+      `    command msn $argv`,
+      `  end`,
+      `end`,
+    ].join('\n');
+  }
+  throw new ConfigValidationError(`'shell-init' supports bash / zsh / fish; got '${shell}'`);
 }
 
 function buildMissionMutation(parsed: ParsedCommand): MissionMutation {
@@ -365,6 +410,18 @@ async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): P
       // return value was discarded → silent exit-0; SDK API worked but CLI never emitted output.
       const path = await mc.workspace(parsed.positionals[0], parsed.positionals[1]);
       console.log(path);
+      return;
+    }
+    case 'cd': {
+      // v1.0.3 idea-269: when the shell-function wrapper is INSTALLED (`eval "$(msn shell-init bash)"`),
+      // this code-path is never reached — the wrapper intercepts `msn cd` and runs `cd $(msn workspace ...)`.
+      // When wrapper is NOT installed, the CLI binary can't change the parent shell's cwd; we emit the
+      // path to stdout (operator can `cd "$(msn cd <id>)"`) + a stderr hint to install the wrapper.
+      const path = await mc.workspace(parsed.positionals[0], parsed.positionals[1]);
+      console.log(path);
+      process.stderr.write(
+        `hint: 'msn cd' inside the binary can't change your shell's cwd; install the shell-function wrapper via \`eval "$(msn shell-init bash)"\` (or zsh/fish) for direct cd.\n`,
+      );
       return;
     }
     case 'join': {

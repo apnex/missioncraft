@@ -19,6 +19,8 @@ export const RESERVED_VERBS = [
   'join',         // v4.0 NEW per HIGH-R2.2
   'leave',        // v4.0 NEW per HIGH-R2.2
   'help',         // v1.0.3 bug-64 item 8: primary help-verb; `--help` alias retained
+  'cd',           // v1.0.3 idea-269: operator quick-jump via bash-fn wrapper (msn shell-init)
+  'shell-init',   // v1.0.3 idea-269: emits shell-function blob for bash/zsh/fish
   '--help',
   '--version',
 ] as const;
@@ -269,6 +271,19 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
       delete: { required: 1, optional: 0, flags: [] },
     },
     description: 'Scope-namespace verb (v2.0 NEW per Refinement C)',
+  },
+  // ─── Operator quick-jump (v1.0.3 idea-269) ───
+  cd: {
+    required: 1,                 // <id|name>; semantic = `cd $(msn workspace <id>)` via bash-fn wrapper
+    optional: 1,                 // <repo-name> for multi-repo missions
+    flags: [],
+    description: 'Operator quick-jump (requires `eval "$(msn shell-init bash)"` wrapper)',
+  },
+  'shell-init': {
+    required: 1,                 // <shell> — one of bash / zsh / fish
+    optional: 0,
+    flags: [],
+    description: 'Emit shell-function blob; `eval "$(msn shell-init bash)"` in your shell rc enables `msn cd`',
   },
   // ─── Config namespace ───
   config: {

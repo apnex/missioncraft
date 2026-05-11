@@ -120,11 +120,23 @@ describe('v1.0.3 slice (iii) — name-alias resolution audit per bug-64 item 5',
     );
   });
 
-  it('non-existent name throws MissionStateError with both paths in diagnostic', async () => {
+  it('non-existent name throws MissionStateError (v1.0.4 bug-66 item 8: concise; full diag via MSN_DEBUG)', async () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    // Default: concise error
     await expect(mc.get('mission', 'no-such-name')).rejects.toMatchObject({
-      message: expect.stringMatching(/mission 'no-such-name' not found.*name-symlink at/),
+      message: expect.stringMatching(/^mission 'no-such-name' not found$/),
     });
+    // MSN_DEBUG=1: full filesystem-path diagnostic
+    const origDebug = process.env.MSN_DEBUG;
+    process.env.MSN_DEBUG = '1';
+    try {
+      await expect(mc.get('mission', 'no-such-name')).rejects.toMatchObject({
+        message: expect.stringMatching(/mission 'no-such-name' not found.*name-symlink at/),
+      });
+    } finally {
+      if (origDebug === undefined) delete process.env.MSN_DEBUG;
+      else process.env.MSN_DEBUG = origDebug;
+    }
   });
 
   it('scope name-resolution: mc.get("scope", <name>) (sibling for completeness)', async () => {

@@ -1820,8 +1820,12 @@ export class Missioncraft {
         return basename(realpathSync(symlinkPath), '.yaml');
       } catch { /* fall through to throw */ }
     }
+    // v1.0.4 bug-66 item 8: concise error; no filesystem-path leaks (debug-mode follow-on for full
+    // diagnostic — `MSN_DEBUG=1` env-var route deferred until/unless substantive scope).
     throw new MissionStateError(
-      `mission '${idOrName}' not found (no config at '${directPath}' or name-symlink at '${symlinkPath}')`,
+      process.env.MSN_DEBUG
+        ? `mission '${idOrName}' not found (no config at '${directPath}' or name-symlink at '${symlinkPath}')`
+        : `mission '${idOrName}' not found`,
     );
   }
 
@@ -1835,8 +1839,11 @@ export class Missioncraft {
         return basename(realpathSync(symlinkPath), '.yaml');
       } catch { /* fall through to throw */ }
     }
+    // v1.0.4 bug-66 item 8: concise error; no filesystem-path leaks (MSN_DEBUG=1 for full diag).
     throw new MissionStateError(
-      `scope '${idOrName}' not found (no config at '${directPath}' or name-symlink at '${symlinkPath}')`,
+      process.env.MSN_DEBUG
+        ? `scope '${idOrName}' not found (no config at '${directPath}' or name-symlink at '${symlinkPath}')`
+        : `scope '${idOrName}' not found`,
     );
   }
 

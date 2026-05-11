@@ -79,8 +79,8 @@ describe('CLI bin-shim symlink-bootstrap regression', () => {
     expect(result.stdout).toMatch(/Usage: msn <verb>/);
   });
 
-  // bug-64 item 2 (v1.0.3): `msn list` empty preserves header + emits `(no entries)`
-  it('bug-64 item 2 — `msn list` empty preserves header row + (no entries) indicator', () => {
+  // bug-66 item 2 (v1.0.4 slice iii): `msn list` empty preserves header only (no `(no entries)` indicator)
+  it('bug-66 item 2 — `msn list` empty preserves header row (no empty-state indicator)', () => {
     const wsRoot = mkdtempSync(join(tmpdir(), 'msn-item2-empty-'));
     try {
       const result = spawnSync(
@@ -92,8 +92,8 @@ describe('CLI bin-shim symlink-bootstrap regression', () => {
       expect(result.stderr).toBe('');
       // Header row preserved (column names upper-cased)
       expect(result.stdout).toMatch(/ID\s+NAME\s+LIFECYCLE\s+REPOS-COUNT/);
-      // Empty-state indicator line
-      expect(result.stdout).toMatch(/\(no entries\)/);
+      // v1.0.4 bug-66 item 2: NO `(no entries)` indicator
+      expect(result.stdout).not.toMatch(/\(no entries\)/);
     } finally {
       rmSync(wsRoot, { recursive: true, force: true });
     }

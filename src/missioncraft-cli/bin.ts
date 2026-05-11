@@ -7,6 +7,7 @@
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
+import { colors } from './colors.js';
 import {
   Missioncraft,
   ConfigValidationError,
@@ -86,7 +87,8 @@ async function main(argv: readonly string[]): Promise<number> {
     parsed = parse(argv);
   } catch (err) {
     if (err instanceof ConfigValidationError) {
-      console.error(`error: ${err.message}`);
+      // v1.0.4 bug-66 (slice iii): error-line in red (colors.error honors NO_COLOR/FORCE_COLOR/TTY)
+      console.error(colors.error(`error: ${err.message}`));
       return 64;                                                                    // EX_USAGE
     }
     throw err;
@@ -118,7 +120,7 @@ async function main(argv: readonly string[]): Promise<number> {
     await dispatch(mc, parsed, format);
   } catch (err) {
     if (err instanceof MissioncraftError) {
-      console.error(`error: ${err.name}: ${err.message}`);
+      console.error(colors.error(`error: ${err.name}: ${err.message}`));
       return err instanceof MissionStateError ? 65 : 1;                            // EX_DATAERR for state-violations
     }
     throw err;
@@ -376,7 +378,8 @@ async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): P
       const nameSuffix = handle.name ? ` ('${handle.name}')` : '';
       const pid = readDaemonPid(mc.workspaceRoot, handle.id);
       const pidSuffix = pid !== undefined ? `; daemon-pid ${pid}` : '';
-      console.log(`started mission ${handle.id}${nameSuffix}${pidSuffix}`);
+      // v1.0.4 bug-66 (slice iii): success-line in green
+      console.log(colors.success(`started mission ${handle.id}${nameSuffix}${pidSuffix}`));
       return;
     }
     case 'apply':
@@ -394,7 +397,7 @@ async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): P
       const prSuffix = prs.length > 0
         ? `; PRs opened: ${prs.map((p) => p.prUrl).join(', ')}`
         : '';
-      console.log(`completed mission ${result.id}${nameSuffix}${prSuffix}`);
+      console.log(colors.success(`completed mission ${result.id}${nameSuffix}${prSuffix}`));
       return;
     }
     case 'abandon': {
@@ -405,7 +408,7 @@ async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): P
       // bug-64 item 7 (v1.0.3 slice iv): emit success-confirmation line on stdout
       const nameSuffix = result.name ? ` ('${result.name}')` : '';
       const wsSuffix = parsed.flags.has('--retain') ? '; workspace preserved (--retain)' : '; workspace removed';
-      console.log(`abandoned mission ${result.id}${nameSuffix}${wsSuffix}; daemon stopped`);
+      console.log(colors.success(`abandoned mission ${result.id}${nameSuffix}${wsSuffix}; daemon stopped`));
       return;
     }
     case 'tick':

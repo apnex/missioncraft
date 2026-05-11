@@ -2,6 +2,7 @@
 // Used by command-handlers to format SDK return values for stdout.
 
 import { stringify as yamlStringify } from 'yaml';
+import { colors } from '../colors.js';
 
 export type OutputFormat = 'text' | 'json' | 'yaml';
 
@@ -49,24 +50,20 @@ export function formatTable(
   }
   // text format — simple column-aligned table
   // bug-64 item 2: empty-state preserves header row (operator can see schema; mirrors `docker ps`)
-  // bug-64 item 4: CYAN header (ANSI \x1b[36m) when stdout is a TTY; drop horizontal separator row;
-  // plain output when piped/redirected (operator-pipe + LLM-consumer friendliness).
+  // bug-64 item 4: CYAN header (ANSI) when stdout is a TTY; drop horizontal separator row.
+  // v1.0.4 bug-66 (slice iii): migrated to colors.header (NO_COLOR/FORCE_COLOR env-vars honored).
+  // v1.0.4 bug-66 item 2 (slice iv): drop `(no entries)` indicator; headers-only with empty body.
   const headerCells = columns.map((c) => c.toUpperCase());
   const dataCells = rows.map((r) => columns.map((c) => stringifyCell(r[c])));
   const widths = columns.map((_, ci) =>
     Math.max(headerCells[ci].length, ...dataCells.map((row) => row[ci].length)),
   );
   const pad = (cell: string, w: number): string => cell + ' '.repeat(Math.max(0, w - cell.length));
-  const useTtyDecoration = process.stdout.isTTY === true;
   const headerLine = headerCells.map((h, ci) => pad(h, widths[ci])).join('  ');
   const lines: string[] = [];
-  lines.push(useTtyDecoration ? `\x1b[36m${headerLine}\x1b[0m` : headerLine);
-  if (dataCells.length === 0) {
-    lines.push('(no entries)');
-  } else {
-    for (const row of dataCells) {
-      lines.push(row.map((c, ci) => pad(c, widths[ci])).join('  '));
-    }
+  lines.push(colors.header(headerLine));
+  for (const row of dataCells) {
+    lines.push(row.map((c, ci) => pad(c, widths[ci])).join('  '));
   }
   return lines.join('\n');
 }

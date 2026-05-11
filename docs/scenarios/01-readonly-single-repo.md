@@ -2,7 +2,7 @@
 
 **Demonstrates:** `create` → `start` (HTTPS clone) → `workspace` path-switching → `abandon`, against a real public repo. **Read-only boundary**: no `complete` (no remote-side writes); `coordinationRemote` unset.
 
-**Status:** RE-RATIFIED — outputs captured against `@apnex/missioncraft@1.0.4` 2026-05-11T03:35Z UTC (Node v24.12.0). Original ratification was against v1.0.2; re-ratification reflects v1.0.3 + v1.0.4 CLI-UX deltas (success-line stdout + per-verb help + colors palette + terminal-state-guard + `msn cd` + `msn tree`).
+**Status:** RE-RATIFIED — outputs captured against `@apnex/missioncraft@1.0.5` 2026-05-11T05:00Z UTC (Node v24.12.0). Ratification history: v1.0.2 (original) → v1.0.4 (CLI-UX cluster) → v1.0.5 (current; scope-namespace completion + operator-state layout consolidation + error-message cleanup + progress callback).
 
 ---
 
@@ -35,8 +35,8 @@ npm install -g @apnex/missioncraft
 Verify:
 ```bash
 which msn       # resolves to global bin
-msn --version   # prints 1.0.4 (current latest)
-msn version     # NEW in v1.0.4: 'version' verb works as alias for --version
+msn --version   # prints 1.0.5 (current latest)
+msn version     # 'version' verb works as alias for --version (v1.0.4)
 ```
 
 **Optional: enable `msn cd`** (NEW in v1.0.3; shell-function wrapper for direct cd into workspace):
@@ -78,7 +78,7 @@ msn --version
 
 Expected:
 ```
-missioncraft 1.0.4
+missioncraft 1.0.5
 ```
 
 ```bash
@@ -117,7 +117,7 @@ Expected: returns `<mission-id> <name>` line; lifecycle initial = `configured` (
 
 Output:
 ```
-msn-527bec0e	test-readonly
+msn-18b4348f	test-readonly
 ```
 
 ### Step 3 — Show mission (pre-start)
@@ -136,7 +136,7 @@ Expected: JSON with:
 Output:
 ```json
 {
-  "id": "msn-527bec0e",
+  "id": "msn-18b4348f",
   "name": "test-readonly",
   "tags": {},
   "repos": [
@@ -147,8 +147,8 @@ Output:
     }
   ],
   "lifecycleState": "configured",
-  "createdAt": "2026-05-11T03:35:50.882Z",
-  "updatedAt": "2026-05-11T03:35:50.882Z",
+  "createdAt": "2026-05-11T05:02:57.667Z",
+  "updatedAt": "2026-05-11T05:02:57.667Z",
   "identityProviderName": "local-git-config",
   "approvalProviderName": "trust-all",
   "storageProviderName": "local-filesystem",
@@ -158,7 +158,7 @@ Output:
 
 **Name-alias resolution** (v1.0.3 bug-64 item 5):
 ```bash
-msn show test-readonly                        # equivalent to: msn show msn-527bec0e
+msn show test-readonly                        # equivalent to: msn show msn-18b4348f
 ```
 
 ### Step 4 — List missions
@@ -172,7 +172,7 @@ Expected: tabular output with the mission row (`ID / NAME / LIFECYCLE / REPOS-CO
 Output (TTY-stripped; CYAN headers in actual terminal):
 ```
 ID            NAME           LIFECYCLE   REPOS-COUNT
-msn-527bec0e  test-readonly  configured  1
+msn-18b4348f  test-readonly  configured  1
 ```
 
 ### Step 5 — Start mission (substantive)
@@ -194,7 +194,7 @@ Expected (v1.0.3+ via bug-64 item 6 + v1.0.4 colors.success migration): stdout s
 
 Output (colors stripped; GREEN in actual terminal):
 ```
-started mission msn-527bec0e ('test-readonly'); daemon-pid 406100
+started mission msn-18b4348f ('test-readonly'); daemon-pid 561796
 ```
 
 **Pre-v1.0.3 behavior**: empty stdout (silent success). Operator had no visibility into substantive operation. Shipped fix at v1.0.3 bug-64 item 6 (success-line stdout); migrated to `colors.success` (GREEN) at v1.0.4 bug-66 color-palette refactor.
@@ -235,10 +235,10 @@ Expected: daemon-pid populated in lockfile; `ps -p $DAEMON_PID` shows live proce
 
 Output:
 ```
-msn-527bec0e.lock
-daemon-pid=406100
+msn-18b4348f.lock
+daemon-pid=561796
     PID TTY          TIME CMD
- 406100 ?        00:00:00 MainThread
+ 561796 ?        00:00:00 MainThread
 ```
 
 **Note**: Pre-v1.0.2 (v1.0.1 + earlier), the lockfile was unlinked by `start()` Step 8 release-pseudolock — daemon-IPC channel was lost and operator-CLI commands couldn't read the daemon-pid. Fixed in v1.0.2 slice (i)+(i.5) via `daemonSpawned` flag + vestigial-acquire-removal in abandon/complete.
@@ -283,19 +283,19 @@ Expected: `cd` succeeds; `pwd` matches workspace path; `ls` shows clone contents
 Outputs:
 ```
 [form-1 plain-id]
-/home/apnex/.missioncraft/missions/msn-527bec0e/missioncraft
+/home/apnex/.missioncraft/missions/msn-18b4348f/missioncraft
 
 [form-2 explicit-repo]
-/home/apnex/.missioncraft/missions/msn-527bec0e/missioncraft
+/home/apnex/.missioncraft/missions/msn-18b4348f/missioncraft
 
 [form-3 coord-form]
-/home/apnex/.missioncraft/missions/msn-527bec0e/missioncraft
+/home/apnex/.missioncraft/missions/msn-18b4348f/missioncraft
 
 [form-4 coord+path]
-/home/apnex/.missioncraft/missions/msn-527bec0e/missioncraft/src
+/home/apnex/.missioncraft/missions/msn-18b4348f/missioncraft/src
 
 [shell-eval]
-/home/apnex/.missioncraft/missions/msn-527bec0e/missioncraft
+/home/apnex/.missioncraft/missions/msn-18b4348f/missioncraft
 docs
 LICENSE
 package.json
@@ -344,7 +344,7 @@ Expected (v1.0.3+ via bug-64 item 7 + v1.0.4 colors.success migration): stdout s
 
 Output (colors stripped; GREEN in actual terminal):
 ```
-abandoned mission msn-527bec0e ('test-readonly'); workspace removed; daemon stopped
+abandoned mission msn-18b4348f ('test-readonly'); workspace removed; daemon stopped
 ```
 
 **Pre-v1.0.3 behavior**: empty stdout (silent success). Shipped fix at v1.0.3 bug-64 item 7; migrated to `colors.success` (GREEN) at v1.0.4.
@@ -365,7 +365,7 @@ Expected: JSON shows:
 Output:
 ```json
 {
-  "id": "msn-527bec0e",
+  "id": "msn-18b4348f",
   "name": "test-readonly",
   "tags": {},
   "repos": [
@@ -399,21 +399,23 @@ ls ~/.missioncraft/missions/$MISSION_ID/ 2>&1 || echo "✓ workspace removed"
 # (lockfile may already be unlinked by abandon Step 4; fall back to $DAEMON_PID if set)
 [ -f ~/.missioncraft/locks/missions/$MISSION_ID.lock ] && DAEMON_PID=$(jq -r '.pid // empty' ~/.missioncraft/locks/missions/$MISSION_ID.lock)
 [ -n "$DAEMON_PID" ] && ps -p $DAEMON_PID 2>&1 || echo "✓ daemon process exited"
-ls ~/.missioncraft/config/$MISSION_ID.yaml 2>&1
+ls ~/.missioncraft/config/missions/$MISSION_ID.yaml 2>&1
 ```
 
 Expected:
 - Workspace directory `missions/<mission-id>/` removed (default abandon behavior; no `--retain`)
 - Daemon process exited (SIGTERM at abandon Step 2)
-- Config file `config/<mission-id>.yaml` PRESERVED (no `--purge-config`)
+- Config file `config/missions/<mission-id>.yaml` PRESERVED (no `--purge-config`)
 
 Output:
 ```
-ls: cannot access '/home/apnex/.missioncraft/missions/msn-527bec0e/': No such file or directory
+ls: cannot access '/home/apnex/.missioncraft/missions/msn-18b4348f/': No such file or directory
 ✓ workspace removed
 ✓ daemon process exited
-/home/apnex/.missioncraft/config/msn-527bec0e.yaml
+/home/apnex/.missioncraft/config/missions/msn-18b4348f.yaml
 ```
+
+**Note**: Pre-v1.0.5 layout was `~/.missioncraft/config/<id>.yaml` (flat) + `~/.missioncraft/scopes/<id>.yaml` (parallel). v1.0.5 idea-271 consolidated under `config/{missions,scopes}/` for operator-discoverability + future entity-type extensibility. Director-direct mid-cycle directive dropped auto-migration; operators upgrading from pre-v1.0.5 must `mv` manually (see GitHub Release v1.0.5 notes).
 
 ### Step 13 — Resolve `msn workspace` post-abandon (error path)
 
@@ -426,13 +428,13 @@ Expected (v1.0.3+ via idea-268 terminal-state-guard + v1.0.4 colors.error migrat
 
 Output (colors stripped; RED in actual terminal):
 ```
-error: MissionStateError: Missioncraft.workspace: workspace destroyed; mission 'msn-527bec0e' in terminal state 'abandoned'
+error: workspace destroyed; mission 'msn-18b4348f' in terminal state 'abandoned'
 (exit=65)
 ```
 
 **Pre-v1.0.3 behavior**: returned the (stale) path from mission-config `repos[]` with exit 0 — operator landed on `cd: <path>: No such file or directory` with no missioncraft diagnostic. Shipped fix at v1.0.3 idea-268 (lifecycle-check + fs-existsSync safety-net); migrated to `colors.error` (RED) at v1.0.4.
 
-**Known v1.0.4 residual UX gap**: error message still has SDK class-name + method-path leakage (`MissionStateError: Missioncraft.workspace:` prefix). Operator-friendly form would be just `error: workspace destroyed; mission 'msn-527bec0e' in terminal state 'abandoned'`. **Tracked as `bug-67`** (CLI-UX class-name leakage + silent-error-paths + arg-detection class; v1.0.5 patch candidate).
+**v1.0.4 residual UX gap CLOSED** at v1.0.5 bug-67 item 1: SDK class-name (`MissionStateError:`) + method-path (`Missioncraft.workspace:`) prefixes stripped at CLI dispatch catch-block; operator now sees clean error message.
 
 ---
 
@@ -483,12 +485,13 @@ Removes all mission configs + remaining workspaces + lockfiles.
 
 ## §8 Execution log
 
-**Status:** RE-RATIFIED against v1.0.4
+**Status:** RE-RATIFIED against v1.0.5
 **Original ratification:** 2026-05-10T23:25Z UTC against `@apnex/missioncraft@1.0.2` (mission-id `msn-99c369ee`)
-**Re-ratification:** 2026-05-11T03:35Z UTC against `@apnex/missioncraft@1.0.4` (Node v24.12.0; nvm-managed; user-prefix global install)
+**v1.0.4 re-ratification:** 2026-05-11T03:35Z UTC (mission-id `msn-527bec0e`)
+**v1.0.5 re-ratification:** 2026-05-11T05:00Z UTC against `@apnex/missioncraft@1.0.5` (Node v24.12.0; nvm-managed; user-prefix global install)
 **Executor:** architect-side (lily; agent-40903c59) via fresh `npm install -g @apnex/missioncraft@latest`
-**Mission-ID used in re-ratification capture:** `msn-527bec0e` (ephemeral; abandoned at end)
-**Outcome:** 13 of 13 steps PASS — full operator-canonical workflow verified end-to-end against v1.0.4
+**Mission-ID used in v1.0.5 capture:** `msn-18b4348f` (ephemeral; abandoned at end)
+**Outcome:** 13 of 13 steps PASS — full operator-canonical workflow verified end-to-end against v1.0.5
 
 **Cumulative pre-v1.0.4 fixes** (discovered + shipped via this scenario test cycle):
 - v1.0.0: `msn` bin-shim silent-failure via shebang+symlink (`isMainModule` guard) → v1.0.1 (`87bf370`)
@@ -508,15 +511,18 @@ Removes all mission configs + remaining workspaces + lockfiles.
 - v1.0.3: no per-verb help → v1.0.4 idea-274 (`--help` / `-h` / `help <verb>` multi-syntax)
 - v1.0.3: no tree visualization → v1.0.4 idea-272 (`msn tree`)
 - v1.0.3: no color-palette → v1.0.4 bug-66 colors.ts + emit-site refactor (RED errors / CYAN headers / GREEN success / TTY-auto-detect + NO_COLOR/FORCE_COLOR env-vars)
+- v1.0.4: SDK class-name + method-path leaking in errors (`MissionStateError: Missioncraft.X:` prefix) → v1.0.5 bug-67 item 1 (regex-strip at CLI dispatch catch-block)
+- v1.0.4: no `hint: run 'msn list'` on name-not-found errors → v1.0.5 bug-67 item 2
+- v1.0.4: missing-arg path always reported FIRST positional, not actually-missing one → v1.0.5 bug-67 item 3
+- v1.0.4: silent no-op responses for `--status invalid` / `config get bad-key` / `--repo not-a-url` → v1.0.5 bug-67 item 4 (input validation pass)
+- v1.0.4: `msn scope delete/update` SDK methods stubbed (W4-deferred) → v1.0.5 bug-65 (applyScopeMutation 6 kinds + deleteScope with cascade-protection)
+- v1.0.4: operator-state layout asymmetric (`config/` flat + `scopes/` parallel) → v1.0.5 idea-271 (consolidated under `config/{missions,scopes}/`; **Director-direct: NO migration; manual `mv` for upgraders**)
+- v1.0.4: no progress visibility during long-running ops → v1.0.5 idea-273 (SDK `onProgress` callback + CLI default stderr sink + `--quiet` flag)
 
-**Deprecation timeline**:
-- v1.0.0 + v1.0.1 + v1.0.2 + v1.0.3 — npm-deprecated (cumulative; superseded by v1.0.4)
-- v1.0.4 — operator-canonical at time of re-ratification
+**Deprecation timeline** (post-v1.0.5):
+- v1.0.0 + v1.0.1 + v1.0.2 + v1.0.3 + v1.0.4 — npm-deprecated (cumulative; superseded by v1.0.5)
+- v1.0.5 — operator-canonical at time of re-ratification; **operator-UX feature-complete**
 
-**Known v1.0.4 residual UX gaps** (tracked for v1.0.5):
-- Step 13 error message still has SDK class-name prefix (`MissionStateError: Missioncraft.workspace:`) — tracked as **bug-67** (CLI-UX class-name leakage + silent-error-paths + arg-detection class; 5 items)
-- `msn scope delete` unimplemented at v1.0.4 — tracked as **bug-65** (scope-verb impl audit)
-- Operator-state layout asymmetric (`config/` vs `scopes/` parallel dirs) — tracked as **idea-271** (consolidation with auto-migration)
-- No progress/log output during long-running ops — tracked as **idea-273**
+**v1.0.x roadmap residual**: only **idea-270** (missioncraft + repo-event-bridge substrate-composition) remains pending (needs Director-Survey + mini-mission); operator-UX is feature-complete at v1.0.5.
 
-**Cumulative fix count**: 17 CLI/SDK improvements across v1.0.0 → v1.0.4 ship-trail; surfaced via this scenario test cycle as canonical operator-UX regression harness.
+**Cumulative fix count**: 23 CLI/SDK improvements across v1.0.0 → v1.0.5 ship-trail; surfaced via this scenario test cycle as canonical operator-UX regression harness.

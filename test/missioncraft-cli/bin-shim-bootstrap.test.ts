@@ -57,6 +57,58 @@ describe('CLI bin-shim symlink-bootstrap regression', () => {
     expect(result.stdout).toMatch(/^missioncraft 1\.0\.\d+/);
   });
 
+  // bug-64 item 1 (v1.0.3): bare `msn` falls through to help (mirrors git/npm/docker)
+  it('bug-64 item 1 — bare `msn` (no args) prints help + exits 0', () => {
+    const result = spawnSync(process.execPath, [symlinkPath], {
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toMatch(/Usage: msn <verb>/);
+  });
+
+  // bug-64 item 8 (v1.0.3): `msn help` verb dispatches to identical output as `--help` flag
+  it('bug-64 item 8 — `msn help` verb produces help output (== --help)', () => {
+    const result = spawnSync(process.execPath, [symlinkPath, 'help'], {
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toMatch(/Usage: msn <verb>/);
+  });
+
+  // bug-64 item 2 (v1.0.3): `msn list` empty preserves header + emits `(no entries)`
+  it('bug-64 item 2 — `msn list` empty preserves header row + (no entries) indicator', () => {
+    const wsRoot = mkdtempSync(join(tmpdir(), 'msn-item2-empty-'));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [symlinkPath, 'list', '--workspace-root', wsRoot],
+        { encoding: 'utf8', timeout: 10000 },
+      );
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      // Header row preserved (column names upper-cased)
+      expect(result.stdout).toMatch(/ID\s+NAME\s+LIFECYCLE\s+REPOS-COUNT/);
+      // Empty-state indicator line
+      expect(result.stdout).toMatch(/\(no entries\)/);
+    } finally {
+      rmSync(wsRoot, { recursive: true, force: true });
+    }
+  });
+
+  // bug-64 item 3 (v1.0.3): `msn show` no-arg → enriched LLM-discoverable error
+  it('bug-64 item 3 — `msn show` no-arg emits enriched error with discovery hint', () => {
+    const result = spawnSync(process.execPath, [symlinkPath, 'show'], {
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+    expect(result.status).toBe(64);  // EX_USAGE per bin.ts main()
+    expect(result.stderr).toMatch(/'show' requires <id\|name> arg; run 'msn list'/);
+  });
+
   // SD1 regression (v1.0.2 slice iii): `msn workspace <id>` must print the resolved workspace
   // path to stdout. Pre-fix the CLI dispatcher discarded the SDK return value → silent exit-0.
   // Verified via real CLI invocation against a tmp workspace-root with a pre-staged mission.

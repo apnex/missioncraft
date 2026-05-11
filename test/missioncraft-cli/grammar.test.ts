@@ -30,8 +30,29 @@ describe('CLI grammar parser — Rules 1-7 — W3 smoke-tests', () => {
   });
 
   describe('Rule 6: arg-count validation', () => {
-    it('missing-verb: empty argv', () => {
-      expect(() => parse([])).toThrow(/Rule 6 missing-verb/);
+    it('bare argv falls through to help-verb (v1.0.3 bug-64 item 1: mirrors git/npm/docker)', () => {
+      const result = parse([]);
+      expect(result.verb).toBe('--help');
+      expect(result.positionals).toEqual([]);
+    });
+
+    it('`help` verb dispatches to --help handler (v1.0.3 bug-64 item 8)', () => {
+      const result = parse(['help']);
+      expect(result.verb).toBe('--help');
+      expect(result.positionals).toEqual([]);
+    });
+
+    it('show without args: enriched LLM-discoverable error (v1.0.3 bug-64 item 3)', () => {
+      expect(() => parse(['show'])).toThrow(
+        /'show' requires <id\|name> arg; run 'msn list' to see available missions/,
+      );
+    });
+
+    it('start without args: enriched LLM-discoverable error (v1.0.3 bug-64 item 3)', () => {
+      // start is disjunctive (positional OR -f <path>); without either, hits standard path
+      expect(() => parse(['start'])).toThrow(
+        /'start' requires <id\|name> arg; run 'msn list' to see available missions/,
+      );
     });
 
     it('missing-arg: complete requires <id> + <message>', () => {

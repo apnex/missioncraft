@@ -48,7 +48,7 @@ export function formatTable(
     return formatValue(rows, format);
   }
   // text format — simple column-aligned table
-  if (rows.length === 0) return '(no rows)';
+  // bug-64 item 2: empty-state preserves header row (operator can see schema; mirrors `docker ps`)
   const headerCells = columns.map((c) => c.toUpperCase());
   const dataCells = rows.map((r) => columns.map((c) => stringifyCell(r[c])));
   const widths = columns.map((_, ci) =>
@@ -58,8 +58,12 @@ export function formatTable(
   const lines: string[] = [];
   lines.push(headerCells.map((h, ci) => pad(h, widths[ci])).join('  '));
   lines.push(widths.map((w) => '─'.repeat(w)).join('  '));
-  for (const row of dataCells) {
-    lines.push(row.map((c, ci) => pad(c, widths[ci])).join('  '));
+  if (dataCells.length === 0) {
+    lines.push('(no entries)');
+  } else {
+    for (const row of dataCells) {
+      lines.push(row.map((c, ci) => pad(c, widths[ci])).join('  '));
+    }
   }
   return lines.join('\n');
 }

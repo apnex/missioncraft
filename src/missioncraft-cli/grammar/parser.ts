@@ -177,6 +177,16 @@ function validateArgCount(spec: VerbArgSpec, positionals: readonly string[], fla
     // No disjunctive flag → standard positional count
   }
   if (positionals.length < spec.required) {
+    // bug-64 item 3: enrich missing-arg error for `<id|name>` verbs with discovery hint
+    // (operator + LLM-driven exploration UX). Verbs taking a leading `<id|name>` positional
+    // benefit from a "run `msn list`" pointer when the operator invokes without args.
+    const verb = contextPath[0];
+    const ID_NAME_VERBS = new Set(['show', 'start', 'abandon', 'complete', 'workspace', 'update', 'tick']);
+    if (spec.required === 1 && ID_NAME_VERBS.has(verb)) {
+      throw new ConfigValidationError(
+        `'${contextPath.join(' ')}' requires <id|name> arg; run 'msn list' to see available missions`,
+      );
+    }
     throw new ConfigValidationError(
       `Rule 6 missing-arg: '${contextPath.join(' ')}' requires ${spec.required} positional(s); got ${positionals.length}`,
     );
@@ -203,11 +213,16 @@ function validateArgCount(spec: VerbArgSpec, positionals: readonly string[], fla
  * @param argv - command-line arguments AFTER the binary-name (e.g., `process.argv.slice(2)`)
  */
 export function parse(argv: readonly string[]): ParsedCommand {
-  // ─── Rule 6: missing-verb ───
+  // bug-64 item 1: bare `msn` falls through to help (mirrors `git`/`npm`/`docker` convention)
+  // bug-64 item 8: `help` is the primary verb; `--help` retained as alias
   if (argv.length === 0) {
-    throw new ConfigValidationError(
-      "Rule 6 missing-verb: no command specified; use 'msn --help' for verb list",
-    );
+    return {
+      verb: '--help',
+      positionals: [],
+      flags: new Map(),
+      globalFlags: new Map(),
+      subNamespacePath: ['--help'],
+    };
   }
   const verb = argv[0];
   // ─── Rule 1: reserved-verbs ───
@@ -216,10 +231,10 @@ export function parse(argv: readonly string[]): ParsedCommand {
       `Rule 1 unknown verb '${verb}'; use 'msn --help' for verb list. Reserved-verbs at v4.0: ${RESERVED_VERBS.join(' / ')}`,
     );
   }
-  // Special-case help/version short-circuits
-  if (verb === '--help' || verb === '--version') {
+  // Special-case help/version short-circuits; `help` verb dispatches to identical handler as `--help`
+  if (verb === '--help' || verb === '--version' || verb === 'help') {
     return {
-      verb,
+      verb: verb === 'help' ? '--help' : verb,
       positionals: [],
       flags: new Map(),
       globalFlags: new Map(),

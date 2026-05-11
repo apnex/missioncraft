@@ -18,6 +18,7 @@ export const RESERVED_VERBS = [
   'config',
   'join',         // v4.0 NEW per HIGH-R2.2
   'leave',        // v4.0 NEW per HIGH-R2.2
+  'help',         // v1.0.3 bug-64 item 8: primary help-verb; `--help` alias retained
   '--help',
   '--version',
 ] as const;

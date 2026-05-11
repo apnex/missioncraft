@@ -126,15 +126,55 @@ async function main(argv: readonly string[]): Promise<number> {
         .replace(/^Missioncraft\.\w+(\(.*?\))?:\s+/, '')
         .replace(/^\w+Error:\s+/, '');
       const nameNotFoundMatch = /^mission '\S+' not found$/.test(cleaned) || /^scope '\S+' not found$/.test(cleaned);
-      const hint = nameNotFoundMatch
-        ? `\n\nhint: run '${cleaned.startsWith('scope') ? 'msn scope list' : 'msn list'}' to see available ${cleaned.startsWith('scope') ? 'scopes' : 'missions'}`
-        : '';
+      // v1.0.6 bug-69: FSM-rejection hints — match `requires lifecycle '...' (current: '...')`
+      // OR `requires lifecycle '...' or '...' (current: '...')` and emit operator-actionable hint
+      // per-verb. parsed.verb names the verb the operator typed; positionals[0] is the id/name.
+      const fsmMatch = /requires lifecycle '[^']+'(?: or '[^']+')? \(current: '([^']+)'\)/.exec(cleaned);
+      let hint = '';
+      if (nameNotFoundMatch) {
+        hint = `\n\nhint: run '${cleaned.startsWith('scope') ? 'msn scope list' : 'msn list'}' to see available ${cleaned.startsWith('scope') ? 'scopes' : 'missions'}`;
+      } else if (fsmMatch) {
+        hint = renderFsmHint(parsed.verb, fsmMatch[1], parsed.positionals[0]);
+      }
       console.error(colors.error(`error: ${cleaned}${hint}`));
       return err instanceof MissionStateError ? 65 : 1;                            // EX_DATAERR for state-violations
     }
     throw err;
   }
   return 0;
+}
+
+/**
+ * v1.0.6 bug-69 — FSM-rejection hint matrix. Returns a `\n\nhint: ...` suffix per verb +
+ * rejection-current-state, or empty string when no hint applies.
+ *
+ * Per spec thread-537:
+ *   abandon on terminal       → "manual rm ~/.missioncraft/config/missions/<id>.yaml..."
+ *   complete on terminal      → same
+ *   complete on 'configured'  → "run 'msn start <id>' first to begin the mission"
+ *   start on non-configured   → "run 'msn show <id>' to inspect current lifecycle state"
+ *   tick on terminal          → "run 'msn show <id>' to inspect current lifecycle state"
+ */
+function renderFsmHint(verb: string, currentState: string, idOrName: string | undefined): string {
+  const TERMINAL = new Set(['completed', 'abandoned']);
+  const idToken = idOrName ?? '<id>';
+  if ((verb === 'abandon' || verb === 'complete') && TERMINAL.has(currentState)) {
+    return (
+      `\n\nhint: to remove config for an already-${currentState} mission, manually delete ` +
+      `~/.missioncraft/config/missions/${idToken}.yaml (and ~/.missioncraft/config/missions/.names/<name>.yaml if named); ` +
+      `'msn delete <id>' verb is on the v1.0.x roadmap`
+    );
+  }
+  if (verb === 'complete' && currentState === 'configured') {
+    return `\n\nhint: run 'msn start ${idToken}' first to begin the mission`;
+  }
+  if (verb === 'start') {
+    return `\n\nhint: run 'msn show ${idToken}' to inspect current lifecycle state`;
+  }
+  if (verb === 'tick' && TERMINAL.has(currentState)) {
+    return `\n\nhint: run 'msn show ${idToken}' to inspect current lifecycle state`;
+  }
+  return '';
 }
 
 async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputFormat): Promise<void> {

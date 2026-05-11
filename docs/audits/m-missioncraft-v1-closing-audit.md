@@ -471,3 +471,70 @@ Architect-recommendation: `npm deprecate @apnex/missioncraft@1.0.2 "CLI-UX polis
 ### §11.11 Scenario 01 doc re-ratification (architect-side post-publish)
 
 Per architect thread-532 round 1: scenario 01 outputs change for Step 5 (start has stdout now), Step 10 (abandon has stdout now), Step 13 (workspace post-abandon errors with terminal-state-guard). Architect-side will re-ratify post-v1.0.3 publish; engineer-side scenario-doc placeholders remain in place from v1.0.2 slice (v).
+
+---
+
+## §12 v1.0.4 patch trail — CLI presentation cluster (bug-66 + idea-272 + idea-274)
+
+**Defects + features surfaced:** Director-side scenario 01 dogfood test of v1.0.3 (2026-05-11) surfaced CLI presentation-layer rough edges. Architect-bundled 3 Hub-tracked items into v1.0.4 single-patch:
+
+- **bug-66** (7 items; minor severity) — CLI grammar/error-message UX v2 + color-palette refactor
+- **idea-272** — `msn tree` verb (tree-style verb-hierarchy visualization)
+- **idea-274** — Per-verb help with multi-syntax (FOUNDATIONAL — bug-66 missing-arg path + idea-272 tree both consume it)
+
+**Hub coordinates:** thread-533 (v1.0.4 PATCH directive 2026-05-11; maxRounds=15).
+
+Director-disposed Option (A) — CLI presentation cluster. Substrate/SDK items (bug-65 scope-impl + idea-271 layout migration + idea-273 progress) DEFERRED to v1.0.5.
+
+### §12.1 idea-274 — per-verb help renderer (slice (i) FOUNDATIONAL — commit `8ca5dab`)
+
+VerbArgSpec interface extension: `shortDesc` / `longDesc?` / `examples?` / `seeAlso?` / `argLabels?` / `usageOverride?`. Content authored for ~38 entries (17 top-level + 8 update sub-actions + 5 scope sub-verbs with 6 scope-update sub-sub-actions + 2 config sub-verbs).
+
+Renderer: `src/missioncraft-cli/grammar/help-renderer.ts` — `resolveSpec(verbPath)` walks the arg-spec tree; `renderVerbHelp(verbPath)` formats output per architect-spec (usage / shortDesc / longDesc / Arguments / Flags / Sub-verbs / Examples / See also).
+
+Multi-syntax dispatch (parser.ts): `<verb-path> --help`, `<verb-path> -h`, `help <verb-path>`. `version` → `--version`. REJECTED per architect-direction: `<verb-path> ?` (shell-glob hazard); `<verb-path> help` suffix (ambiguous).
+
+### §12.2 bug-66 items 3+4+5+10 — error-message refactor (slice (ii) — commit `2c27fdd`)
+
+- **Item 3** — Drop "Rule N" jargon from all operator-visible errors (audited 13 throw sites)
+- **Item 4** — Multi-line sub-verb listing on missing sub-verb (`renderMissingSubVerbError`)
+- **Item 5** — Missing-arg → per-verb help renderer + friendly error prefix + hint footer for `<id|name>` verbs
+- **Item 10** — `msn abandon <id>` missing-message uses same renderer (auto-covered)
+
+### §12.3 bug-66 color-palette infrastructure (slices (iii)+(iv) — commit `e6b5f0d`)
+
+New module: `src/missioncraft-cli/colors.ts`. ANSI emit helpers honoring NO_COLOR (disable), FORCE_COLOR (enable), TTY-auto-detect. No `chalk` dep. Emit-sites migrated: output-formatter header (cyan), bin.ts error: lines (red), success-lines start/abandon/complete (green).
+
+Bundled bug-66 items:
+- **Item 1** — `msn version` aliases to `--version` (covered in slice (i))
+- **Item 2** — Drop `(no entries)` indicator from empty `msn list`; headers-only
+- **Item 8** — `<id|name>` not-found errors concise + no FS-path leaks; `MSN_DEBUG=1` re-enables full diag
+
+### §12.4 idea-272 — `msn tree` verb (slice (v) — commit `c2e4208`)
+
+New file: `src/missioncraft-cli/grammar/tree-renderer.ts`. ASCII-tree of all verbs + sub-verbs/sub-actions; walks same VerbArgSpec data-structure as help-renderer. `--depth N` flag limits recursion. Format: `<verb> <argLabels>  # <shortDesc>`.
+
+### §12.5 Test coverage delta
+
+307 → 316 tests (+9 net):
+- slice (i): +13 (per-verb-help.test.ts)
+- slice (ii): assertion updates only (12 sites; no count delta)
+- slices (iii)+(iv): +4 (colors.test.ts)
+- slice (v): +5 (tree.test.ts)
+- v1.0.3 name-resolution test updated for MSN_DEBUG dual-path
+
+### §12.6 v1.0.4 ship trail
+
+- slice (i) — `8ca5dab` idea-274 FOUNDATIONAL per-verb help + content for 38 entries
+- slice (ii) — `2c27fdd` bug-66 items 3+4+5+10 error-message refactor
+- slices (iii)+(iv) — `e6b5f0d` colors infra + items 1+2+8
+- slice (v) — `c2e4208` idea-272 `msn tree`
+- slice (vi) — this §12 doc + version bump + tag v1.0.4
+
+### §12.7 v1.0.3 deprecation recommendation
+
+Architect-recommended message: `npm deprecate @apnex/missioncraft@1.0.3 "CLI presentation polish + per-verb help + msn tree + colors palette shipped in v1.0.4+"`. Director-direct OTP-prompt path. Cumulative inventory: v1.0.0 broken, v1.0.1+v1.0.2+v1.0.3 superseded, v1.0.4 latest.
+
+### §12.8 DEFERRED to v1.0.5
+
+Per architect thread-533 directive: bug-65 (scope-impl audit); idea-271 (layout migration); idea-273 (progress/log during long-running ops).

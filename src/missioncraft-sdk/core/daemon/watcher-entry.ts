@@ -10,15 +10,13 @@
 //     fans out to cascade-terminated / cascade-config-update / applyReaderRefUpdate per W5c
 //     MEDIUM-R8.1.
 
-import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
 
 import { updateLockfileState } from '../state-machine/lockfile-state.js';
 import { Missioncraft } from '../missioncraft.js';
-import { parseMissionConfig } from '../yaml-transform.js';
 import { ReaderAutoCloseError } from '../../errors.js';
+import { detectDaemonMode, missionConfigPath } from './daemon-mode-detect.js';
 
 const DEBOUNCE_MS = 1000;        // 1s default; configurable via mission.stateDurability.wipCadenceMs in slice (ii)
 const HEARTBEAT_MS = 60_000;     // 60s lockfile-TTL extension cadence
@@ -85,30 +83,13 @@ async function main(): Promise<void> {
   // back-compat with v4.x missions through W4-new + W7-new (IsoEng removal). Both paths converge
   // on Loop B dispatch; v5.0 path uses new readerLoopBV5Tick (direct fetch+reset from source-
   // remote), v4.x path uses legacy readerLoopBTick (coord-mirror semantics).
-  let role: 'writer' | 'reader' = 'writer';
-  let isV5Reader = false;
-  let coordPollMs = COORD_POLL_DEFAULT_MS;
-  try {
-    const configPath = join(workspaceRoot, 'config', `${missionId}.yaml`);
-    if (existsSync(configPath)) {
-      const cfgContent = await readFile(configPath, 'utf8');
-      const cfg = parseMissionConfig(cfgContent, configPath, 'auto');
-      // v5.0 PRIMARY: config.mission.readOnly === true (per Design v5.0 §2 row 4)
-      if (cfg.mission.readOnly === true) {
-        role = 'reader';
-        isV5Reader = true;
-      } else if (principalArg) {
-        // v4.x LEGACY: participant-role-lookup (back-compat; pre-v5.0 multi-participant missions)
-        const matched = cfg.mission.participants?.find((p) => p.principal === principalArg);
-        if (matched && matched.role === 'reader') role = 'reader';
-      }
-      if (typeof cfg.stateDurability?.coordPollMs === 'number') {
-        coordPollMs = cfg.stateDurability.coordPollMs;
-      }
-    }
-  } catch {
-    // Mode-detection failure → default writer-mode (legacy single-principal compat)
-  }
+  // Fix #10 (architect-dogfood-surfaced v1.2.0 BLOCKER): detection extracted into
+  // detectDaemonMode helper using canonical missionConfigPath layout (was hardcoded incorrect
+  // `<workspaceRoot>/config/<id>.yaml` missing `missions/` subdir).
+  const detected = await detectDaemonMode(workspaceRoot, missionId, principalArg, COORD_POLL_DEFAULT_MS);
+  const role = detected.role;
+  const isV5Reader = detected.isV5Reader;
+  const coordPollMs = detected.coordPollMs;
 
   // Reader-mode dispatch: Loop B setInterval timer-poll; SIGTERM/SIGINT handlers reused.
   // mission-78 W4-new slice (v): dispatch on isV5Reader → new readerLoopBV5Tick (Design v5.0
@@ -248,12 +229,14 @@ async function main(): Promise<void> {
   watcher.on('unlink', fireDebouncedCommit);
 
   // W5b slice (ii) item #4: config-mtime-watch — propagate non-participant config-mutation
-  // to coord-remote per MINOR-R6.4. Watches `<workspaceRoot>/config/<missionId>.yaml` directly
+  // to coord-remote per MINOR-R6.4. Watches `<workspaceRoot>/config/missions/<missionId>.yaml`
   // (separate from per-repo workspace watcher which targets working-tree changes only).
+  // Fix #10: canonical missionConfigPath layout (was hardcoded incorrect path missing `missions/`
+  // subdir; same path-drift class as the reader-mode-detection bug at the top of main()).
   let configWatcher: FSWatcher | undefined;
   let configDebounceTimer: NodeJS.Timeout | undefined;
   if (mcSdk) {
-    const configPath = join(workspaceRoot, 'config', `${missionId}.yaml`);
+    const configPath = missionConfigPath(workspaceRoot, missionId);
     configWatcher = chokidar.watch(configPath, {
       ignoreInitial: true,
       awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 100 },

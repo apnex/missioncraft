@@ -70,5 +70,24 @@ export interface StateDurabilityConfig {
   // v4.0+ NEW per idea-265 multi-participant + W5c MEDIUM-R8.1 — reader-daemon Loop B coord-poll cadence.
   // Reader-mode setInterval timer-poll fires `git fetch --tags <coord-remote>` every coordPollMs.
   // Bounds: 1000ms (1s) to 300_000ms (5min); default 5000ms (5s).
+  // mission-78 W5-new slice (iv): SUPERSEDED by `pullIntervalSeconds` (cadence-config in seconds);
+  // coordPollMs retained for v4.x back-compat through W7-new but deprecated for v5.0 missions.
   readonly coordPollMs?: number;
+  // ─── mission-78 W5-new slice (i) (Design v5.0 §10.2 + §10.5): symmetric push/pull cadence ───
+  // pushCadence (writer-side): 'on-complete-only' (no auto-push; manual msn complete only) |
+  //                            'every-Ns' (auto-push every pushIntervalSeconds; default) |
+  //                            'on-demand' (manual API-trigger only — operator-DX call)
+  // pushIntervalSeconds: int ≥10s (default 60s); ignored unless pushCadence === 'every-Ns'.
+  // pullCadence (reader-side): 'every-Ns' (auto-pull at pullIntervalSeconds; default) |
+  //                            'on-demand' (manual API-trigger only)
+  // pullIntervalSeconds: int ≥5s (default 30s); ignored unless pullCadence === 'every-Ns'.
+  // Asymmetric defaults: push 60s + pull 30s (2x readers-per-write rate; catches new pushes promptly).
+  // Validation NOT role-conditional at schema layer — writer-side fields on reader-mission are
+  // operator-DX-irrelevant (not consumed); same for reader-side fields on writer-mission. Parallel
+  // to existing pattern of wipCadenceMs (writer-side) + coordPollMs (reader-side) coexisting in
+  // StateDurabilityConfigSchema without role-conditional validation.
+  readonly pushCadence?: 'on-complete-only' | 'every-Ns' | 'on-demand';
+  readonly pushIntervalSeconds?: number;
+  readonly pullCadence?: 'every-Ns' | 'on-demand';
+  readonly pullIntervalSeconds?: number;
 }

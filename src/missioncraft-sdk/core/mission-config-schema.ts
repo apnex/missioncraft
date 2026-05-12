@@ -71,8 +71,20 @@ const StateDurabilityConfigSchema = z.object({
       backoffMs: z.number().int().nonnegative().optional(),
     })
     .optional(),
-  // W5c — reader-daemon Loop B coord-poll cadence (1000-300_000ms; default 5000ms)
+  // W5c — reader-daemon Loop B coord-poll cadence (1000-300_000ms; default 5000ms).
+  // mission-78 W5-new slice (iv): SUPERSEDED by `pullIntervalSeconds` (seconds-granularity);
+  // coordPollMs retained for v4.x back-compat through W7-new but deprecated for v5.0 missions.
   coordPollMs: z.number().int().min(1000).max(300_000).optional(),
+  // ─── mission-78 W5-new slice (i) (Design v5.0 §10.2 + §10.5): symmetric push/pull cadence ───
+  // Writer-side: pushCadence + pushIntervalSeconds (min 10s; default 60s)
+  // Reader-side: pullCadence + pullIntervalSeconds (min 5s;  default 30s)
+  // Asymmetric defaults (push 60s + pull 30s) — readers-per-write rate 2x → catches new pushes
+  // promptly. Schema-level validation NOT role-conditional (parallel to wipCadenceMs/coordPollMs
+  // coexistence). Slice (iii) + (iv) wire substrate-side consumption per config-shape.
+  pushCadence: z.enum(['on-complete-only', 'every-Ns', 'on-demand']).optional(),
+  pushIntervalSeconds: z.number().int().min(10).optional(),
+  pullCadence: z.enum(['every-Ns', 'on-demand']).optional(),
+  pullIntervalSeconds: z.number().int().min(5).optional(),
 });
 
 // ─── MissionConfigSchema factory (v4.5 fold per MEDIUM-R6.4) ───

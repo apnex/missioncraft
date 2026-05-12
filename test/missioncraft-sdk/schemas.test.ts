@@ -281,6 +281,161 @@ describe('Zod schemas — W1 smoke-tests', () => {
     });
   });
 
+  describe('MissionConfigSchema — W5-new slice (i): symmetric push/pull cadence (Design v5.0 §10.2 + §10.5)', () => {
+    const baseValid = {
+      missionConfigSchemaVersion: 2 as const,
+      mission: {
+        id: 'msn-a1b2c3d4',
+        lifecycleState: 'configured' as const,
+        createdAt: '2026-05-10T12:00:00Z',
+      },
+      repos: [{ url: 'https://github.com/example/repo' }],
+    };
+
+    it('accepts pushCadence + pushIntervalSeconds (writer-side cadence config)', () => {
+      const result = MissionConfigSchema.parse({
+        ...baseValid,
+        stateDurability: {
+          pushCadence: 'every-Ns',
+          pushIntervalSeconds: 60,
+        },
+      });
+      expect(result.stateDurability?.pushCadence).toBe('every-Ns');
+      expect(result.stateDurability?.pushIntervalSeconds).toBe(60);
+    });
+
+    it('accepts pullCadence + pullIntervalSeconds (reader-side cadence config)', () => {
+      const result = MissionConfigSchema.parse({
+        ...baseValid,
+        stateDurability: {
+          pullCadence: 'every-Ns',
+          pullIntervalSeconds: 30,
+        },
+      });
+      expect(result.stateDurability?.pullCadence).toBe('every-Ns');
+      expect(result.stateDurability?.pullIntervalSeconds).toBe(30);
+    });
+
+    it('accepts all three pushCadence enum values', () => {
+      for (const cadence of ['on-complete-only', 'every-Ns', 'on-demand'] as const) {
+        const result = MissionConfigSchema.parse({
+          ...baseValid,
+          stateDurability: { pushCadence: cadence },
+        });
+        expect(result.stateDurability?.pushCadence).toBe(cadence);
+      }
+    });
+
+    it('accepts both pullCadence enum values', () => {
+      for (const cadence of ['every-Ns', 'on-demand'] as const) {
+        const result = MissionConfigSchema.parse({
+          ...baseValid,
+          stateDurability: { pullCadence: cadence },
+        });
+        expect(result.stateDurability?.pullCadence).toBe(cadence);
+      }
+    });
+
+    it('rejects unknown pushCadence enum value', () => {
+      expect(() =>
+        MissionConfigSchema.parse({
+          ...baseValid,
+          stateDurability: { pushCadence: 'invalid-cadence' as unknown as 'every-Ns' },
+        }),
+      ).toThrow();
+    });
+
+    it('rejects unknown pullCadence enum value (writer-side push values not accepted)', () => {
+      // 'on-complete-only' is push-only; pullCadence excludes it (catches accidental cross-contamination)
+      expect(() =>
+        MissionConfigSchema.parse({
+          ...baseValid,
+          stateDurability: { pullCadence: 'on-complete-only' as unknown as 'every-Ns' },
+        }),
+      ).toThrow();
+    });
+
+    it('rejects pushIntervalSeconds below minimum (10s)', () => {
+      expect(() =>
+        MissionConfigSchema.parse({
+          ...baseValid,
+          stateDurability: { pushIntervalSeconds: 5 },
+        }),
+      ).toThrow();
+    });
+
+    it('rejects pullIntervalSeconds below minimum (5s)', () => {
+      expect(() =>
+        MissionConfigSchema.parse({
+          ...baseValid,
+          stateDurability: { pullIntervalSeconds: 4 },
+        }),
+      ).toThrow();
+    });
+
+    it('accepts pushIntervalSeconds exactly at min (10s)', () => {
+      const result = MissionConfigSchema.parse({
+        ...baseValid,
+        stateDurability: { pushIntervalSeconds: 10 },
+      });
+      expect(result.stateDurability?.pushIntervalSeconds).toBe(10);
+    });
+
+    it('accepts pullIntervalSeconds exactly at min (5s)', () => {
+      const result = MissionConfigSchema.parse({
+        ...baseValid,
+        stateDurability: { pullIntervalSeconds: 5 },
+      });
+      expect(result.stateDurability?.pullIntervalSeconds).toBe(5);
+    });
+
+    it('rejects non-integer pushIntervalSeconds', () => {
+      expect(() =>
+        MissionConfigSchema.parse({
+          ...baseValid,
+          stateDurability: { pushIntervalSeconds: 60.5 },
+        }),
+      ).toThrow();
+    });
+
+    it('accepts both writer-side AND reader-side cadence fields together (parallel to wipCadenceMs+coordPollMs pattern)', () => {
+      const result = MissionConfigSchema.parse({
+        ...baseValid,
+        stateDurability: {
+          pushCadence: 'every-Ns',
+          pushIntervalSeconds: 60,
+          pullCadence: 'every-Ns',
+          pullIntervalSeconds: 30,
+        },
+      });
+      expect(result.stateDurability?.pushCadence).toBe('every-Ns');
+      expect(result.stateDurability?.pullCadence).toBe('every-Ns');
+    });
+
+    it('cadence fields are optional (omitted yields undefined; substrate uses defaults)', () => {
+      const result = MissionConfigSchema.parse(baseValid);
+      expect(result.stateDurability?.pushCadence).toBeUndefined();
+      expect(result.stateDurability?.pullCadence).toBeUndefined();
+      expect(result.stateDurability?.pushIntervalSeconds).toBeUndefined();
+      expect(result.stateDurability?.pullIntervalSeconds).toBeUndefined();
+    });
+
+    it('cadence fields coexist with v4.x coordPollMs (deprecation back-compat through W7-new)', () => {
+      // SHAPE: legacy coordPollMs + new pullIntervalSeconds present together; schema accepts both.
+      // Substrate at slice (iv) prefers pullIntervalSeconds for v5.0 missions; coordPollMs for v4.x.
+      const result = MissionConfigSchema.parse({
+        ...baseValid,
+        stateDurability: {
+          coordPollMs: 5000,
+          pullCadence: 'every-Ns',
+          pullIntervalSeconds: 30,
+        },
+      });
+      expect(result.stateDurability?.coordPollMs).toBe(5000);
+      expect(result.stateDurability?.pullIntervalSeconds).toBe(30);
+    });
+  });
+
   describe('OperatorConfigSchema', () => {
     it('accepts v4.4 multi-principal extension (workspaceRootByPrincipal map)', () => {
       const result = OperatorConfigSchema.parse({

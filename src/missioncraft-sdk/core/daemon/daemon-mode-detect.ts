@@ -117,3 +117,52 @@ export async function detectWriterPushCadence(
     return { enabled: false, intervalSeconds: DEFAULT_PUSH_INTERVAL_SECONDS };
   }
 }
+
+/**
+ * mission-78 W5-new slice (iv): reader-daemon Loop B pullCadence config detection (extracted for
+ * testability per calibration #74 daemon-dispatch-layer discipline; sister-shape to
+ * detectWriterPushCadence).
+ *
+ * Per Design v5.0 §10.2 + §10.5 + architect-disposition thread-548 round 7:
+ * - v5.0 reader-mission: prefer `stateDurability.pullIntervalSeconds * 1000` (default 30000ms)
+ * - v4.x fallback (back-compat through W7-new): `stateDurability.coordPollMs` (default 5000ms)
+ * - non-existent OR config-read-failure → 30000ms default (v5.0 standard)
+ *
+ * No enabled-gate at slice (iv) — reader Loop B is always-on under v5.0 reader-mode (gate-state
+ * deferred to v6+ if/when `'on-demand'` pullCadence becomes meaningful; current pullCadence enum
+ * is {'every-Ns', 'on-demand'} but 'on-demand' has no concrete API surface at v1.2.0).
+ *
+ * Return shape `{intervalMs}` rather than seconds — caller (watcher-entry.ts setInterval) needs
+ * milliseconds; pre-convert here to centralize the conversion + match existing reader-mode dispatch.
+ */
+export interface ReaderPullCadenceDetectResult {
+  /** Resolved pull-tick interval in milliseconds; always meaningful (no enabled-gate). */
+  readonly intervalMs: number;
+}
+
+const DEFAULT_PULL_INTERVAL_SECONDS = 30;
+const DEFAULT_PULL_INTERVAL_MS = DEFAULT_PULL_INTERVAL_SECONDS * 1000;
+
+export async function detectReaderPullCadence(
+  workspaceRoot: string,
+  missionId: string,
+): Promise<ReaderPullCadenceDetectResult> {
+  try {
+    const configPath = missionConfigPath(workspaceRoot, missionId);
+    if (!existsSync(configPath)) return { intervalMs: DEFAULT_PULL_INTERVAL_MS };
+    const cfgContent = await readFile(configPath, 'utf8');
+    const cfg = parseMissionConfig(cfgContent, configPath, 'auto');
+    // v5.0 reader-mission: prefer pullIntervalSeconds (seconds-granularity); convert to ms.
+    if (typeof cfg.stateDurability?.pullIntervalSeconds === 'number') {
+      return { intervalMs: cfg.stateDurability.pullIntervalSeconds * 1000 };
+    }
+    // v4.x fallback: coordPollMs (milliseconds-granularity) preserved through W7-new for back-compat.
+    if (typeof cfg.stateDurability?.coordPollMs === 'number') {
+      return { intervalMs: cfg.stateDurability.coordPollMs };
+    }
+    // Neither field set → v5.0 default (30s per Design v5.0 §10.5 asymmetric defaults)
+    return { intervalMs: DEFAULT_PULL_INTERVAL_MS };
+  } catch {
+    return { intervalMs: DEFAULT_PULL_INTERVAL_MS };
+  }
+}

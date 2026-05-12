@@ -16,7 +16,7 @@ import chokidar, { type FSWatcher } from 'chokidar';
 import { updateLockfileState } from '../state-machine/lockfile-state.js';
 import { Missioncraft } from '../missioncraft.js';
 import { ReaderAutoCloseError } from '../../errors.js';
-import { detectDaemonMode, detectWriterPushCadence } from './daemon-mode-detect.js';
+import { detectDaemonMode, detectReaderPullCadence, detectWriterPushCadence } from './daemon-mode-detect.js';
 
 const DEBOUNCE_MS = 1000;        // 1s default; configurable via mission.stateDurability.wipCadenceMs in slice (ii)
 const HEARTBEAT_MS = 60_000;     // 60s lockfile-TTL extension cadence
@@ -89,11 +89,14 @@ async function main(): Promise<void> {
   const detected = await detectDaemonMode(workspaceRoot, missionId, principalArg, COORD_POLL_DEFAULT_MS);
   const role = detected.role;
   const isV5Reader = detected.isV5Reader;
-  const coordPollMs = detected.coordPollMs;
 
   // Reader-mode dispatch: Loop B setInterval timer-poll; SIGTERM/SIGINT handlers reused.
   // mission-78 W4-new slice (v): dispatch on isV5Reader → new readerLoopBV5Tick (Design v5.0
-  // direct fetch+reset semantic); legacy v4.x path uses readerLoopBTick (coord-mirror).
+  // direct fetch+reset semantic); v4.x readerLoopBTick DELETED at slice (ii).
+  // mission-78 W5-new slice (iv): pullCadence sourced from `detectReaderPullCadence` helper —
+  // v5.0 missions prefer `pullIntervalSeconds` (default 30000ms); v4.x fallback to `coordPollMs`
+  // (preserved through W7-new). Lifted from hardcoded `COORD_POLL_DEFAULT_MS` (5000ms) which
+  // is now only used as detectDaemonMode's default-fallback for the v4.x participant-role path.
   if (role === 'reader') {
     let mcReader: Missioncraft;
     try {
@@ -102,6 +105,7 @@ async function main(): Promise<void> {
       process.stderr.write(`watcher-entry: SDK bootstrap failed for reader-mode; daemon exiting\n`);
       process.exit(1);
     }
+    const pullCadenceCfg = await detectReaderPullCadence(workspaceRoot, missionId);
     const loopBTimer = setInterval(() => {
       if (isV5Reader) {
         // v5.0 reader-mission (BRANCH-TRACKER or PERSISTENT-TRACKER): direct fetch+reset.
@@ -122,7 +126,7 @@ async function main(): Promise<void> {
       }
       // mission-78 W5-new slice (ii): v4.x readerLoopBTick (coord-mirror semantics) DELETED.
       // Reader-mode is v5.0-only via readerLoopBV5Tick (dispatched above on isV5Reader flag).
-    }, coordPollMs);
+    }, pullCadenceCfg.intervalMs);
     const readerShutdown = async (_sig: string): Promise<void> => {
       if (shutdownInProgress) return;
       shutdownInProgress = true;

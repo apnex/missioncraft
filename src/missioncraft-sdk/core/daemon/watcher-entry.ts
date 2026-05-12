@@ -16,7 +16,7 @@ import chokidar, { type FSWatcher } from 'chokidar';
 import { updateLockfileState } from '../state-machine/lockfile-state.js';
 import { Missioncraft } from '../missioncraft.js';
 import { ReaderAutoCloseError } from '../../errors.js';
-import { detectDaemonMode } from './daemon-mode-detect.js';
+import { detectDaemonMode, detectWriterPushCadence } from './daemon-mode-detect.js';
 
 const DEBOUNCE_MS = 1000;        // 1s default; configurable via mission.stateDurability.wipCadenceMs in slice (ii)
 const HEARTBEAT_MS = 60_000;     // 60s lockfile-TTL extension cadence
@@ -227,7 +227,38 @@ async function main(): Promise<void> {
   let configWatcher: FSWatcher | undefined;
   let configDebounceTimer: NodeJS.Timeout | undefined;
 
-  // Extend shutdown to close config-watcher + clear its timer
+  // mission-78 W5-new slice (iii): writer-daemon push-cadence integration per Design v5.0 §10.2.
+  // Independent setInterval timer (β disposition thread-548 round 5) at pushIntervalSeconds
+  // calling pushMissionBranchToUpstream — independent of chokidar debounce so reader-trackers
+  // see writer's mission-branch on upstream within ≤pushIntervalSeconds (default 60s) regardless
+  // of operator edit-activity. Gated OFF when pushCadence is 'on-complete-only' (only msn complete
+  // pushes) or 'on-demand' (manual API-trigger; reserved for future surface). firstFireDelay =
+  // pushIntervalSeconds (no immediate-fire on mission-start).
+  //
+  // Fire-and-forget detection: do NOT block main() on the YAML config-read here. Top-level await
+  // on detectWriterPushCadence after `chokidar.watch` was triggering test-timing regressions
+  // where the chokidar `ready` event firing got delayed past the test's 8s mission-branch-advance
+  // window (v1.0.7-slice-iii-bug73 + W3-new e2e). Schedule the push-cadence setup via .then() so
+  // main() returns immediately; chokidar's event-loop is unblocked.
+  let pushCadenceTimer: NodeJS.Timeout | undefined;
+  if (mcSdk) {
+    void detectWriterPushCadence(workspaceRoot, missionId).then((pushCadenceCfg) => {
+      if (pushCadenceCfg.enabled) {
+        const intervalMs = pushCadenceCfg.intervalSeconds * 1000;
+        pushCadenceTimer = setInterval(() => {
+          void mcSdk.pushMissionBranchToUpstream(missionId).catch(() => {
+            // Per-tick failure non-aborting (per-repo failures already swallowed inside the helper);
+            // next tick retries. Idempotent no-op when mission-branch already up-to-date upstream.
+          });
+        }, intervalMs);
+      }
+    }).catch(() => {
+      // Config-read failure → push-cadence stays disabled (matches detectWriterPushCadence
+      // silent-default-on-error semantic; daemon continues with chokidar event-loop intact).
+    });
+  }
+
+  // Extend shutdown to close config-watcher + clear its timer + clear push-cadence timer
   const originalShutdown = shutdown;
   process.removeAllListeners('SIGTERM');
   process.removeAllListeners('SIGINT');
@@ -236,6 +267,7 @@ async function main(): Promise<void> {
     if (configWatcher) {
       try { await configWatcher.close(); } catch { /* best-effort */ }
     }
+    if (pushCadenceTimer) clearInterval(pushCadenceTimer);
     await originalShutdown(sig);
   };
   process.on('SIGTERM', () => { void extendedShutdown('SIGTERM'); });

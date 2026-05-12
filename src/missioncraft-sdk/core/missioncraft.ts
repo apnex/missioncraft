@@ -1242,6 +1242,61 @@ export class Missioncraft {
   }
 
   /**
+   * Writer-daemon push-cadence — push `refs/heads/mission/<id>` to upstream per repo
+   * (mission-78 W5-new slice (iii); Design v5.0 §10.2 symmetric push/pull cadence).
+   *
+   * Invoked by daemon-watcher's setInterval timer at `pushIntervalSeconds` cadence WHEN
+   * `pushCadence === 'every-Ns'` (default). Independent of chokidar debounce — fires regardless
+   * of working-tree activity (per (β) disposition thread-548 round 5; Design v5.0 §10.5
+   * 2x-readers-per-write rate). Idempotent no-op push if mission-branch already up-to-date on
+   * upstream (cheap — `git push` returns immediately).
+   *
+   * Per-repo failure non-aborting (uses pushWithRetry's exponential backoff 100ms→400ms→1600ms;
+   * 3 attempts). No-op for reader-missions (readOnly === true) since they have no mission-branch
+   * to push. Returns count of repos with successful push.
+   *
+   * GAP-2 from W4-new architect-dogfood (BRANCH-TRACKER reader pre-publish failure) is naturally
+   * resolved by this method: mission-branch on upstream within ≤pushIntervalSeconds (default 60s)
+   * post-mission-creation; BRANCH-TRACKER reader can join writer-in-progress without `msn complete`
+   * prerequisite.
+   */
+  async pushMissionBranchToUpstream(missionId: string): Promise<number> {
+    const path = this.missionConfigPath(missionId);
+    if (!existsSync(path)) return 0;
+    const content = await readFile(path, 'utf8');
+    const config = parseMissionConfig(content, path, 'auto');
+
+    // Reader-mission has no mission-branch to push (Loop B v5.0 fetches from upstream instead).
+    if (config.mission.readOnly === true) return 0;
+    // Mission must have at least 1 repo + non-terminal lifecycle to be push-target-active.
+    if (config.repos.length === 0) return 0;
+    const lifecycle = config.mission.lifecycleState;
+    if (lifecycle === 'completed' || lifecycle === 'abandoned') return 0;
+
+    const missionRef = `refs/heads/mission/${missionId}`;
+    let successCount = 0;
+    for (const repo of config.repos) {
+      const repoName = repo.name ?? repoNameFromUrl(repo.url);
+      try {
+        const handle = await this.storage.allocate(missionId, repo.url);
+        // Push to repo's `origin` remote (configured at mc.start clone-step) with refspec
+        // mission/<id>:mission/<id> (push local mission-branch to upstream same name).
+        await this.pushWithRetry(handle, {
+          branch: missionRef,
+          remote: 'origin',
+          remoteRef: missionRef,
+        });
+        successCount++;
+      } catch {
+        // Per-repo push failure non-aborting; next push-cadence tick retries (idempotent
+        // no-op when mission-branch already at upstream tip).
+        void repoName;
+      }
+    }
+    return successCount;
+  }
+
+  /**
    * Reader-daemon Loop B v5.0 — direct fetch+reset against source-remote+source-branch
    * (mission-78 W4-new slice (v); Design v5.0 §2 row 4 + task-408 §6 component-change 5).
    *

@@ -70,3 +70,50 @@ export async function detectDaemonMode(
   }
   return { role, isV5Reader, coordPollMs };
 }
+
+/**
+ * mission-78 W5-new slice (iii): writer-daemon push-cadence config detection (extracted for
+ * testability per calibration #74 daemon-dispatch-layer discipline).
+ *
+ * Per Design v5.0 §10.2 + §10.5 + (β) disposition thread-548 round 5:
+ * - `pushCadence: 'every-Ns'` (default; auto-push every pushIntervalSeconds via setInterval)
+ * - `pushCadence: 'on-complete-only'` (auto-push OFF; only mc.complete pushes; v1.x behavior)
+ * - `pushCadence: 'on-demand'` (auto-push OFF; manual API-trigger reserved for future surface)
+ *
+ * Defaults applied when fields absent: cadence='every-Ns'; intervalSeconds=60. Reader-mission
+ * (readOnly === true) is push-cadence-IRRELEVANT (return enabled=false) — readers don't push.
+ * Returns enabled=false when config absent (silent default; daemon never spawns push-cadence
+ * timer in that case).
+ */
+export interface WriterPushCadenceDetectResult {
+  /** True iff writer-mission with pushCadence resolving to 'every-Ns'. */
+  readonly enabled: boolean;
+  /** Resolved pushIntervalSeconds (only meaningful when enabled=true). */
+  readonly intervalSeconds: number;
+}
+
+const DEFAULT_PUSH_INTERVAL_SECONDS = 60;
+const DEFAULT_PUSH_CADENCE = 'every-Ns';
+
+export async function detectWriterPushCadence(
+  workspaceRoot: string,
+  missionId: string,
+): Promise<WriterPushCadenceDetectResult> {
+  try {
+    const configPath = missionConfigPath(workspaceRoot, missionId);
+    if (!existsSync(configPath)) return { enabled: false, intervalSeconds: DEFAULT_PUSH_INTERVAL_SECONDS };
+    const cfgContent = await readFile(configPath, 'utf8');
+    const cfg = parseMissionConfig(cfgContent, configPath, 'auto');
+    // Reader-mission has no mission-branch to push (Loop B fetches from upstream instead).
+    if (cfg.mission.readOnly === true) return { enabled: false, intervalSeconds: DEFAULT_PUSH_INTERVAL_SECONDS };
+    const cadence = cfg.stateDurability?.pushCadence ?? DEFAULT_PUSH_CADENCE;
+    const intervalSeconds = cfg.stateDurability?.pushIntervalSeconds ?? DEFAULT_PUSH_INTERVAL_SECONDS;
+    return {
+      enabled: cadence === 'every-Ns',
+      intervalSeconds,
+    };
+  } catch {
+    // Config-read failure → default disabled (matches detectDaemonMode silent-swallow pattern)
+    return { enabled: false, intervalSeconds: DEFAULT_PUSH_INTERVAL_SECONDS };
+  }
+}

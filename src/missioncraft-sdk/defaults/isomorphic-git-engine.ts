@@ -311,10 +311,13 @@ export class IsomorphicGitEngine implements GitEngine {
   /**
    * v3.3 fold per HIGH-R3.1 — squash-merge primitive.
    *
-   * Pure-TS breach: shells out to native `git` CLI per §2.1.4 v0.6 fold IsomorphicGitEngine implementation-mapping
-   * (`git checkout <baseRef>` + `git merge --squash <headRef>` + `git commit -m <message>` + `git rev-parse HEAD` capture sha).
+   * Bypass-INDEX impl (mission-78 W2-extension Fix #4 per thread-543; replaces the prior
+   * checkout + merge --squash + commit shell-out chain that failed when working tree had untracked
+   * files matching headRef's tree). Symmetric to NativeGitEngine.squashCommit Fix #4 + parallel
+   * to this engine's commitToRef bypass-INDEX pattern.
    *
-   * Capabilities-gated per F13 throws-on-unsupported pattern; throws UnsupportedOperationError if `git` CLI absent.
+   * Native git CLI is still required (`git rev-parse` + `git commit-tree` + `git update-ref`);
+   * preserves the existing capability-gated throws-on-unsupported contract per F13.
    */
   async squashCommit(
     workspace: WorkspaceHandle,
@@ -332,11 +335,29 @@ export class IsomorphicGitEngine implements GitEngine {
       );
     }
     const cwd = workspace.path;
-    await execFileAsync('git', ['checkout', baseRef], { cwd });
-    await execFileAsync('git', ['merge', '--squash', headRef], { cwd });
-    await execFileAsync('git', ['commit', '-m', message], { cwd });
-    const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd });
-    return stdout.trim();
+
+    // (1) Get headRef's tree — the wip-branch content to squash
+    const { stdout: treeOut } = await execFileAsync('git', ['rev-parse', `${headRef}^{tree}`], { cwd });
+    const treeSha = treeOut.trim();
+
+    // (2) Get baseRef's tip — parent for the squashed commit
+    const { stdout: parentOut } = await execFileAsync('git', ['rev-parse', baseRef], { cwd });
+    const parentSha = parentOut.trim();
+
+    // (3) Create the squashed commit (no env-injection; uses git's global config for committer
+    // identity, preserving IsoEng's pre-Fix-#4 implicit-fallback shape)
+    const { stdout: commitOut } = await execFileAsync(
+      'git',
+      ['commit-tree', treeSha, '-p', parentSha, '-m', message],
+      { cwd },
+    );
+    const commitSha = commitOut.trim();
+
+    // (4) Update baseRef to point at the new squashed commit
+    const baseRefFull = baseRef.startsWith('refs/') ? baseRef : `refs/heads/${baseRef}`;
+    await execFileAsync('git', ['update-ref', baseRefFull, commitSha], { cwd });
+
+    return commitSha;
   }
 
   // ─── Bundle-ops (W6 slice (v) Director (Y); §2.6.2 v0.4 §AAA snapshot mechanism) ───

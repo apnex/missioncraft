@@ -18,6 +18,7 @@
 
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -136,7 +137,7 @@ describe('v1.1.0 W2-ext §3 — squashCommit against wip-branch built via commit
     ['NativeGitEngine', () => new NativeGitEngine()],
     ['IsomorphicGitEngine', () => new IsomorphicGitEngine()],
   ] as const) {
-    it(`${engineName}: commitToRef-built wip-branch squash-merges into base-branch (no "unrelated histories" error)`, async () => {
+    it(`${engineName}: commitToRef-built wip-branch squash-merges into base-branch with UNTRACKED FILES IN WORKING TREE (Fix #3 + Fix #4 combined; dogfood-repro)`, async () => {
       const dir = join(tempRoot, `repo-${engineName}`);
       await seedRepo(dir);
       const ws = makeWorkspace(dir);
@@ -147,23 +148,18 @@ describe('v1.1.0 W2-ext §3 — squashCommit against wip-branch built via commit
       await engine.branch(ws, 'mission/m-test');
       await engine.checkout(ws, 'mission/m-test');
 
-      // First wip-commit on a fresh wip ref — this is the bug-reproduction site (orphan-root pre-fix)
+      // First wip-commit on a fresh wip ref — Fix #3 anchors to HEAD (no orphan-root)
       await writeFile(join(dir, 'work-1.txt'), 'work 1\n', 'utf8');
       await engine.commitToRef(ws, 'refs/heads/wip/m-test', { message: 'daemon wip 1' });
       // Subsequent wip-commit chains through (parent = previous wip-commit)
       await writeFile(join(dir, 'work-2.txt'), 'work 2\n', 'utf8');
       await engine.commitToRef(ws, 'refs/heads/wip/m-test', { message: 'daemon wip 2' });
 
-      // Clean working tree so squash-merge isn't blocked by "untracked files would be overwritten"
-      // (wip-branch holds the content; working tree state is irrelevant to the parent-linkage Fix #3).
-      // In production this happens via the storage-engine's workspace-reset OR via daemon-watcher
-      // checkpoint discipline; isolated test cleans manually.
-      await rm(join(dir, 'work-1.txt'));
-      await rm(join(dir, 'work-2.txt'));
+      // CRITICAL: leave untracked work-*.txt files in working tree — this is the EXACT dogfood
+      // failure-mode that exposed Fix #4. Pre-Fix-#4 squashCommit's `git merge --squash` would
+      // abort with "untracked files would be overwritten by merge". Bypass-INDEX impl (Fix #4)
+      // never touches the working tree, so the squash succeeds regardless of working-tree state.
 
-      // Squash-merge wip → mission (the `msn complete` operation): MUST NOT throw
-      // "refusing to merge unrelated histories" — that was the dogfood-surfaced bug. Fix #3 anchors
-      // wip to HEAD (= mission/<id> tip) so squash-merge sees a related ancestry.
       const squashedSha = await engine.squashCommit(
         ws,
         'mission/m-test',
@@ -176,6 +172,15 @@ describe('v1.1.0 W2-ext §3 — squashCommit against wip-branch built via commit
       const { stdout: lsTree } = await execFileAsync('git', ['ls-tree', '-r', '--name-only', squashedSha], { cwd: dir });
       expect(lsTree).toContain('work-1.txt');
       expect(lsTree).toContain('work-2.txt');
+
+      // mission-branch ref now points at the squashed commit (downstream push uses ref, not HEAD)
+      const { stdout: missionTip } = await execFileAsync('git', ['rev-parse', 'mission/m-test'], { cwd: dir });
+      expect(missionTip.trim()).toBe(squashedSha);
+
+      // Working tree state UNTOUCHED — work-*.txt files still present as untracked
+      // (proves Fix #4 bypass-INDEX semantic: operator's working-tree state never affects squash)
+      expect(existsSync(join(dir, 'work-1.txt'))).toBe(true);
+      expect(existsSync(join(dir, 'work-2.txt'))).toBe(true);
     }, 30_000);
   }
 });

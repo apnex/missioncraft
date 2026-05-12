@@ -373,11 +373,20 @@ export class NativeGitEngine implements GitEngine {
   /**
    * Squash-merge primitive (Design v4.8 §HIGH-R3.1 v3.3 fold; §2.4.1 v3.0 atomic PR-set publish-flow).
    *
-   * Native impl: `git checkout <baseRef>` + `git merge --squash <headRef>` + `git commit -m <message>`
-   * + `git rev-parse HEAD` to capture the squashed-commit SHA. Identity via env vars (Path D2 argv-only).
+   * Bypass-INDEX impl (mission-78 W2-extension Fix #4 per thread-543; replaces the prior
+   * checkout + merge --squash + commit chain that failed when working tree had untracked files
+   * matching headRef's tree). Pattern parallel-symmetric to commitToRef:
+   *   1. rev-parse <headRef>^{tree} → headTree (the wip-branch content to squash)
+   *   2. rev-parse <baseRef>          → parent (the mission-branch tip = target ancestor)
+   *   3. commit-tree <headTree> -p <parent> -m <message>  → squashedSha (env-injected identity)
+   *   4. update-ref refs/heads/<baseRef> <squashedSha>
    *
-   * Note: in IsomorphicGitEngine this is `squashCommit?` (capability-gated optional, native shell-out
-   * per §2.1.4 v0.6 fold). NativeGitEngine implements unconditionally — git CLI is a hard dep.
+   * HEAD + working tree are NOT touched. The publish-flow's downstream push() uses the ref directly;
+   * doesn't depend on HEAD position. Eliminates "untracked files would be overwritten by merge"
+   * surface (architect-side scenario-02 dogfood Fix #4 verification).
+   *
+   * Note: in IsomorphicGitEngine this is `squashCommit?` (capability-gated optional, native shell-out).
+   * NativeGitEngine implements unconditionally — git CLI is a hard dep per Path D2.
    */
   async squashCommit(
     workspace: WorkspaceHandle,
@@ -387,11 +396,28 @@ export class NativeGitEngine implements GitEngine {
   ): Promise<string> {
     const identity = await resolveIdentity(workspace);
     const env = commitEnv(identity);
-    await gitExec(workspace, ['checkout', baseRef]);
-    await gitExec(workspace, ['merge', '--squash', headRef]);
-    await gitExec(workspace, ['commit', '-m', message], { env });
-    const { stdout } = await gitExec(workspace, ['rev-parse', 'HEAD']);
-    return stdout.trim();
+
+    // (1) Get headRef's tree — the wip-branch content to squash
+    const treeResult = await gitExec(workspace, ['rev-parse', `${headRef}^{tree}`]);
+    const treeSha = treeResult.stdout.trim();
+
+    // (2) Get baseRef's tip — parent for the squashed commit
+    const parentResult = await gitExec(workspace, ['rev-parse', baseRef]);
+    const parentSha = parentResult.stdout.trim();
+
+    // (3) Create the squashed commit pointing at baseRef's history with headRef's tree
+    const commitResult = await gitExec(
+      workspace,
+      ['commit-tree', treeSha, '-p', parentSha, '-m', message],
+      { env },
+    );
+    const commitSha = commitResult.stdout.trim();
+
+    // (4) Update baseRef to point at the new squashed commit
+    const baseRefFull = baseRef.startsWith('refs/') ? baseRef : `refs/heads/${baseRef}`;
+    await gitExec(workspace, ['update-ref', baseRefFull, commitSha]);
+
+    return commitSha;
   }
 
   /**

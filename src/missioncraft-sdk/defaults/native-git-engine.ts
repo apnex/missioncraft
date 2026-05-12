@@ -244,14 +244,27 @@ export class NativeGitEngine implements GitEngine {
     const cEnv = commitEnv(identity, indexEnv);
 
     try {
-      // Seed temp index from the target ref's existing tree if it exists; else start empty.
+      // Seed temp index from the target ref's existing tree if it exists; else fall back to HEAD
+      // so the wip-branch is FF-anchored to base-branch (load-bearing for §2.6.2 squash-merge
+      // downstream — orphan-root wip-commits cause `git merge --squash` to fail with
+      // "refusing to merge unrelated histories"). mission-78 W2-extension Fix #3: dogfood
+      // surfaced via thread-543 — defect symmetric in both NativeEng + IsoEng commitToRef.
       let parentSha: string | undefined;
       try {
         const { stdout } = await gitExec(workspace, ['rev-parse', ref]);
         parentSha = stdout.trim();
         await gitExec(workspace, ['read-tree', parentSha], { env: indexEnv });
       } catch {
-        // ref doesn't exist yet — temp index starts empty
+        // Target ref doesn't exist yet — anchor to HEAD so resulting wip-branch chain is
+        // FF-equivalent to base-branch (mission/<id>) at first wip-commit time.
+        try {
+          const { stdout: headSha } = await gitExec(workspace, ['rev-parse', 'HEAD']);
+          parentSha = headSha.trim();
+          await gitExec(workspace, ['read-tree', parentSha], { env: indexEnv });
+        } catch {
+          // Truly empty repo (no HEAD; e.g., post-init pre-first-commit) — fall through to
+          // orphan-root case (parentSha stays undefined; commit-tree omits -p)
+        }
       }
 
       // Stage entire working tree into the TEMP index (operator's index untouched).

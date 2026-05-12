@@ -189,13 +189,25 @@ export class IsomorphicGitEngine implements GitEngine {
     // Build tree-objects from flat path-list (build directory structure recursively)
     const treeOid = await this.buildTreeFromPaths(workspace, treeEntries);
 
-    // Determine parent (existing tip of ref if present)
+    // Determine parent: prefer existing tip of ref, else fall back to HEAD so the wip-branch is
+    // FF-anchored to base-branch (load-bearing for §2.6.2 squash-merge downstream — orphan-root
+    // wip-commits cause `git merge --squash` to fail with "refusing to merge unrelated histories").
+    // mission-78 W2-extension Fix #3: dogfood surfaced via thread-543 — defect symmetric in both
+    // NativeEng + IsoEng commitToRef.
     let parents: string[] = [];
     try {
       const existing = await git.resolveRef({ fs, dir: workspace.path, ref });
       parents = [existing];
     } catch {
-      // ref doesn't exist yet — no parents
+      // Target ref doesn't exist yet — anchor to HEAD so resulting wip-branch chain is
+      // FF-equivalent to base-branch (mission/<id>) at first wip-commit time.
+      try {
+        const headSha = await git.resolveRef({ fs, dir: workspace.path, ref: 'HEAD' });
+        parents = [headSha];
+      } catch {
+        // Truly empty repo (no HEAD; e.g., post-init pre-first-commit) — fall through to
+        // orphan-root case (parents stays [])
+      }
     }
 
     const now = Math.floor(Date.now() / 1000);

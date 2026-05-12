@@ -109,9 +109,14 @@ const baseMissionConfigShape = z.object({
     lifecycleState: MissionStatePhaseSchema.default('created'),
     createdAt: z.coerce.date(),
     tags: z.record(z.string(), z.string()).optional(),
-    // v4.0 NEW per idea-265 multi-participant
+    // v4.0 NEW per idea-265 multi-participant.
+    // mission-78 W5-new slice (ii): coordinationRemote DELETED per Design v5.0 §12 no-backward-
+    // compat + §10.2 symmetric push/pull cadence. Reader-mission now fetches from sourceRemote
+    // (PERSISTENT-TRACKER) OR writer.repos[].url with mission/<id> branch (BRANCH-TRACKER) per
+    // v5.0 architecture; coord-remote primitive removed. participants[] retained for v4.x
+    // multi-participant schema-v2 (test fixtures + v4.x mc.join SDK method retained through
+    // W7-new per architect-disposition thread-548 §B).
     participants: z.array(MissionParticipantSchema).optional(),
-    coordinationRemote: z.string().url().optional(),
     // ─── mission-78 W4-new (Design v5.0 §2 row 4): reader-mission fields ───
     // readOnly: true identifies a reader-mission (BRANCH-TRACKER via msn join OR
     //           PERSISTENT-TRACKER via msn watch). false/undefined = writer-mission.
@@ -173,17 +178,10 @@ const baseMissionConfigShape = z.object({
  */
 export function makeMissionConfigSchema(owningPrincipalRole: 'writer' | 'reader' = 'writer') {
   return baseMissionConfigShape.superRefine((config, ctx) => {
-    // F-V4.2 conditional-validation: coordinationRemote required IFF participants[] contains a reader
-    const hasReader =
-      config.mission.participants?.some((p) => p.role === 'reader') ?? false;
-    if (hasReader && !config.mission.coordinationRemote) {
-      ctx.addIssue({
-        code: 'custom',
-        message:
-          'mission.coordinationRemote required when mission.participants[] contains a reader (F-V4.2 conditional-validation per Design v4.8 §2.5)',
-        path: ['mission', 'coordinationRemote'],
-      });
-    }
+    // mission-78 W5-new slice (ii): F-V4.2 conditional-validation REMOVED — coordinationRemote
+    // field deleted per Design v5.0 §12 no-backward-compat + §10.2 symmetric push/pull cadence.
+    // Reader-mission validation moved to v5.0 reader-mission field block below (sourceMissionId
+    // OR sourceRemote+sourceBranch).
     // ─── mission-78 W4-new (Design v5.0 §2 row 4): reader-mission field validation ───
     // readOnly: true → MUST have sourceMissionId (BRANCH-TRACKER) XOR
     //                   sourceRemote+sourceBranch (PERSISTENT-TRACKER)

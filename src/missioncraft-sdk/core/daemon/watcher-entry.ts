@@ -16,7 +16,7 @@ import chokidar, { type FSWatcher } from 'chokidar';
 import { updateLockfileState } from '../state-machine/lockfile-state.js';
 import { Missioncraft } from '../missioncraft.js';
 import { ReaderAutoCloseError } from '../../errors.js';
-import { detectDaemonMode, missionConfigPath } from './daemon-mode-detect.js';
+import { detectDaemonMode } from './daemon-mode-detect.js';
 
 const DEBOUNCE_MS = 1000;        // 1s default; configurable via mission.stateDurability.wipCadenceMs in slice (ii)
 const HEARTBEAT_MS = 60_000;     // 60s lockfile-TTL extension cadence
@@ -119,12 +119,9 @@ async function main(): Promise<void> {
           }
           // Other errors: non-aborting; next tick retries
         });
-      } else if (principalArg) {
-        // v4.x legacy reader-mode: coord-mirror semantics (preserved through W7-new)
-        void mcReader.readerLoopBTick(missionId, principalArg).catch(() => {
-          // Loop B tick failure non-aborting; next tick retries
-        });
       }
+      // mission-78 W5-new slice (ii): v4.x readerLoopBTick (coord-mirror semantics) DELETED.
+      // Reader-mode is v5.0-only via readerLoopBV5Tick (dispatched above on isV5Reader flag).
     }, coordPollMs);
     const readerShutdown = async (_sig: string): Promise<void> => {
       if (shutdownInProgress) return;
@@ -199,15 +196,10 @@ async function main(): Promise<void> {
               // Per-repo daemon-commit failure is non-aborting; daemon continues watching
             }
           }
-          // W5b slice (ii) item #2: push-on-cadence-conditional to coord-remote.
-          // SDK helper handles conditional gating (coordinationRemote set + reader participants
-          // present) + per-repo refspec push + lastPushSuccessAt tracking via .daemon-state.yaml.
-          // Best-effort: failure is non-aborting; daemon continues watching.
-          try {
-            await mcSdk.pushWipToCoordRemote(missionId);
-          } catch {
-            // coord-remote push failure non-aborting; per-repo retries via next debounce-cycle
-          }
+          // mission-78 W5-new slice (ii): pushWipToCoordRemote DELETED (coord-remote primitive
+          // removed per Design v5.0 §10.2). W5-new slice (iii) will add writer-daemon push-cadence
+          // integration here: periodic `git push origin refs/heads/mission/<id>` per pushCadence
+          // mission-config (default 'every-Ns' at 60s).
           // W6 slice (v) Director (Y): bundle-ops snapshot post daemon-commit (disk-failure recovery
           // substrate per §2.6.2 v0.4 §AAA). Capability-gated; best-effort; per-repo failure
           // non-aborting. Bundles land at <snapshotRoot>/<missionId>/<repoName>/<sha>.bundle.
@@ -228,29 +220,12 @@ async function main(): Promise<void> {
   watcher.on('add', fireDebouncedCommit);
   watcher.on('unlink', fireDebouncedCommit);
 
-  // W5b slice (ii) item #4: config-mtime-watch — propagate non-participant config-mutation
-  // to coord-remote per MINOR-R6.4. Watches `<workspaceRoot>/config/missions/<missionId>.yaml`
-  // (separate from per-repo workspace watcher which targets working-tree changes only).
-  // Fix #10: canonical missionConfigPath layout (was hardcoded incorrect path missing `missions/`
-  // subdir; same path-drift class as the reader-mode-detection bug at the top of main()).
+  // mission-78 W5-new slice (ii): config-mtime-watch + propagateConfigToCoordRemote DELETED
+  // (coord-remote primitive removed per Design v5.0 §10.2). Mission-config mutations are now
+  // local-state-only at v1.2.0 standalone-capable; future Hub-coupling (idea-291) lands its own
+  // propagation mechanism.
   let configWatcher: FSWatcher | undefined;
   let configDebounceTimer: NodeJS.Timeout | undefined;
-  if (mcSdk) {
-    const configPath = missionConfigPath(workspaceRoot, missionId);
-    configWatcher = chokidar.watch(configPath, {
-      ignoreInitial: true,
-      awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 100 },
-    });
-    configWatcher.on('change', () => {
-      if (configDebounceTimer) clearTimeout(configDebounceTimer);
-      configDebounceTimer = setTimeout(() => {
-        configDebounceTimer = undefined;
-        void mcSdk.propagateConfigToCoordRemote(missionId).catch(() => {
-          // Propagation failure non-aborting; next mtime-touch retries
-        });
-      }, DEBOUNCE_MS);
-    });
-  }
 
   // Extend shutdown to close config-watcher + clear its timer
   const originalShutdown = shutdown;

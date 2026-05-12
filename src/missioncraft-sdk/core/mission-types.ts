@@ -77,10 +77,11 @@ export interface MissionState {
   readonly description?: string;
   readonly tags: Record<string, string>;
   readonly repos: readonly MissionRepoState[];           // v4.0 fold per MINOR-R1.2 — type widened from RepoSpec[] to MissionRepoState[]
-  // v4.0 NEW per idea-265 multi-participant
+  // v4.0 NEW per idea-265 multi-participant.
+  // mission-78 W5-new slice (ii): coordinationRemote field DELETED (Design v5.0 §10.2);
+  // participants[] retained for v4.x carry-forward through W7-new per architect-disposition.
   readonly participants?: readonly MissionParticipant[]; // absent OR exactly 1 writer + 0 readers = solo writer-only mission (v3.6 baseline preserved)
-  readonly coordinationRemote?: string;                  // git remote URL for wip-coordination; required IFF participants[] contains a reader (zod superRefine per F-V4.2)
-  readonly lastPushSuccessAt?: Date;                     // v4.0 fold per MEDIUM-R2.8 + MEDIUM-R1.9 — operator-DX visibility for coord-remote push-cadence health (engine-derived from .daemon-state.yaml per v4.4 MEDIUM-R3.3; NOT config-persisted)
+  readonly lastPushSuccessAt?: Date;                     // v4.0 fold per MEDIUM-R2.8 + MEDIUM-R1.9 — operator-DX visibility for push-cadence health (engine-derived from .daemon-state.yaml per v4.4 MEDIUM-R3.3; NOT config-persisted)
   // ─── mission-78 W4-new (Design v5.0 §2 row 4): reader-mission projection fields ───
   readonly readOnly?: boolean;                           // true → reader-mission (BRANCH-TRACKER OR PERSISTENT-TRACKER)
   readonly sourceMissionId?: string;                     // BRANCH-TRACKER (msn join) references writer-mission
@@ -153,9 +154,9 @@ export interface MissionConfig {
     readonly lifecycleState: MissionStatePhase;
     readonly createdAt: Date;
     readonly tags?: Record<string, string>;
-    // v4.0 NEW per idea-265 multi-participant — populated when mission has multi-participant flow
+    // v4.0 NEW per idea-265 multi-participant — populated when mission has multi-participant flow.
+    // mission-78 W5-new slice (ii): coordinationRemote field DELETED per Design v5.0 §10.2.
     readonly participants?: readonly MissionParticipant[];
-    readonly coordinationRemote?: string;       // git remote URL; required IFF participants[] contains a reader (zod superRefine)
     // ─── mission-78 W4-new (Design v5.0 §2 row 4): reader-mission fields ───
     // readOnly: true → reader-mission (BRANCH-TRACKER via msn join OR PERSISTENT-TRACKER via msn watch)
     // sourceMissionId: BRANCH-TRACKER references writer-mission whose branch is tracked

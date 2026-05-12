@@ -598,15 +598,9 @@ export class Missioncraft {
       }
 
       // W5b slice (ii) item #3: state-machine cascade — emit terminated-tag to coord-remote so
-      // reader-daemon Loop B can cascade `'reading' → 'readonly-completed'` per HIGH-R2.3.
-      // Conditional + best-effort: no-op for solo-writer; failure non-aborting (terminal state
-      // already persisted at Step 3).
-      try {
-        await this.emitTerminatedTag(id);
-      } catch {
-        // Cascade-signal failure non-aborting; reader-daemon Loop B will fall back to wip-branch
-        // staleness detection on next sync-cycle.
-      }
+      // mission-78 W5-new slice (ii): emitTerminatedTag DELETED (coord-remote primitive removed
+      // per Design v5.0 §10.2). Reader-mission terminal-detection now via Loop B v5.0 dual
+      // failure-mode auto-close (slice v.b): writer mission-config missing OR lifecycle terminal.
 
       // Step 6: cleanup local mission-branches (best-effort; non-aborting)
       for (let i = 0; i < initialConfig.repos.length; i++) {
@@ -998,14 +992,8 @@ export class Missioncraft {
     }
 
     // W5b slice (ii) item #3: state-machine cascade — emit terminated-tag to coord-remote.
-    // Fires post-Step-6 atomic-advance to 'abandoned'; conditional + best-effort no-op for
-    // solo-writer missions. Must precede Step 7 --purge-config since config-purge wipes
-    // coordinationRemote source-of-truth.
-    try {
-      await this.emitTerminatedTag(id);
-    } catch {
-      // Cascade-signal failure non-aborting; terminal state already persisted at Step 6.
-    }
+    // mission-78 W5-new slice (ii): emitTerminatedTag DELETED (coord-remote primitive removed
+    // per Design v5.0 §10.2). Reader-mission terminal-detection now via Loop B v5.0 auto-close.
 
     // Step 7: --purge-config delete config + symlink (separate lock-cycle; lifecycle already terminal)
     if (opts.purgeConfig) {
@@ -1254,249 +1242,6 @@ export class Missioncraft {
   }
 
   /**
-   * Reader-side cascade: writer terminated (refs/tags/missioncraft/<id>/terminated detected on
-   * coord-remote by Loop B). Advances reader's lifecycleState `'reading' → 'readonly-completed'`
-   * via `_engineMutate` per HIGH-R2.3 + Design v4.9 §2.10 W5c Q2 disposition. Idempotent on
-   * already-readonly-completed.
-   */
-  async cascadeTerminated(missionId: string): Promise<void> {
-    const path = this.missionConfigPath(missionId);
-    if (!existsSync(path)) return;
-    try {
-      await this._engineMutate(
-        missionId,
-        (config) => ({ ...config, mission: { ...config.mission, lifecycleState: 'readonly-completed' } }),
-        {
-          validate: (config) => {
-            const s = config.mission.lifecycleState;
-            if (s === 'readonly-completed') return null;     // idempotent
-            if (s === 'reading') return null;
-            return `cascade-terminated rejected: lifecycle '${s}' not in [reading, readonly-completed]`;
-          },
-          sourceLabel: `Missioncraft.cascadeTerminated('${missionId}')`,
-          role: 'reader',
-        },
-      );
-    } catch {
-      // Idempotent best-effort; daemon-cascade firing is non-aborting
-    }
-  }
-
-  /**
-   * Reader-side cascade: config-update (refs/heads/config/<id> HEAD-move detected by Loop B).
-   * Re-applies mission-config from the coord-mirror's `mission.yaml` blob into the reader's local
-   * config via `_engineMutate` (preserves substrate-currency discipline; atomic-write through engine).
-   * Best-effort; failure non-aborting (Loop B retries on next tick if mtime still divergent).
-   */
-  async cascadeConfigUpdate(missionId: string, mirrorYaml: string): Promise<void> {
-    const path = this.missionConfigPath(missionId);
-    if (!existsSync(path)) return;
-    let mirrorConfig: MissionConfig;
-    try {
-      mirrorConfig = parseMissionConfig(mirrorYaml, undefined, 'auto');
-    } catch {
-      // Malformed mirror-yaml; skip cascade-cycle (non-aborting)
-      return;
-    }
-    try {
-      await this._engineMutate(
-        missionId,
-        (currentConfig) => ({
-          ...currentConfig,
-          mission: {
-            ...mirrorConfig.mission,
-            // Preserve reader-side state (don't overwrite reader's lifecycleState with writer's)
-            lifecycleState: currentConfig.mission.lifecycleState,
-          },
-          repos: mirrorConfig.repos,
-        }),
-        {
-          validate: (currentConfig) => {
-            const s = currentConfig.mission.lifecycleState;
-            // Reader-side states only; writer-state config rejected per HIGH-R2.3
-            if (s === 'reading' || s === 'joined' || s === 'readonly-completed' || s === 'leaving') return null;
-            return `cascade-config-update rejected: lifecycle '${s}' not reader-side`;
-          },
-          sourceLabel: `Missioncraft.cascadeConfigUpdate('${missionId}')`,
-          role: 'reader',
-        },
-      );
-    } catch {
-      // Best-effort; next Loop B tick retries
-    }
-  }
-
-  /**
-   * Propagate mission-config to coord-remote `refs/heads/config/<missionId>` branch + emit
-   * `refs/tags/missioncraft/<missionId>/config-update` cascade-tag (Design v4.9 §2.10 W5b
-   * MINOR-R6.2). Reader-daemon Loop B fetches the config-branch + applies changes to reader's
-   * local config copy (Loop B detection lands W5c).
-   *
-   * Conditional: no-op IF coordinationRemote unset OR no reader participants. Best-effort:
-   * commit + push failure non-aborting (mission-config local state is authoritative; next
-   * mtime-watch tick OR explicit re-propagate will retry).
-   *
-   * Mirror-repo discipline: per-mission dedicated git repo at
-   * `<workspaceRoot>/missions/<missionId>/.config-mirror/` keeps coord-remote
-   * `refs/heads/config/<id>` single-writer-per-mission (avoids per-repo-workspace race).
-   */
-  async propagateConfigToCoordRemote(missionId: string): Promise<boolean> {
-    const path = this.missionConfigPath(missionId);
-    if (!existsSync(path)) return false;
-    const content = await readFile(path, 'utf8');
-    const config = parseMissionConfig(content, path, 'auto');
-
-    const coordRemote = config.mission.coordinationRemote;
-    if (!coordRemote) return false;
-    const hasReader = config.mission.participants?.some((p) => p.role === 'reader') ?? false;
-    if (!hasReader) return false;
-
-    const {
-      commitConfigToMirror,
-      configBranchRef,
-      configUpdateTagName,
-      configUpdateTagRef,
-      recordPropagationTimestamp,
-    } = await import('./config-mirror.js');
-
-    const identity = await this.identity.resolve();
-    try {
-      // Step 1: commit latest mission-config YAML into mirror repo on refs/heads/config/<id>
-      await commitConfigToMirror(
-        { workspaceRoot: this.workspaceRoot, missionId, gitEngine: this.gitEngine, identity },
-        path,
-      );
-
-      const mirrorHandle: WorkspaceHandle = {
-        missionId,
-        repoUrl: '',
-        path: (await import('./config-mirror.js')).configMirrorPath(this.workspaceRoot, missionId),
-      };
-
-      // Step 2: push refs/heads/config/<id> branch to coord-remote
-      await this.pushWithRetry(mirrorHandle, {
-        branch: configBranchRef(missionId),
-        url: coordRemote,
-        remoteRef: configBranchRef(missionId),
-      });
-
-      // Step 3: create + push refs/tags/missioncraft/<id>/config-update cascade-tag
-      try {
-        await this.gitEngine.tag(mirrorHandle, configUpdateTagName(missionId), { force: true });
-        await this.pushWithRetry(mirrorHandle, {
-          branch: configUpdateTagRef(missionId),
-          url: coordRemote,
-          remoteRef: configUpdateTagRef(missionId),
-        });
-      } catch {
-        // Tag-emit failure non-aborting; reader-daemon Loop B falls back to branch-mtime detection
-      }
-
-      await recordPropagationTimestamp(this.workspaceRoot, missionId);
-      return true;
-    } catch {
-      // Best-effort: commit/push failure non-aborting; local state authoritative
-      return false;
-    }
-  }
-
-  /**
-   * Emit `refs/tags/missioncraft/<missionId>/terminated` to coord-remote on writer-side terminal
-   * transition (complete or abandon). Reader-daemon Loop B detects this tag and cascades reader's
-   * lifecycle to `'readonly-completed'` per HIGH-R2.3 (Loop B detection lands W5c).
-   *
-   * Conditional: no-op IF coordinationRemote unset OR no reader participants. Best-effort:
-   * per-repo failure is non-aborting (terminal-state already persisted; tag-emission is the
-   * cascade-signal but local state is authoritative).
-   *
-   * Tag is created against current HEAD of the local repo (terminal commit); pushed via refspec
-   * `refs/tags/missioncraft/<id>/terminated:refs/tags/missioncraft/<id>/terminated`.
-   */
-  async emitTerminatedTag(missionId: string): Promise<number> {
-    const path = this.missionConfigPath(missionId);
-    if (!existsSync(path)) return 0;
-    const content = await readFile(path, 'utf8');
-    const config = parseMissionConfig(content, path, 'auto');
-
-    const coordRemote = config.mission.coordinationRemote;
-    if (!coordRemote) return 0;
-    const hasReader = config.mission.participants?.some((p) => p.role === 'reader') ?? false;
-    if (!hasReader) return 0;
-
-    const tagName = `missioncraft/${missionId}/terminated`;
-    const tagRef = `refs/tags/${tagName}`;
-    const identity = await this.identity.resolve();
-    let successCount = 0;
-    for (const repo of config.repos) {
-      const handle = await this.storage.allocate(missionId, repo.url);
-      try {
-        // Create lightweight tag locally against current HEAD (best-effort if already exists)
-        try {
-          await this.gitEngine.tag(handle, tagName, { force: true });
-        } catch {
-          // Tag-create failure: skip push for this repo (e.g., HEAD doesn't exist yet)
-          continue;
-        }
-        await this.pushWithRetry(handle, {
-          branch: tagRef,
-          url: coordRemote,
-          remoteRef: tagRef,
-        });
-        successCount++;
-      } catch {
-        // Per-repo tag-emit failure non-aborting; terminal state already persisted
-      }
-      void identity;
-    }
-    return successCount;
-  }
-
-  /**
-   * Push wip-branch to coord-remote per-repo refspec (Design v4.9 §2.10 W5b MEDIUM-R6.1).
-   *
-   * Source ref `refs/heads/wip/<missionId>` → destination ref `refs/heads/<repoName>/wip/<missionId>`
-   * on `coordinationRemote`. Conditional: only fires IF coordinationRemote is set AND mission has
-   * ≥1 reader participant (no-op for solo writer-only missions per v3.6 baseline preservation).
-   *
-   * Best-effort: per-repo failure is non-aborting (next debounce-cycle retries). Successful pushes
-   * recorded in `.daemon-state.yaml` (`lastPushSuccessAt` + `perRepoLastPushAt[repoName]`). NOT
-   * mission-config-persisted per MEDIUM-R3.3 separate-file discipline.
-   *
-   * Returns count of successful per-repo pushes (0 if no-op).
-   */
-  async pushWipToCoordRemote(missionId: string): Promise<number> {
-    const path = this.missionConfigPath(missionId);
-    if (!existsSync(path)) return 0;
-    const content = await readFile(path, 'utf8');
-    const config = parseMissionConfig(content, path, 'auto');
-
-    const coordRemote = config.mission.coordinationRemote;
-    if (!coordRemote) return 0;
-    const hasReader = config.mission.participants?.some((p) => p.role === 'reader') ?? false;
-    if (!hasReader) return 0;       // solo writer-only mission; no coord-remote push needed
-
-    let successCount = 0;
-    for (const repo of config.repos) {
-      const repoName = repo.name ?? repoNameFromUrl(repo.url);
-      // storage.allocate is idempotent on re-allocate per StorageProvider contract
-      const handle = await this.storage.allocate(missionId, repo.url);
-      try {
-        await this.pushWithRetry(handle, {
-          branch: `refs/heads/wip/${missionId}`,
-          url: coordRemote,
-          remoteRef: `refs/heads/${repoName}/wip/${missionId}`,
-        });
-        const { recordPushSuccess } = await import('./daemon/daemon-state.js');
-        await recordPushSuccess(this.workspaceRoot, missionId, repoName);
-        successCount++;
-      } catch {
-        // Per-repo push failure is non-aborting; next debounce-cycle retries
-      }
-    }
-    return successCount;
-  }
-
-  /**
    * Reader-daemon Loop B v5.0 — direct fetch+reset against source-remote+source-branch
    * (mission-78 W4-new slice (v); Design v5.0 §2 row 4 + task-408 §6 component-change 5).
    *
@@ -1658,129 +1403,6 @@ export class Missioncraft {
     await execFileAsync('git', ['reset', '--hard', ref], { cwd: workspace.path });
   }
 
-  /**
-   * Reader-daemon Loop B tick — single coord-fetch + 3-path ref-detection + cascade dispatch
-   * (Design v4.9 §2.10 W5c MEDIUM-R8.1).
-   *
-   * v4.x LEGACY method retained for back-compat with v4.x missions through W7-new. v5.0 reader-
-   * missions use readerLoopBV5Tick (above) which dispatches via daemon-watcher's isV5Reader check.
-   *
-   * Steps:
-   *   1. Ensure `.coord-mirror/` initialized (idempotent; uses mission's coordinationRemote URL)
-   *   2. Capture pre-fetch SHAs for tracked refs
-   *   3. `git fetch --tags --prune coord-remote`
-   *   4. Capture post-fetch SHAs for tracked refs
-   *   5. Detect changes → fan out:
-   *      - terminated-tag appearance → cascadeTerminated
-   *      - config-branch HEAD-move → cascadeConfigUpdate (read mission.yaml from mirror)
-   *      - per-repo wip-branch HEAD-move → applyReaderRefUpdate(workspace, mirror-ref)
-   *
-   * Conditional gating: no-op IF coordinationRemote unset OR principal is not a reader of this
-   * mission (writer-mode missions don't run Loop B). Returns count of detected changes (0 on no-op
-   * or no-changes).
-   *
-   * Best-effort: fetch failure non-aborting; per-path detection failure logged via swallow + skip;
-   * next tick retries.
-   */
-  async readerLoopBTick(missionId: string, principal: string): Promise<number> {
-    const path = this.missionConfigPath(missionId);
-    if (!existsSync(path)) return 0;
-    const content = await readFile(path, 'utf8');
-    const config = parseMissionConfig(content, path, 'auto');
-
-    const coordRemote = config.mission.coordinationRemote;
-    if (!coordRemote) return 0;
-    const isReader = config.mission.participants?.some((p) => p.principal === principal && p.role === 'reader') ?? false;
-    if (!isReader) return 0;
-
-    const {
-      ensureCoordMirrorInit,
-      fetchCoordRemote,
-      revparseMirrorRef,
-      showMirrorRefFile,
-      coordMirrorPath: cmPath,
-      terminatedTagRef,
-      configBranchMirrorRef,
-      repoWipMirrorRef,
-    } = await import('./coord-mirror.js');
-
-    // Step 1: ensure mirror init
-    await ensureCoordMirrorInit(this.workspaceRoot, missionId, coordRemote);
-    const mirrorGitDir = `${cmPath(this.workspaceRoot, missionId)}/.git`;
-
-    // Step 2: capture pre-fetch SHAs (3 ref types: terminated, config, per-repo wip)
-    const preFetch = {
-      terminated: await revparseMirrorRef(this.workspaceRoot, missionId, terminatedTagRef(missionId)),
-      config: await revparseMirrorRef(this.workspaceRoot, missionId, configBranchMirrorRef(missionId)),
-      perRepoWip: new Map<string, string | null>(),
-    };
-    for (const repo of config.repos) {
-      const repoName = repo.name ?? repoNameFromUrl(repo.url);
-      preFetch.perRepoWip.set(repoName, await revparseMirrorRef(this.workspaceRoot, missionId, repoWipMirrorRef(missionId, repoName)));
-    }
-
-    // Step 3: fetch coord-remote (best-effort)
-    try {
-      await fetchCoordRemote(this.workspaceRoot, missionId);
-    } catch {
-      return 0;        // fetch failure → skip cycle; next tick retries
-    }
-
-    // Step 4: capture post-fetch SHAs
-    const postFetch = {
-      terminated: await revparseMirrorRef(this.workspaceRoot, missionId, terminatedTagRef(missionId)),
-      config: await revparseMirrorRef(this.workspaceRoot, missionId, configBranchMirrorRef(missionId)),
-      perRepoWip: new Map<string, string | null>(),
-    };
-    for (const repo of config.repos) {
-      const repoName = repo.name ?? repoNameFromUrl(repo.url);
-      postFetch.perRepoWip.set(repoName, await revparseMirrorRef(this.workspaceRoot, missionId, repoWipMirrorRef(missionId, repoName)));
-    }
-
-    // Step 5: detect changes + fan out
-    let changeCount = 0;
-
-    // Path 1: terminated-tag appearance (null → SHA)
-    if (preFetch.terminated === null && postFetch.terminated !== null) {
-      try {
-        await this.cascadeTerminated(missionId);
-        changeCount++;
-      } catch { /* best-effort */ }
-    }
-
-    // Path 2: config-branch HEAD-move
-    if (postFetch.config !== null && preFetch.config !== postFetch.config) {
-      const mirrorYaml = await showMirrorRefFile(
-        this.workspaceRoot,
-        missionId,
-        configBranchMirrorRef(missionId),
-        'mission.yaml',
-      );
-      if (mirrorYaml !== null) {
-        try {
-          await this.cascadeConfigUpdate(missionId, mirrorYaml);
-          changeCount++;
-        } catch { /* best-effort */ }
-      }
-    }
-
-    // Path 3: per-repo wip-branch HEAD-move → applyReaderRefUpdate
-    const { applyReaderRefUpdate } = await import('./reader-workspace-mode.js');
-    for (const repo of config.repos) {
-      const repoName = repo.name ?? repoNameFromUrl(repo.url);
-      const pre = preFetch.perRepoWip.get(repoName) ?? null;
-      const post = postFetch.perRepoWip.get(repoName) ?? null;
-      if (post !== null && pre !== post) {
-        const handle = await this.storage.allocate(missionId, repo.url);
-        try {
-          await applyReaderRefUpdate(handle.path, mirrorGitDir, repoWipMirrorRef(missionId, repoName));
-          changeCount++;
-        } catch { /* best-effort; per-repo failure non-aborting */ }
-      }
-    }
-
-    return changeCount;
-  }
 
   /**
    * Daemon-tick lifecycle advance: `'started' → 'in-progress'` (Design v4.9 §2.4.1 line 1505).
@@ -1812,142 +1434,17 @@ export class Missioncraft {
   // ─── Multi-participant verbs (W5b slice (i) — runtime impl) ───
 
   /**
-   * 7-step `joined → reading` transition (Design v4.9 §2.4.1.v4 reader-side state-machine;
-   * v4.4 MEDIUM-R1.8 + v4.5 MEDIUM-R6.3 + v4.6 MINOR-R7.1 idempotent-retry).
-   *
-   * W5b slice (i): full runtime LESS Step 5 substrate-bypass clone (HTTP-server fixture defers
-   * to W5c per (α); carries forward W4.3 slice (iv) discipline). Reader's local mission-config is
-   * assumed pre-existing at `<workspaceRoot>/config/<id>.yaml` (in production, populated by clone
-   * Step 5; in W5b tests, seeded by fixture mirroring W4.3 slice (iv) pattern).
-   *
-   * Steps:
-   *   1. Validate + canonicalize coordRemote URL
-   *   2. Resolve current-principal per 4-step precedence
-   *   3. Acquire per-principal mission-lock
-   *   3.5. Atomic-write 'joined' state via _engineMutate (idempotent-retry per v4.6 MINOR-R7.1)
-   *   4. Allocate per-principal workspace per repo
-   *   5. gitEngine.clone from coord-remote — SUBSTRATE-BYPASS at W5b (W5c HTTP-server fixture)
-   *   6. setReaderWorkspaceMode chmod-down per allocated workspace (W2 helper)
-   *   7. Atomic-write lifecycle 'reading' via _engineMutate
+   * v4.x mc.join SDK method — STUB-THROW at v1.2.0 W5-new slice (ii) per Design v5.0 §10.2
+   * coord-remote drop. Method-signature retained per architect-disposition (thread-548 §B):
+   * "v4.x carry-forward surface cleanup" deferred to W7-new alongside IsoEng-removal. v5.0
+   * reader-mission creation flows are `msn join <writer-mission-id>` (BRANCH-TRACKER) +
+   * `msn watch --repo --branch` (PERSISTENT-TRACKER); both go through `mc.create('mission', ...)`
+   * with `readOnly: true` + reader-flavor fields per slice (ii)/(iii) of W4-new.
    */
-  async join(idOrName: string, coordRemote: string, principal?: string): Promise<MissionState> {
-    if (!coordRemote) {
-      throw new ConfigValidationError("Missioncraft.join: coordRemote is required (reader-side bootstrap surface)");
-    }
-    if (!idOrName) {
-      throw new ConfigValidationError("Missioncraft.join: mission-id is required");
-    }
-    const id = this.resolveMissionRef(idOrName);                           // v1.0.3 bug-64 item 5
-
-    // Step 1: canonicalize coordRemote URL
-    const { canonicalizeCoordinationRemote } = await import('./role-derivation.js');
-    const canonicalRemote = canonicalizeCoordinationRemote(coordRemote);
-
-    // Step 2: resolve current-principal per 4-step precedence
-    const { resolveCurrentPrincipal } = await import('./principal-resolution.js');
-    const currentPrincipal = await resolveCurrentPrincipal({
-      explicitPrincipal: principal,
-      constructorPrincipal: this.principal,
-      identity: this.identity,
-    });
-
-    // Step 3: acquire per-principal mission-lock
-    const path = this.missionConfigPath(id);
-    if (!existsSync(path)) {
-      throw new MissionStateError(
-        `Missioncraft.join: mission '${id}' not found at '${path}' ` +
-          `(W5b: pre-existing local config required; HTTP-server clone-fixture defers to W5c per (α))`,
-      );
-    }
-    const missionLock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
-    try {
-      // Step 3.5: atomic-write 'joined' via _engineMutate
-      // Pre-state: 'configured' (writer-state pre-engagement) OR 'joined' (idempotent retry per v4.6 MINOR-R7.1).
-      // Use role='auto' since pre-state can span the writer/reader partition boundary.
-      await this._engineMutate(
-        id,
-        (config) => ({ ...config, mission: { ...config.mission, lifecycleState: 'joined' } }),
-        {
-          validate: (config) => {
-            const s = config.mission.lifecycleState;
-            if (s === 'joined') return null;        // idempotent-retry per v4.6 MINOR-R7.1
-            if (s === 'configured') return null;    // expected pre-state per architect spec
-            return `join Step 3.5 rejected: lifecycle '${s}' not in [configured, joined] ` +
-              `(per Design v4.9 §2.4.1.v4 reader-side state-machine)`;
-          },
-          sourceLabel: `Missioncraft.join.step3.5('${id}')`,
-          role: 'auto',
-        },
-      );
-
-      // Step 4: allocate per-principal workspace per repo (re-read config with reader-role)
-      const content = await readFile(path, 'utf8');
-      const config = parseMissionConfig(content, path, 'reader');
-      const workspaceHandles: WorkspaceHandle[] = [];
-      for (const repo of config.repos) {
-        const ws = await this.storage.allocate(id, repo.url);
-        workspaceHandles.push(ws);
-      }
-
-      // Step 5: real-engine fetch + checkout from coord-remote per W6 slice (ii) impl-extension.
-      // Uses W5c slice (i) coord-mirror primitives (ensureCoordMirrorInit + fetchCoordRemote +
-      // git checkout from cached git-dir) — best-effort: failure (e.g., file:// stub URL in
-      // backwards-compat tests) preserves substrate-bypass behavior. Production reader-side
-      // first-join with valid HTTP coord-remote fetches wip-branch content into workspace.
-      try {
-        const { ensureCoordMirrorInit, fetchCoordRemote, coordMirrorPath: cmPath } =
-          await import('./coord-mirror.js');
-        await ensureCoordMirrorInit(this.workspaceRoot, id, canonicalRemote);
-        await fetchCoordRemote(this.workspaceRoot, id);
-        const mirrorGitDir = `${cmPath(this.workspaceRoot, id)}/.git`;
-        const { execFile } = await import('node:child_process');
-        const { promisify } = await import('node:util');
-        const execFileAsync = promisify(execFile);
-        for (let i = 0; i < config.repos.length; i++) {
-          const repo = config.repos[i];
-          const repoName = repo.name ?? repoNameFromUrl(repo.url);
-          const ref = `refs/remotes/coord-remote/${repoName}/wip/${id}`;
-          try {
-            await execFileAsync('git', [
-              `--git-dir=${mirrorGitDir}`,
-              `--work-tree=${workspaceHandles[i].path}`,
-              'checkout', '-f', ref,
-            ]);
-          } catch {
-            // Per-repo checkout failure non-aborting (e.g., wip-branch not yet pushed by writer);
-            // workspace remains empty + chmod-down at Step 6 still applies.
-          }
-        }
-      } catch {
-        // Substrate-bypass preserved when coord-remote unreachable (e.g., file:// stub in tests);
-        // Step 6 chmod-down still applies; reader-daemon Loop B handles cascade-recovery if
-        // coord-remote becomes reachable post-join.
-      }
-
-      // Step 6: chmod-down each allocated workspace per W2 helper (POSIX 0444/0555 strict-enforce)
-      const { setReaderWorkspaceMode } = await import('./reader-workspace-mode.js');
-      for (const ws of workspaceHandles) {
-        await setReaderWorkspaceMode(ws.path);
-      }
-
-      // Step 7: atomic-write 'reading' via _engineMutate (validate current === 'joined')
-      const finalConfig = await this._engineMutate(
-        id,
-        (cfg) => ({ ...cfg, mission: { ...cfg.mission, lifecycleState: 'reading' } }),
-        {
-          validate: (cfg) =>
-            cfg.mission.lifecycleState === 'joined'
-              ? null
-              : `join Step 7 rejected: lifecycle '${cfg.mission.lifecycleState}' (expected 'joined')`,
-          sourceLabel: `Missioncraft.join.step7('${id}')`,
-          role: 'reader',
-        },
-      );
-
-      return this.missionConfigToState(finalConfig, currentPrincipal);
-    } finally {
-      try { await this.storage.releaseLock(missionLock); } catch { /* idempotent */ }
-    }
+  async join(_idOrName: string, _coordRemote: string, _principal?: string): Promise<MissionState> {
+    throw new UnsupportedOperationError(
+      "Missioncraft.join (v4.x multi-participant) is removed at v1.2.0. Use mc.create('mission', { readOnly: true, sourceMissionId: <writer-id> }) for BRANCH-TRACKER reader OR { readOnly: true, sourceRemote, sourceBranch } for PERSISTENT-TRACKER reader (Design v5.0 §2 row 4).",
+    );
   }
 
   /**
@@ -2381,7 +1878,7 @@ export class Missioncraft {
       tags: m.tags ?? {},
       repos,
       ...(m.participants !== undefined && { participants: m.participants }),
-      ...(m.coordinationRemote !== undefined && { coordinationRemote: m.coordinationRemote }),
+      // mission-78 W5-new slice (ii): coordinationRemote field DELETED per Design v5.0 §10.2
       lifecycleState: m.lifecycleState as MissionStatePhase,
       createdAt: m.createdAt,
       updatedAt: m.createdAt,                                                                // W4: mutate on transitions
@@ -2682,13 +2179,9 @@ export class Missioncraft {
       },
     );
 
-    // W5b slice (ii) item #4: config-mutation propagation to coord-remote.
-    // Best-effort: failure non-aborting (local state authoritative; daemon-mtime-watch retry).
-    try {
-      await this.propagateConfigToCoordRemote(id);
-    } catch {
-      // Propagation failure non-aborting; mtime-watch tick will retry on next config-touch
-    }
+    // mission-78 W5-new slice (ii): propagateConfigToCoordRemote DELETED (coord-remote primitive
+    // removed per Design v5.0 §10.2). Config-mutation propagation no longer applicable in v5.0
+    // standalone-capable architecture; future Hub-coupling (idea-291) lands its own mechanism.
 
     return this.missionConfigToState(updated, this.principal);
   }
@@ -2844,7 +2337,11 @@ export class Missioncraft {
         break;
       }
       case 'set-coordination-remote':
-        nextMission = { ...m, coordinationRemote: mutation.remote };
+        // mission-78 W5-new slice (ii): coordinationRemote field DELETED per Design v5.0 §10.2.
+        // Mutation-kind retained on MissionMutation type for v4.x test-fixture back-compat
+        // through W7-new (architect-disposition); this case-arm is a no-op (v.x mutation has no
+        // effect since the field doesn't exist on schema-v2).
+        void mutation;
         break;
       default: {
         const _exhaustive: never = mutation;

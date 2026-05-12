@@ -262,21 +262,13 @@ describe('Missioncraft SDK class — W3 smoke-tests', () => {
       });
     });
 
-    it('join() requires coordRemote (input-validation gate)', async () => {
+    it('join() v4.x SDK method is stub-throw at v1.2.0 W5-new slice (ii) (coord-remote drop)', async () => {
+      // mission-78 W5-new slice (ii): mc.join (v4.x multi-participant) is stub-throw per Design
+      // v5.0 §10.2 coord-remote drop. Method signature retained per architect-disposition for
+      // v4.x carry-forward through W7-new; impl points operators to v5.0 reader-flavor flows.
       const mc = new Missioncraft({ workspaceRoot: tempRoot });
-      await expect(mc.join('msn-test1234', '')).rejects.toBeInstanceOf(ConfigValidationError);
-    });
-
-    it('join() requires id (input-validation gate)', async () => {
-      const mc = new Missioncraft({ workspaceRoot: tempRoot });
-      await expect(mc.join('', 'file:///tmp/coord.git')).rejects.toBeInstanceOf(ConfigValidationError);
-    });
-
-    it('join() rejects on missing pre-existing local config (W5b substrate-bypass requirement)', async () => {
-      const mc = new Missioncraft({ workspaceRoot: tempRoot });
-      // W5b: pre-existing local config required (HTTP-server clone-fixture defers to W5c per (α))
       await expect(mc.join('msn-test1234', 'file:///tmp/coord.git')).rejects.toMatchObject({
-        message: expect.stringMatching(/mission 'msn-test1234' not found|HTTP-server clone-fixture/),
+        message: expect.stringMatching(/v4\.x multi-participant.*is removed at v1\.2\.0/),
       });
     });
 

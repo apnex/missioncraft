@@ -66,20 +66,10 @@ describe('Zod schemas — W1 smoke-tests', () => {
       ).toThrow(/reader-side lifecycle-state/);
     });
 
-    it('F-V4.2 conditional: rejects participants[reader] without coordinationRemote', () => {
-      expect(() =>
-        MissionConfigSchema.parse({
-          ...baseValid,
-          mission: {
-            ...baseValid.mission,
-            participants: [
-              { principal: 'lily@apnex', role: 'writer', addedAt: '2026-05-10T12:00:00Z' },
-              { principal: 'greg@apnex', role: 'reader', addedAt: '2026-05-10T12:05:00Z' },
-            ],
-          },
-        }),
-      ).toThrow(/coordinationRemote required/);
-    });
+    // mission-78 W5-new slice (ii): F-V4.2 conditional-validation (coordinationRemote required
+    // IFF participants[reader]) REMOVED — coordinationRemote field DELETED per Design v5.0 §10.2.
+    // Reader-mission validation now via v5.0 reader-flavor fields (sourceMissionId OR
+    // sourceRemote+sourceBranch) per W4-new slice (i).
 
     it('v1 exactly-1-writer: rejects 0 writers', () => {
       expect(() =>

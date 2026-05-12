@@ -301,23 +301,9 @@ describe('v1.1.0 W1 slice (i) — NativeGitEngine.log', () => {
   });
 });
 
-describe('v1.1.0 W1 slice (i) — UnsupportedOperationError contract for slice (ii)/(iii) methods', () => {
-  it('init throws UnsupportedOperationError pointing at slice (ii)', async () => {
-    const ws = makeWorkspace(join(tempRoot, 'unused'));
-    const engine = new NativeGitEngine();
-    await expect(
-      engine.init(ws, { fs: undefined, identity: IDENTITY }),
-    ).rejects.toBeInstanceOf(UnsupportedOperationError);
-  });
-
-  it('commit throws UnsupportedOperationError pointing at slice (ii)', async () => {
-    const ws = makeWorkspace(join(tempRoot, 'unused'));
-    const engine = new NativeGitEngine();
-    await expect(
-      engine.commit(ws, { message: 'noop' }),
-    ).rejects.toBeInstanceOf(UnsupportedOperationError);
-  });
-
+describe('v1.1.0 W1 slice (i) — UnsupportedOperationError contract for slice (iii) methods', () => {
+  // NOTE: init / commit slice-(ii)-throws assertions removed at slice (ii) ship — both implemented now.
+  // The slice-progression contract now narrows to slice (iii) (merge / squashCommit / bundle ops).
   it('merge throws UnsupportedOperationError pointing at slice (iii)', async () => {
     const ws = makeWorkspace(join(tempRoot, 'unused'));
     const engine = new NativeGitEngine();

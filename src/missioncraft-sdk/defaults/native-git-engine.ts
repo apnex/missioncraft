@@ -10,14 +10,18 @@
 // - On error, `gitExec` surfaces git's actual stderr (not Node's argv-joined display string)
 //   per `feedback_node_execfile_error_formatter_visual_misleads_diagnosis.md`.
 //
-// Slice (i) — this commit — implements the `gitExec` helper + 6 foundational ops:
-//   clone / branch / checkout / log / status / revparse
-// Slice (ii) — write-ops: commit / push / fetch / tag / reset / diff / ls-remote
-// Slice (iii) — advanced ops: merge --squash / capability-gated bundle ops
+// Slice (i) — `gitExec` helper + 6 foundational ops: clone / branch / checkout / log / status / revparse
+// Slice (ii) — THIS commit — write-ops + lifecycle + remote-management:
+//   init / getCurrentBranch / tag / stage / commit / commitToRef / deleteBranch
+//   fetch / push / pull / addRemote / removeRemote / listRemotes
+// Slice (iii) — advanced ops: merge / squashCommit / capability-gated bundle ops
 // Slice (iv) — PROVIDER_REGISTRY entry `'native-git'` + integration test suite (wave-close).
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { unlink } from 'node:fs/promises';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 import type {
   CommitOptions,
@@ -39,6 +43,27 @@ interface NativeOptionsInternal {
 }
 
 const optionsByWorkspace = new WeakMap<WorkspaceHandle, NativeOptionsInternal>();
+
+function getIdentity(workspace: WorkspaceHandle): AgentIdentity {
+  const stored = optionsByWorkspace.get(workspace);
+  if (!stored) {
+    throw new UnsupportedOperationError(
+      `NativeGitEngine: workspace ${workspace.path} has no associated GitOptions; call init() or clone() first`,
+    );
+  }
+  return stored.identity;
+}
+
+/** Build an env object that injects GIT_AUTHOR_/GIT_COMMITTER_ name+email for argv-only commit-firing. */
+function commitEnv(identity: AgentIdentity, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return {
+    ...base,
+    GIT_AUTHOR_NAME: identity.name,
+    GIT_AUTHOR_EMAIL: identity.email,
+    GIT_COMMITTER_NAME: identity.name,
+    GIT_COMMITTER_EMAIL: identity.email,
+  };
+}
 
 /**
  * Argv-only git invocation helper.
@@ -81,10 +106,9 @@ export class NativeGitEngine implements GitEngine {
 
   // ─── Lifecycle ───
 
-  async init(_workspace: WorkspaceHandle, _options: GitOptions): Promise<void> {
-    throw new UnsupportedOperationError(
-      'NativeGitEngine.init: implemented in W1 slice (ii) (write-ops); slice (i) covers clone/branch/checkout/log/status/revparse only',
-    );
+  async init(workspace: WorkspaceHandle, options: GitOptions): Promise<void> {
+    optionsByWorkspace.set(workspace, { identity: options.identity });
+    await gitExec(workspace, ['init', '--quiet']);
   }
 
   async clone(workspace: WorkspaceHandle, repoUrl: string, options: GitOptions): Promise<void> {
@@ -111,18 +135,34 @@ export class NativeGitEngine implements GitEngine {
     await gitExec(workspace, ['checkout', branchName]);
   }
 
-  async getCurrentBranch(_workspace: WorkspaceHandle): Promise<string> {
-    throw new UnsupportedOperationError(
-      'NativeGitEngine.getCurrentBranch: implemented in W1 slice (ii)',
-    );
+  async getCurrentBranch(workspace: WorkspaceHandle): Promise<string> {
+    const { stdout } = await gitExec(workspace, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const branch = stdout.trim();
+    if (branch === 'HEAD') {
+      throw new UnsupportedOperationError(
+        `NativeGitEngine.getCurrentBranch: detached HEAD at ${workspace.path}`,
+      );
+    }
+    return branch;
   }
 
   async tag(
-    _workspace: WorkspaceHandle,
-    _name: string,
-    _options: { ref?: string; message?: string; force?: boolean } = {},
+    workspace: WorkspaceHandle,
+    name: string,
+    options: { ref?: string; message?: string; force?: boolean } = {},
   ): Promise<void> {
-    throw new UnsupportedOperationError('NativeGitEngine.tag: implemented in W1 slice (ii)');
+    const args: string[] = ['tag'];
+    if (options.force) args.push('-f');
+    if (options.message !== undefined) {
+      // Annotated tag — git records identity + message; needs commit-env vars
+      args.push('-a', '-m', options.message);
+    }
+    args.push(name);
+    if (options.ref !== undefined) args.push(options.ref);
+    const env = options.message !== undefined
+      ? commitEnv(getIdentity(workspace))
+      : process.env;
+    await gitExec(workspace, args, { env });
   }
 
   async revparse(workspace: WorkspaceHandle, ref: string): Promise<string> {
@@ -132,52 +172,138 @@ export class NativeGitEngine implements GitEngine {
 
   // ─── Working tree + commit ───
 
-  async stage(_workspace: WorkspaceHandle, _paths: string[] | 'all'): Promise<void> {
-    throw new UnsupportedOperationError('NativeGitEngine.stage: implemented in W1 slice (ii)');
+  async stage(workspace: WorkspaceHandle, paths: string[] | 'all'): Promise<void> {
+    if (paths === 'all') {
+      await gitExec(workspace, ['add', '-A']);
+      return;
+    }
+    if (paths.length === 0) return;
+    // `--` separates flags from paths so leading-dash filenames don't get parsed as flags
+    await gitExec(workspace, ['add', '--', ...paths]);
   }
 
-  async commit(_workspace: WorkspaceHandle, _options: CommitOptions): Promise<string> {
-    throw new UnsupportedOperationError('NativeGitEngine.commit: implemented in W1 slice (ii)');
+  async commit(workspace: WorkspaceHandle, options: CommitOptions): Promise<string> {
+    const identity = options.author ?? getIdentity(workspace);
+    const env = commitEnv(identity);
+    if (options.autoStage) {
+      await gitExec(workspace, ['add', '-A']);
+    }
+    const args = ['commit', '-m', options.message];
+    if (options.amend) args.push('--amend');
+    // --allow-empty-message would let empty messages through; require non-empty message at API.
+    await gitExec(workspace, args, { env });
+    const { stdout } = await gitExec(workspace, ['rev-parse', 'HEAD']);
+    return stdout.trim();
   }
 
+  /**
+   * Commit-to-ref bypass-HEAD bypass-INDEX (Design v4.8 §AA / load-bearing for §2.6.1 wip-branch).
+   *
+   * Native impl: allocate a temporary GIT_INDEX_FILE → seed from existing ref's tree if present →
+   * `git add -A` against the temp index (operator's index untouched) → `git write-tree` →
+   * `git commit-tree` (with author/committer env-vars + parent linkage) → `git update-ref`.
+   * Operator's `git status` post-call shows no staged paths from the wip-commit operation.
+   */
   async commitToRef(
-    _workspace: WorkspaceHandle,
-    _ref: string,
-    _options: CommitOptions,
+    workspace: WorkspaceHandle,
+    ref: string,
+    options: CommitOptions,
   ): Promise<string> {
-    throw new UnsupportedOperationError(
-      'NativeGitEngine.commitToRef: implemented in W1 slice (ii)',
-    );
+    const identity = options.author ?? getIdentity(workspace);
+    // Temp index lives inside .git/ so it's auto-collected with the workspace; UUID-suffixed for
+    // concurrency-safety across overlapping wip-commit invocations.
+    const tempIndex = join(workspace.path, '.git', `wip-index-${randomUUID()}`);
+    const indexEnv = { ...process.env, GIT_INDEX_FILE: tempIndex };
+    const cEnv = commitEnv(identity, indexEnv);
+
+    try {
+      // Seed temp index from the target ref's existing tree if it exists; else start empty.
+      let parentSha: string | undefined;
+      try {
+        const { stdout } = await gitExec(workspace, ['rev-parse', ref]);
+        parentSha = stdout.trim();
+        await gitExec(workspace, ['read-tree', parentSha], { env: indexEnv });
+      } catch {
+        // ref doesn't exist yet — temp index starts empty
+      }
+
+      // Stage entire working tree into the TEMP index (operator's index untouched).
+      await gitExec(workspace, ['add', '-A'], { env: indexEnv });
+
+      // Write tree from temp index
+      const treeResult = await gitExec(workspace, ['write-tree'], { env: indexEnv });
+      const treeSha = treeResult.stdout.trim();
+
+      // commit-tree with optional parent linkage; identity supplied via env
+      const commitArgs = ['commit-tree', treeSha];
+      if (parentSha) commitArgs.push('-p', parentSha);
+      commitArgs.push('-m', options.message);
+      const commitResult = await gitExec(workspace, commitArgs, { env: cEnv });
+      const commitSha = commitResult.stdout.trim();
+
+      // Update the ref to point at the new commit (creates ref if missing)
+      await gitExec(workspace, ['update-ref', ref, commitSha]);
+
+      return commitSha;
+    } finally {
+      await unlink(tempIndex).catch(() => { /* idempotent — already-cleaned-up is fine */ });
+    }
   }
 
   async deleteBranch(
-    _workspace: WorkspaceHandle,
-    _branchName: string,
-    _options: { force?: boolean } = {},
+    workspace: WorkspaceHandle,
+    branchName: string,
+    options: { force?: boolean } = {},
   ): Promise<void> {
-    throw new UnsupportedOperationError(
-      'NativeGitEngine.deleteBranch: implemented in W1 slice (ii)',
-    );
+    const flag = options.force ? '-D' : '-d';
+    await gitExec(workspace, ['branch', flag, branchName]);
   }
 
   // ─── Wire ───
 
   async fetch(
-    _workspace: WorkspaceHandle,
-    _options: { remote?: string; branch?: string; prune?: boolean } = {},
+    workspace: WorkspaceHandle,
+    options: { remote?: string; branch?: string; prune?: boolean } = {},
   ): Promise<void> {
-    throw new UnsupportedOperationError('NativeGitEngine.fetch: implemented in W1 slice (ii)');
+    const args: string[] = ['fetch'];
+    if (options.prune) args.push('--prune');
+    if (options.remote !== undefined) args.push(options.remote);
+    if (options.branch !== undefined) args.push(options.branch);
+    await gitExec(workspace, args);
   }
 
-  async push(_workspace: WorkspaceHandle, _options: PushOptions = {}): Promise<void> {
-    throw new UnsupportedOperationError('NativeGitEngine.push: implemented in W1 slice (ii)');
+  async push(workspace: WorkspaceHandle, options: PushOptions = {}): Promise<void> {
+    const args: string[] = ['push'];
+    if (options.force) args.push('--force');
+    if (options.tags) args.push('--tags');
+    // git push positional grammar: `push [<remote>] [<refspec>]` — the FIRST positional is always
+    // the remote (or URL). When caller specifies a branch but no remote/url, default remote to
+    // 'origin' so the branch arg lands in the refspec slot (parallel to isomorphic-git internal default).
+    const target = options.url ?? options.remote ?? (options.branch !== undefined ? 'origin' : undefined);
+    if (target !== undefined) args.push(target);
+    if (options.branch !== undefined) {
+      // Refspec when source/dest differ; else just the branch name
+      if (options.remoteRef !== undefined && options.remoteRef !== options.branch) {
+        args.push(`${options.branch}:${options.remoteRef}`);
+      } else {
+        args.push(options.branch);
+      }
+    }
+    await gitExec(workspace, args);
   }
 
   async pull(
-    _workspace: WorkspaceHandle,
-    _options: { branch?: string; remote?: string } = {},
+    workspace: WorkspaceHandle,
+    options: { branch?: string; remote?: string } = {},
   ): Promise<void> {
-    throw new UnsupportedOperationError('NativeGitEngine.pull: implemented in W1 slice (ii)');
+    // Default git pull behavior is fast-forward (--ff); merge-commit happens if config overrides.
+    // Identity is needed in case pull triggers a merge-commit; inject env defensively.
+    const identity = optionsByWorkspace.get(workspace)?.identity;
+    const env = identity ? commitEnv(identity) : process.env;
+    const args: string[] = ['pull'];
+    if (options.remote !== undefined) args.push(options.remote);
+    if (options.branch !== undefined) args.push(options.branch);
+    await gitExec(workspace, args, { env });
   }
 
   async merge(
@@ -283,20 +409,31 @@ export class NativeGitEngine implements GitEngine {
 
   // ─── Remote management ───
 
-  async addRemote(_workspace: WorkspaceHandle, _name: string, _url: string): Promise<void> {
-    throw new UnsupportedOperationError('NativeGitEngine.addRemote: implemented in W1 slice (ii)');
+  async addRemote(workspace: WorkspaceHandle, name: string, url: string): Promise<void> {
+    await gitExec(workspace, ['remote', 'add', name, url]);
   }
 
-  async removeRemote(_workspace: WorkspaceHandle, _name: string): Promise<void> {
-    throw new UnsupportedOperationError(
-      'NativeGitEngine.removeRemote: implemented in W1 slice (ii)',
-    );
+  async removeRemote(workspace: WorkspaceHandle, name: string): Promise<void> {
+    await gitExec(workspace, ['remote', 'remove', name]);
   }
 
-  async listRemotes(_workspace: WorkspaceHandle): Promise<{ name: string; url: string }[]> {
-    throw new UnsupportedOperationError(
-      'NativeGitEngine.listRemotes: implemented in W1 slice (ii)',
-    );
+  async listRemotes(workspace: WorkspaceHandle): Promise<{ name: string; url: string }[]> {
+    // `git remote -v` lines: `<name>\t<url> (fetch|push)\n` — fetch + push pair per remote.
+    // Dedupe by remote name, returning the fetch-URL.
+    const { stdout } = await gitExec(workspace, ['remote', '-v']);
+    const seen = new Map<string, string>();
+    for (const line of stdout.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      const tabIdx = trimmed.indexOf('\t');
+      if (tabIdx < 0) continue;
+      const name = trimmed.slice(0, tabIdx);
+      const rest = trimmed.slice(tabIdx + 1);
+      const spaceIdx = rest.lastIndexOf(' ');
+      const url = spaceIdx >= 0 ? rest.slice(0, spaceIdx) : rest;
+      if (!seen.has(name)) seen.set(name, url);
+    }
+    return Array.from(seen, ([name, url]) => ({ name, url }));
   }
 
   // ─── Internal accessors (forward-compat for slice (ii) commit() identity-resolve) ───

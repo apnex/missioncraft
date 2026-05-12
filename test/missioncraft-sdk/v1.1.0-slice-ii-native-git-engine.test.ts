@@ -515,12 +515,6 @@ describe('v1.1.0 W1 slice (ii) — NativeGitEngine remote management', () => {
   });
 });
 
-describe('v1.1.0 W1 slice (ii) — slice (iii) UnsupportedOperationError contract preserved', () => {
-  it('merge still throws UnsupportedOperationError pointing at slice (iii)', async () => {
-    const dir = join(tempRoot, 'repo');
-    await seedRepo(dir);
-    const ws = makeWorkspace(dir);
-    const engine = new NativeGitEngine();
-    await expect(engine.merge(ws, 'main')).rejects.toThrow(/slice \(iii\)/);
-  });
-});
+// NOTE: merge slice-(iii) UnsupportedOperationError assertion removed at slice (iii) ship —
+// merge is now implemented (along with squashCommit / createBundle / restoreBundle); see
+// `v1.1.0-slice-iii-native-git-engine.test.ts` for advanced-ops coverage.

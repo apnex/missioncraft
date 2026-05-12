@@ -11,10 +11,14 @@
 //   per `feedback_node_execfile_error_formatter_visual_misleads_diagnosis.md`.
 //
 // Slice (i) — `gitExec` helper + 6 foundational ops: clone / branch / checkout / log / status / revparse
-// Slice (ii) — THIS commit — write-ops + lifecycle + remote-management:
+// Slice (ii) — write-ops + lifecycle + remote-management:
 //   init / getCurrentBranch / tag / stage / commit / commitToRef / deleteBranch
 //   fetch / push / pull / addRemote / removeRemote / listRemotes
-// Slice (iii) — advanced ops: merge / squashCommit / capability-gated bundle ops
+// Slice (iii) — THIS commit — advanced ops:
+//   merge (ff / no-ff strategy) / squashCommit / createBundle / restoreBundle
+//   The latter 3 are Native-canonical (not capability-gated) — IsoEng's impl already
+//   shells out to native git per §2.6.2 v0.4 §AAA bundle-ops native-shell-out + §BBBBBB squash-shell-out;
+//   semantics match exactly between IsoEng (shell-out) and NativeGitEngine (native).
 // Slice (iv) — PROVIDER_REGISTRY entry `'native-git'` + integration test suite (wave-close).
 
 import { execFile } from 'node:child_process';
@@ -307,14 +311,89 @@ export class NativeGitEngine implements GitEngine {
   }
 
   async merge(
-    _workspace: WorkspaceHandle,
-    _sourceBranch: string,
-    _options: { strategy?: MergeStrategy } = {},
+    workspace: WorkspaceHandle,
+    sourceBranch: string,
+    options: { strategy?: MergeStrategy } = {},
   ): Promise<void> {
-    throw new UnsupportedOperationError('NativeGitEngine.merge: implemented in W1 slice (iii)');
+    // Strategy mapping (parallel to IsomorphicGitEngine §BBBBBB micro-fold):
+    //   'ff'    → require-fast-forward (fail otherwise) → --ff-only
+    //   'no-ff' → always create merge-commit (default)  → --no-ff
+    const strategy = options.strategy ?? 'no-ff';
+    const strategyFlag = strategy === 'ff' ? '--ff-only' : '--no-ff';
+    // Identity needed for the merge-commit case (env-injected; argv-only end-to-end)
+    const identity = optionsByWorkspace.get(workspace)?.identity;
+    const env = identity ? commitEnv(identity) : process.env;
+    await gitExec(workspace, ['merge', strategyFlag, sourceBranch], { env });
   }
 
-  // squashCommit?, createBundle?, restoreBundle? are optional capability-gated methods (slice iii).
+  /**
+   * Squash-merge primitive (Design v4.8 §HIGH-R3.1 v3.3 fold; §2.4.1 v3.0 atomic PR-set publish-flow).
+   *
+   * Native impl: `git checkout <baseRef>` + `git merge --squash <headRef>` + `git commit -m <message>`
+   * + `git rev-parse HEAD` to capture the squashed-commit SHA. Identity via env vars (Path D2 argv-only).
+   *
+   * Note: in IsomorphicGitEngine this is `squashCommit?` (capability-gated optional, native shell-out
+   * per §2.1.4 v0.6 fold). NativeGitEngine implements unconditionally — git CLI is a hard dep.
+   */
+  async squashCommit(
+    workspace: WorkspaceHandle,
+    baseRef: string,
+    headRef: string,
+    message: string,
+  ): Promise<string> {
+    const identity = getIdentity(workspace);
+    const env = commitEnv(identity);
+    await gitExec(workspace, ['checkout', baseRef]);
+    await gitExec(workspace, ['merge', '--squash', headRef]);
+    await gitExec(workspace, ['commit', '-m', message], { env });
+    const { stdout } = await gitExec(workspace, ['rev-parse', 'HEAD']);
+    return stdout.trim();
+  }
+
+  /**
+   * Bundle-create (W6 slice (v) Director (Y); §2.6.2 v0.4 §AAA snapshot mechanism for disk-failure recovery).
+   *
+   * Native git CLI is the canonical impl (parallel to IsoEng's native shell-out per architect (p)
+   * disposition); creates `git bundle` archive at `bundlePath` containing `ref` + ancestors.
+   * Returns the bundle file path on success.
+   */
+  async createBundle(workspace: WorkspaceHandle, bundlePath: string, ref: string): Promise<string> {
+    const { mkdir } = await import('node:fs/promises');
+    const { dirname } = await import('node:path');
+    await mkdir(dirname(bundlePath), { recursive: true });
+    await gitExec(workspace, ['bundle', 'create', bundlePath, ref]);
+    return bundlePath;
+  }
+
+  /**
+   * Bundle-restore (W6 slice (v) Director (Y); §2.6.2 v0.4 §AAA snapshot mechanism).
+   *
+   * Calls `git bundle unbundle` to extract objects + refs into the workspace's git-dir, then
+   * `git update-ref` to set the named ref (parallel to IsoEng's native shell-out impl).
+   */
+  async restoreBundle(workspace: WorkspaceHandle, bundlePath: string, ref: string): Promise<void> {
+    // `git bundle unbundle` output: "<sha> <ref>\n..." (one or more lines)
+    const { stdout } = await gitExec(workspace, ['bundle', 'unbundle', bundlePath]);
+    let bundleSha: string | undefined;
+    for (const line of stdout.trim().split('\n')) {
+      const [sha, bundleRef] = line.trim().split(/\s+/);
+      if (bundleRef === ref) {
+        bundleSha = sha;
+        break;
+      }
+    }
+    if (!bundleSha) {
+      // Fallback: single-ref bundle case — use first line's sha
+      const first = stdout.trim().split('\n')[0];
+      bundleSha = first?.trim().split(/\s+/)[0];
+    }
+    if (!bundleSha) {
+      throw new UnsupportedOperationError(
+        `NativeGitEngine.restoreBundle: bundle '${bundlePath}' contains no extractable refs`,
+      );
+    }
+    await gitExec(workspace, ['update-ref', ref, bundleSha]);
+  }
 
   // ─── Read ───
 

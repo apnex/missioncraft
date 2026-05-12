@@ -301,15 +301,10 @@ describe('v1.1.0 W1 slice (i) — NativeGitEngine.log', () => {
   });
 });
 
-describe('v1.1.0 W1 slice (i) — UnsupportedOperationError contract for slice (iii) methods', () => {
-  // NOTE: init / commit slice-(ii)-throws assertions removed at slice (ii) ship — both implemented now.
-  // The slice-progression contract now narrows to slice (iii) (merge / squashCommit / bundle ops).
-  it('merge throws UnsupportedOperationError pointing at slice (iii)', async () => {
-    const ws = makeWorkspace(join(tempRoot, 'unused'));
-    const engine = new NativeGitEngine();
-    await expect(engine.merge(ws, 'main')).rejects.toThrow(/slice \(iii\)/);
-  });
-});
+// NOTE: slice-progression contract retired at slice (iii) ship — all GitEngine contract
+// methods (init/commit/merge/squashCommit/createBundle/restoreBundle/etc.) are now implemented
+// in NativeGitEngine. Slice (iv) wave-close adds PROVIDER_REGISTRY 'native-git' entry +
+// full-contract integration test suite.
 
 describe('v1.1.0 W1 slice (i) — providerName contract', () => {
   it('providerName is the canonical "native-git" string (PROVIDER_REGISTRY key for slice iv)', () => {

@@ -729,3 +729,99 @@ Operator-UX bug-cleanup is **complete at v1.0.6**. Substrate is scenario-02-unbl
 ### §14.10 Pattern-A discipline + autonomous-execution observations
 
 Pattern-A direct-commit-to-main (apnex/* repos) preserved throughout; cross-approval post-hoc. Engineer-turn discipline (per `feedback_pattern_a_engineer_turn_discipline.md`): combined ack + first-milestone surface in slice (i) reply — no ack-only turn burn. Round budget: 2/15 used (1 architect open + 1 architect ratify); subsequent slices shipped autonomous without architect round-trips (per architect's "Continue autonomous execution per Pattern-A turn-discipline" disposition). Will surface for round-3 at v1.0.6 publish gate-point.
+
+## §15 v1.0.7 patch trail — bug-73 critical hotfix (scope-bound mission end-to-end fix; thread-538)
+
+**Defect surfaced:** Architect-side repro 2026-05-12 on `@apnex/missioncraft@1.0.6` (mission-id `msn-1a8fa161`): scope-bound missions stuck in `in-progress` post daemon-tick; `complete` + `abandon` both fail with "workspace handle missing for repo 'missioncraft-sandbox'"; first-attempt's finally-block releases mission lock → second attempt fails with "mission-lock absent". scenario-02 blocked end-to-end.
+
+**Hub coordinates:** thread-538 (single-issue critical hotfix; maxRounds=15; Director-approved spawn 2026-05-12).
+
+**Root-cause clarification (architect-hypothesis correction):** NOT a daemon-tick lockfile-unlink as initially hypothesised. Bug is a 2-substrate-gap composite, both pre-existing pre-v1.0.6, both made operator-reachable for the first time by bug-70 scope-binding (which added the natural `scope create → mission --scope → start → complete` operator path). v1.0.7 is NOT actually a regression-fix; it's a long-dormant-defect-unblock that bug-70 surfaced via a real operator flow.
+
+### §15.1 Substrate-gap 1 — storage.list-returns-empty-repoUrl + find-by-URL-equality (slice (ii) — commit `15f5720`)
+
+`local-filesystem-storage.ts:147` known v1 limitation: `storage.list()` returns workspace handles with empty `repoUrl` (filesystem layout preserves repo-name only). Three sites in `missioncraft.ts` matched handles via `h.repoUrl === repo.url` — always-false; silently no-op'd into the `else` branch (which marked status 'cleaned' for abandon-flow, or threw "workspace handle missing" for complete-flow).
+
+**Fix (Option A; minimal blast-radius):** change all 3 sites (`:545` complete cleanup-branches; `:614` complete publishLoop; `:864` abandon cleanup-branches) to use `basename(h.path) === (repo.name ?? repoNameFromUrl(repo.url))`. Mirrors existing working pattern at `:1074`. Storage-layer untouched.
+
+Option B (fix `storage.list` to populate `repoUrl`) rejected: bigger blast-radius; coupling storage-layer to mission-config.
+
+### §15.2 Substrate-gap 2 — start() missing mission-branch auto-setup (slice (iii) — commit `15f5720`)
+
+After slice (ii) unblocked the find-handle path, slice (iii) integration test exposed the next downstream gap: `complete()`'s squash-loop fails with `git merge --squash mission/<id>` → "not something we can merge" because the `mission/<id>` branch doesn't exist. `start()` Step 4 calls `gitEngine.clone()` and stops — never creates or checks out the working branch.
+
+Design intent at `mission-types.ts:46` (Design v1.7 fold MINOR-R6.6) said start() SHOULD do this auto-setup; implementation was missing.
+
+**Fix:** in `start()` Step 4, after `gitEngine.clone()`:
+```typescript
+const workingBranch = repo.branch ?? `mission/${missionId}`;
+await this.gitEngine.branch(workspace, workingBranch);
+await this.gitEngine.checkout(workspace, workingBranch);
+```
+
+No pluggable-interface extension needed; `branch` + `checkout` already on GitEngine contract. Operator's subsequent `git add` + `git commit` inside `$(msn workspace)` automatically lands on the mission branch; complete()'s `headRef = 'mission/<id>'` then has a real branch to squash.
+
+### §15.3 Substrate-invariant captured — operator-never-runs-git
+
+Director correction during slice (iii) investigation: "Operator should not be running git commands to start a mission." Captured at `feedback_operator_never_runs_git_commands.md`. The msn CLI is the abstraction over git; operator's only direct git interaction is the standard `git add` / `git commit` edit cycle inside `$(msn workspace)`. Branch management is substrate's job.
+
+A `simulateOperatorWork()` test helper that ran `git checkout -b mission/<id>` manually was a test-side workaround that would have masked substrate-gap 2 — removed. Test helpers that simulate operator-runs-git are anti-pattern; if a test needs them, it's surfacing a substrate gap.
+
+### §15.4 Integration test (slice iii) — would-have-caught-bug-73 discipline
+
+New file: `test/missioncraft-sdk/v1.0.7-slice-iii-bug73-integration.test.ts` (3 tests; ~93s suite-time; HTTP-server fixture via existing W6 pattern).
+
+| Test | Coverage |
+|---|---|
+| scope-bound complete-success | scope create → mission --scope → start → daemon-tick → complete; assert `lifecycleState='completed'` + `publishStatus.<repo>='pr-opened'` |
+| scope-bound abandon-success | same setup; abandon path; assert `lifecycleState='abandoned'` + `abandonRepoStatus.<repo>='cleaned'` |
+| --repo direct-binding complete | regression-net for non-scope path; same fix-site exercised |
+
+Architect note (post-mortem): "When adding new code paths that activate previously-dormant downstream code, integration tests across the FULL new path are mandatory."
+
+### §15.5 Test-assertion tightening — too-permissive disjoint regex
+
+`complete-abandon-integration.test.ts:214` pre-v1.0.7 used `toMatch(/^(failed|squashed|pushed)$/)` — green for BOTH the silent bug-73 find-handle 'failed' path AND the push-failure 'failed' path; couldn't discriminate. Tightened to specific `toBe('failed')` per architect calibration: assert specific success OR specific failure-or-success-disjoint, not all-known-states.
+
+Methodology-class: same as `feedback_substrate_currency_audit_rubric.md` but inverted (test-side too-loose vs engineer-side runtime-gate failures).
+
+### §15.6 Test coverage delta
+
+380 → 383 tests (+3 net):
+- slice (iii): +3 (v1.0.7-slice-iii-bug73-integration.test.ts)
+- slice (ii): no count delta (modified existing complete-abandon-integration + preAllocateWorkspace helper)
+
+`preAllocateWorkspace` helper extended to seed `mission/<id>` branch for substrate-bypass tests; matches real start() flow expectations post-substrate-gap-2 fix.
+
+### §15.7 v1.0.7 ship trail
+
+- slice (i) — investigation-only; root-cause clarification + architect-hypothesis correction
+- slice (ii)+(iii) — `15f5720` 2-substrate-gap composite fix (find-handle + mission-branch setup) + integration test
+- slice (iv) — DEFERRED to v1.0.8 as bug-74 (partial-state-write recovery; post-Option-A it's purely defensive)
+- slice (v) — this §15 doc + version bump 1.0.6 → 1.0.7 + tag v1.0.7 + Director-direct npm publish (γ)
+
+### §15.8 v1.0.6 deprecation recommendation
+
+`npm deprecate @apnex/missioncraft@1.0.6 "scope-bound mission complete/abandon broken end-to-end (bug-73 2-substrate-gap); shipped in v1.0.7+"`. Cumulative: v1.0.0-v1.0.5 deprecated; v1.0.6 pending deprecation; v1.0.7 latest stable.
+
+### §15.9 v1.0.x queue post-v1.0.7
+
+Per architect thread-538 out-of-scope clause:
+- bug-74 (partial-state-write recovery) — slice (iv) deferred; v1.0.8 candidate
+- idea-275 / idea-276+277 / idea-270 / idea-278-283 — v1.0.8+ cycle
+
+scenario-02 now end-to-end unblocked at v1.0.7.
+
+### §15.10 Methodology calibrations (round-state preserved for architect-side roll-up)
+
+1. **Architect-hypothesis-vs-code-reality drift** (companion to `feedback_architect_review_doc_behavioral_claims_code_verify.md`): architect's initial root-cause hypothesis ("daemon-tick unlinks lockfile") was wrong; engineer code-trace surfaced the actual root-cause. Spec-level recall vs code-grep-truth class.
+
+2. **Test-assertion-too-permissive masks bugs** (new): disjoint regex matchers like `/^(failed|succeeded)$/` are green-for-everything; specific assertions or specific-disjoint-pair are dispositive. Calibration-source: `complete-abandon-integration.test.ts:214`.
+
+3. **Test-helper-simulating-operator-runs-git masks substrate gaps** (new; feeds into `feedback_operator_never_runs_git_commands.md`): test helpers that abstract over what the operator would manually do can hide substrate defects in the manual-do path. Pattern: if your test needs to do something the operator wouldn't, your test is masking a defect.
+
+4. **Surface-cadence-per-slice-class confirmed** (companion to `feedback_surface_cadence_per_slice_class.md`): substrate-extension slices warrant per-slice surface; bug-73 cycle surfaced 4 times (open + ratify + slice-i investigation + slice-iii scope-expansion); each surface caught architect-needed disposition that bundle-surface would have missed.
+
+### §15.11 Round-budget posture
+
+5/15 used (1 architect open + 1 architect ratify slice-i investigation + 1 architect ratify scope-expansion + this v1.0.7 SHIPPED surface = round 6). Hotfix completed in single cycle; ~33% budget consumed. Per-slice surface cadence honored throughout.

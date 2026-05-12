@@ -76,6 +76,14 @@ export { OperatorConfigSchema } from './core/operator-config-schema.js';
 
 // ─── Engine-side helpers ───
 export { deriveOwningPrincipalRole } from './core/role-derivation.js';
+
+// ─── v1.0.8 idea-284 Path D2: substrate dependency detection (git + gh binaries) ───
+export {
+  detectSubstrate,
+  refreshSubstrate,
+  requireSubstrate,
+  type SubstrateDetection,
+} from './substrate-detect.js';
 export {
   parseMissionConfig,
   serializeMissionConfig,

@@ -52,8 +52,9 @@ Mission update:
   msn update <id|name> tags-set <key> <value>
   msn update <id|name> tags-remove <key>
 
-Multi-participant (v4.0):
-  msn join <id|name> --coord-remote <url> [--principal <id>]
+Reader-mission flavors (mission-78 W4-new; Design v5.0):
+  msn watch --repo <url> --branch <ref> [--name <slug>]   PERSISTENT-TRACKER reader (long-lived; operator-explicit-abandon)
+  msn join <writer-mission-id> [--name <slug>]            BRANCH-TRACKER reader (auto-close on writer-terminal) [W4-new slice (iii); TODO]
   msn leave <id|name> [--purge-workspace]
 
 Scope namespace:
@@ -265,6 +266,23 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
     }
     case 'scope': {
       await dispatchScope(mc, parsed, format);
+      return;
+    }
+    // mission-78 W4-new (Design v5.0 §2 row 4): PERSISTENT-TRACKER reader-mission via `msn watch`.
+    // Creates a reader-mission with readOnly: true + sourceRemote + sourceBranch; repos[0] points
+    // at the same URL so `msn start` clones it. No Loop B daemon plumbing yet (lands at slice v).
+    case 'watch': {
+      const repo = String(parsed.flags.get('--repo') ?? '');
+      const branch = String(parsed.flags.get('--branch') ?? '');
+      validateRepoUrl(repo);
+      const handle = await mc.create('mission', {
+        ...(parsed.flags.has('--name') && { name: String(parsed.flags.get('--name')) }),
+        repo,
+        readOnly: true,
+        sourceRemote: repo,
+        sourceBranch: branch,
+      });
+      console.log(format === 'text' ? handle.name ? `${handle.id}\t${handle.name}` : handle.id : formatValue(handle, format));
       return;
     }
     // ─── Runtime-deferred (W4/W5) — verbs that the SDK throws "not yet implemented" ───

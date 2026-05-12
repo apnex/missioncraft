@@ -81,6 +81,11 @@ export interface MissionState {
   readonly participants?: readonly MissionParticipant[]; // absent OR exactly 1 writer + 0 readers = solo writer-only mission (v3.6 baseline preserved)
   readonly coordinationRemote?: string;                  // git remote URL for wip-coordination; required IFF participants[] contains a reader (zod superRefine per F-V4.2)
   readonly lastPushSuccessAt?: Date;                     // v4.0 fold per MEDIUM-R2.8 + MEDIUM-R1.9 — operator-DX visibility for coord-remote push-cadence health (engine-derived from .daemon-state.yaml per v4.4 MEDIUM-R3.3; NOT config-persisted)
+  // ─── mission-78 W4-new (Design v5.0 §2 row 4): reader-mission projection fields ───
+  readonly readOnly?: boolean;                           // true → reader-mission (BRANCH-TRACKER OR PERSISTENT-TRACKER)
+  readonly sourceMissionId?: string;                     // BRANCH-TRACKER (msn join) references writer-mission
+  readonly sourceRemote?: string;                        // PERSISTENT-TRACKER (msn watch) source URL
+  readonly sourceBranch?: string;                        // ref name (both reader-flavors via different mechanisms)
   readonly lifecycleState: MissionStatePhase;
   readonly createdAt: Date;
   readonly updatedAt: Date;

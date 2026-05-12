@@ -73,7 +73,16 @@ export interface ResourceMap {
     state: MissionState;
     config: MissionConfig;
     filter: MissionFilter;
-    createOpts: { name?: string; repo?: string | string[]; scope?: string };
+    createOpts: {
+      name?: string;
+      repo?: string | string[];
+      scope?: string;
+      // mission-78 W4-new (Design v5.0 §2 row 4): reader-mission creation fields
+      readOnly?: boolean;                       // true → reader-mission (BRANCH-TRACKER OR PERSISTENT-TRACKER)
+      sourceMissionId?: string;                 // BRANCH-TRACKER (msn join <writer-mission-id>)
+      sourceRemote?: string;                    // PERSISTENT-TRACKER (msn watch --repo)
+      sourceBranch?: string;                    // ref name (both reader-flavors)
+    };
     getOpts: { principal?: string };
     listOpts: { principal?: string };
     deletable: false;
@@ -1959,14 +1968,31 @@ export class Missioncraft {
         ? (Array.isArray(opts.repo) ? opts.repo : [opts.repo]).map((url) => ({ url, name: repoNameFromUrl(url) }))
         : []
     );
+
+    // mission-78 W4-new (Design v5.0 §2 row 4): reader-mission detection.
+    // PERSISTENT-TRACKER (msn watch): readOnly=true + sourceRemote + sourceBranch (no sourceMissionId)
+    // BRANCH-TRACKER (msn join):       readOnly=true + sourceMissionId (no sourceRemote/Branch)
+    // Validation rejects writer-with-readOnly + reader-without-source + partial-source per schema.
+    const isReaderMission = opts.readOnly === true;
+    // Reader-mission's initial lifecycle is 'joined' (reader-state); writer-mission's is 'created'
+    // (no repos) or 'configured' (with repos). MissionStatePhaseSchema.default('created') would
+    // override our explicit 'joined' for reader-missions — set explicitly.
+    const initialLifecycle: MissionStatePhase = isReaderMission
+      ? 'joined'
+      : (repos.length === 0 ? 'created' : 'configured');
+
     const config: MissionConfig = {
       missionConfigSchemaVersion: 2,
       mission: {
         id,
         ...(opts.name !== undefined && { name: opts.name }),
         ...(resolvedScopeId !== undefined && { scopeId: resolvedScopeId }),
-        lifecycleState: repos.length === 0 ? 'created' : 'configured',
+        lifecycleState: initialLifecycle,
         createdAt: now,
+        ...(isReaderMission && { readOnly: true }),
+        ...(opts.sourceMissionId !== undefined && { sourceMissionId: opts.sourceMissionId }),
+        ...(opts.sourceRemote !== undefined && { sourceRemote: opts.sourceRemote }),
+        ...(opts.sourceBranch !== undefined && { sourceBranch: opts.sourceBranch }),
       },
       repos,
     };
@@ -2045,7 +2071,10 @@ export class Missioncraft {
       throw new MissionStateError(`mission not found: '${id}' (no config at ${path})`);
     }
     const content = await readFile(path, 'utf8');
-    const config = parseMissionConfig(content, path);
+    // mission-78 W4-new: use 'auto' role-derivation so reader-mission configs (lifecycleState in
+    // reader-states) parse successfully through the reader-role schema. Pre-W4-new default-writer
+    // role would reject reader-side lifecycle-states.
+    const config = parseMissionConfig(content, path, 'auto');
     return this.missionConfigToState(config, principal);
   }
 
@@ -2131,6 +2160,11 @@ export class Missioncraft {
       ...(m.publishedPRs !== undefined && { publishedPRs: m.publishedPRs }),
       ...(m.abandonProgress !== undefined && { abandonProgress: m.abandonProgress }),
       ...(m.abandonRepoStatus !== undefined && { abandonRepoStatus: m.abandonRepoStatus }),
+      // mission-78 W4-new (Design v5.0 §2 row 4): reader-mission projection fields
+      ...(m.readOnly !== undefined && { readOnly: m.readOnly }),
+      ...(m.sourceMissionId !== undefined && { sourceMissionId: m.sourceMissionId }),
+      ...(m.sourceRemote !== undefined && { sourceRemote: m.sourceRemote }),
+      ...(m.sourceBranch !== undefined && { sourceBranch: m.sourceBranch }),
     };
   }
 

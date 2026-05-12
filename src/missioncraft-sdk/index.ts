@@ -99,6 +99,7 @@ export {
   RemoteAuthError,
   ApprovalDeniedError,
   MissionStateError,
+  ReaderAutoCloseError,
   WorkspaceConflictError,
   ConfigValidationError,
   UnsupportedOperationError,

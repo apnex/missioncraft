@@ -18,6 +18,7 @@ import chokidar, { type FSWatcher } from 'chokidar';
 import { updateLockfileState } from '../state-machine/lockfile-state.js';
 import { Missioncraft } from '../missioncraft.js';
 import { parseMissionConfig } from '../yaml-transform.js';
+import { ReaderAutoCloseError } from '../../errors.js';
 
 const DEBOUNCE_MS = 1000;        // 1s default; configurable via mission.stateDurability.wipCadenceMs in slice (ii)
 const HEARTBEAT_MS = 60_000;     // 60s lockfile-TTL extension cadence
@@ -122,9 +123,20 @@ async function main(): Promise<void> {
     }
     const loopBTimer = setInterval(() => {
       if (isV5Reader) {
-        // v5.0 reader-mission (BRANCH-TRACKER or PERSISTENT-TRACKER): direct fetch+reset
-        void mcReader.readerLoopBV5Tick(missionId).catch(() => {
-          // Loop B tick failure non-aborting; next tick retries
+        // v5.0 reader-mission (BRANCH-TRACKER or PERSISTENT-TRACKER): direct fetch+reset.
+        // mission-78 W4-new slice (v.b): ReaderAutoCloseError signals writer-terminal detection
+        // (BRANCH-TRACKER: writer config-gone OR lifecycle terminal). Path: atomic lifecycle
+        // advance to 'abandoned' via readerAutoAbandon + SIGTERM-self. Other errors are tick-
+        // transient (retry next tick).
+        void mcReader.readerLoopBV5Tick(missionId).catch((err: unknown) => {
+          if (err instanceof ReaderAutoCloseError) {
+            void (async (): Promise<void> => {
+              try { await mcReader.readerAutoAbandon(missionId, err.message); } catch { /* best-effort */ }
+              clearInterval(loopBTimer);
+              void readerShutdown('AUTO-CLOSE');
+            })();
+          }
+          // Other errors: non-aborting; next tick retries
         });
       } else if (principalArg) {
         // v4.x legacy reader-mode: coord-mirror semantics (preserved through W7-new)

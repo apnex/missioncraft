@@ -61,7 +61,12 @@ afterEach(async () => {
     await fixture.close();
     fixture = undefined;
   }
-  if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+  if (tempRoot) {
+    // mission-78 W4-new slice (v.b): Loop B chmod-down may leave reader-workspaces at 0444/0555.
+    // chmod-up before rm so cleanup doesn't EACCES on read-only directories.
+    try { await execFileAsync('chmod', ['-R', 'u+rwX', tempRoot]); } catch { /* best-effort */ }
+    await rm(tempRoot, { recursive: true, force: true });
+  }
 });
 
 describe('v1.2.0 W4-new slice (v) — readerLoopBV5Tick: no-op + dispatch coverage', () => {
@@ -110,18 +115,16 @@ describe('v1.2.0 W4-new slice (v) — readerLoopBV5Tick: no-op + dispatch covera
     expect(lsOut).toContain('after-tick.md');
   }, 30_000);
 
-  it('BRANCH-TRACKER reader with deleted writer-mission returns 0 (graceful)', async () => {
+  it('BRANCH-TRACKER reader with deleted writer-mission throws ReaderAutoCloseError (slice-v.b auto-close)', async () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
 
-    // Establish writer → reader, then delete writer's config to simulate writer-gone state.
-    // This is the precursor to slice-(v) extension auto-close mechanics — for now Loop B returns
-    // 0 (graceful) when source vanishes; auto-close polish lands as a follow-up.
+    // mission-78 W4-new slice (v.b): writer-mission config-missing is auto-close failure-mode 1.
+    // Loop B throws ReaderAutoCloseError → watcher-entry catches → atomic lifecycle advance to
+    // 'abandoned' via readerAutoAbandon + SIGTERM-self (test coverage for the daemon-side cascade
+    // is in v1.2.0-w4-new-reader-auto-close.test.ts; here we verify the throw-from-Loop B path).
     const writer = await mc.create('mission', { repo: bareRepoUrl });
     const reader = await mc.create('mission', { readOnly: true, sourceMissionId: writer.id });
-    // Delete writer-config to simulate writer-mission gone (missionConfigPath is private; SDK
-    // persists at <workspaceRoot>/config/missions/<id>.yaml per missioncraft.ts convention)
     await unlink(join(tempRoot, 'config', 'missions', `${writer.id}.yaml`));
-    const count = await mc.readerLoopBV5Tick(reader.id);
-    expect(count).toBe(0);
+    await expect(mc.readerLoopBV5Tick(reader.id)).rejects.toThrow(/auto-close.*config-file missing/);
   });
 });

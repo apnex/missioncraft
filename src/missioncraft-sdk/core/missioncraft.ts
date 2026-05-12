@@ -23,6 +23,7 @@ import { stringify as yamlStringify } from 'yaml';
 import {
   ConfigValidationError,
   MissionStateError,
+  ReaderAutoCloseError,
   UnsupportedOperationError,
 } from '../errors.js';
 import type {
@@ -277,15 +278,21 @@ export class Missioncraft {
       throw new MissionStateError(`Missioncraft.start: mission '${missionId}' not found`);
     }
     const initialContent = await readFile(path, 'utf8');
-    const initialConfig = parseMissionConfig(initialContent, path);
-    if (initialConfig.mission.lifecycleState !== 'configured') {
+    // mission-78 W4-new slice (v.b): reader-mission has lifecycle 'joined' (per slice-ii/iii
+    // createMission initialLifecycle); parse with 'auto' role-derivation so reader-state YAML
+    // parses through reader-role schema (matches getMission behavior).
+    const initialConfig = parseMissionConfig(initialContent, path, 'auto');
+    const isReaderStart = initialConfig.mission.readOnly === true;
+    // Reader-mission accepts lifecycle 'joined'; writer-mission requires 'configured' (W4-new v.b).
+    const validPreStates: readonly MissionStatePhase[] = isReaderStart ? ['joined'] : ['configured'];
+    if (!validPreStates.includes(initialConfig.mission.lifecycleState)) {
       throw new MissionStateError(
-        `Missioncraft.start: requires lifecycle 'configured' (current: '${initialConfig.mission.lifecycleState}')`,
+        `Missioncraft.start: requires lifecycle ${validPreStates.map((s) => `'${s}'`).join(' or ')} (current: '${initialConfig.mission.lifecycleState}')`,
       );
     }
     if (initialConfig.repos.length === 0) {
       throw new MissionStateError(
-        `Missioncraft.start: requires at least 1 repo (lifecycle 'configured' but repos[] empty — invariant violation)`,
+        `Missioncraft.start: requires at least 1 repo (lifecycle '${initialConfig.mission.lifecycleState}' but repos[] empty — invariant violation)`,
       );
     }
 
@@ -315,6 +322,16 @@ export class Missioncraft {
 
       // Step 3: allocate workspaces + Step 4: clone repos + create+checkout working branch
       const identity = await this.identity.resolve();
+      // mission-78 W4-new slice (v.b): reader-mission needs different clone+checkout path.
+      // For BRANCH-TRACKER (sourceMissionId): clone writer.repos[i].url + checkout
+      // `mission/<sourceMissionId>` (v5.0 single-branch architecture per Design v5.0 §2 row 2).
+      // For PERSISTENT-TRACKER (sourceRemote + sourceBranch): clone sourceRemote + checkout
+      // sourceBranch. No writer-branch-creation; reader has no mutation surface.
+      const readerSourceBranch = isReaderStart
+        ? initialConfig.mission.sourceMissionId !== undefined
+          ? `mission/${initialConfig.mission.sourceMissionId}`
+          : initialConfig.mission.sourceBranch
+        : undefined;
       for (const repo of initialConfig.repos) {
         emit({ phase: 'allocate-workspace', message: `allocating workspace for repo '${repo.name ?? repo.url}'` });
         const workspace = await this.storage.allocate(missionId, repo.url);
@@ -325,27 +342,54 @@ export class Missioncraft {
           identity,
           ...(this.remote !== undefined && { remote: this.remote }),
         });
-        // v1.0.7 bug-73 fix part B (per mission-types.ts:46 / Design v1.7 MINOR-R6.6):
-        // engine substitutes `mission/<missionId>` as the working branch and checks it out
-        // post-clone. Operator's subsequent `git add` + `git commit` then lands on the mission
-        // branch automatically — no operator-side `git checkout` needed (operator-never-runs-git
-        // substrate invariant per Director correction 2026-05-12). complete()'s squash-loop later
-        // reads from this branch via `headRef = 'mission/<missionId>'` (missioncraft.ts:630).
-        const workingBranch = repo.branch ?? `mission/${missionId}`;
-        await this.gitEngine.branch(workspace, workingBranch);
-        await this.gitEngine.checkout(workspace, workingBranch);
+        if (isReaderStart) {
+          // Reader: checkout source-branch directly (no writer-branch creation; workspace is
+          // read-only mirror of source). Post-checkout chmod-down to 0444/0555 per slice (v.b).
+          if (readerSourceBranch !== undefined) {
+            // PERSISTENT-TRACKER source-branch may not exist locally post-clone (clone defaults
+            // to remote HEAD); fetch the specific source-branch then checkout.
+            try {
+              await this.gitEngine.fetch(workspace, { remote: 'origin', branch: readerSourceBranch });
+            } catch { /* clone may have already fetched; checkout will surface real issue */ }
+            await this.gitEngine.checkout(workspace, readerSourceBranch);
+          }
+        } else {
+          // v1.0.7 bug-73 fix part B (per mission-types.ts:46 / Design v1.7 MINOR-R6.6):
+          // engine substitutes `mission/<missionId>` as the working branch and checks it out
+          // post-clone. Operator's subsequent `git add` + `git commit` then lands on the mission
+          // branch automatically — no operator-side `git checkout` needed (operator-never-runs-git
+          // substrate invariant per Director correction 2026-05-12). complete()'s squash-loop later
+          // reads from this branch via `headRef = 'mission/<missionId>'` (missioncraft.ts:630).
+          const workingBranch = repo.branch ?? `mission/${missionId}`;
+          await this.gitEngine.branch(workspace, workingBranch);
+          await this.gitEngine.checkout(workspace, workingBranch);
+        }
       }
 
-      // Step 5: atomic-write lifecycle 'configured' → 'started' (transient state per v3.2 MEDIUM-R2.4)
+      // mission-78 W4-new slice (v.b): reader-workspace chmod-down post-clone+checkout.
+      // 0444 (file read-only) + 0555 (dir read+execute) per Design v4.8 §2.10.4 strict-enforce;
+      // .git/ tree excluded so engine-internal fetch/checkout still works. Loop B's fetch+reset
+      // cycle then chmod-ups, syncs, chmod-downs (slice-(v.b) Loop B cycle).
+      if (isReaderStart) {
+        const { setReaderWorkspaceMode } = await import('./reader-workspace-mode.js');
+        for (const ws of workspaceHandles) {
+          await setReaderWorkspaceMode(ws.path);
+        }
+      }
+
+      // Step 5: atomic-write lifecycle 'configured'|'joined' → 'started' (transient state per v3.2
+      // MEDIUM-R2.4). mission-78 W4-new slice (v.b): reader-mission's pre-state is 'joined';
+      // writer's is 'configured'. Both target-transition to 'started'.
       await this._engineMutate(
         missionId,
         (config) => ({ ...config, mission: { ...config.mission, lifecycleState: 'started' } }),
         {
           validate: (config) =>
-            config.mission.lifecycleState === 'configured'
+            validPreStates.includes(config.mission.lifecycleState)
               ? null
-              : `transition rejected: expected 'configured' got '${config.mission.lifecycleState}'`,
+              : `transition rejected: expected ${validPreStates.map((s) => `'${s}'`).join(' or ')} got '${config.mission.lifecycleState}'`,
           sourceLabel: `Missioncraft.start.step5-begin('${missionId}')`,
+          role: 'auto',
         },
       );
 
@@ -363,22 +407,25 @@ export class Missioncraft {
         });
         daemonSpawned = true;
       } catch (spawnErr: unknown) {
-        // Spawn-failure rollback: revert lifecycle to 'configured' (best-effort)
+        // Spawn-failure rollback: revert lifecycle to original pre-state (best-effort).
+        // mission-78 W4-new slice (v.b): reader's pre-state is 'joined'; writer's is 'configured'.
+        const rollbackTarget: MissionStatePhase = isReaderStart ? 'joined' : 'configured';
         try {
           await this._engineMutate(
             missionId,
-            (config) => ({ ...config, mission: { ...config.mission, lifecycleState: 'configured' } }),
+            (config) => ({ ...config, mission: { ...config.mission, lifecycleState: rollbackTarget } }),
             {
               validate: (config) =>
                 config.mission.lifecycleState === 'started'
                   ? null
                   : `rollback rejected: expected 'started' got '${config.mission.lifecycleState}'`,
               sourceLabel: `Missioncraft.start.spawn-failure-rollback('${missionId}')`,
+              role: 'auto',
             },
           );
         } catch { /* rollback best-effort; release-locks still runs in finally */ }
         throw new MissionStateError(
-          `Missioncraft.start: daemon-spawn failed; lifecycle rolled back to 'configured'; original error: ${spawnErr instanceof Error ? spawnErr.message : String(spawnErr)}`,
+          `Missioncraft.start: daemon-spawn failed; lifecycle rolled back to '${rollbackTarget}'; original error: ${spawnErr instanceof Error ? spawnErr.message : String(spawnErr)}`,
           { cause: spawnErr instanceof Error ? spawnErr : undefined },
         );
       }
@@ -1478,7 +1525,12 @@ export class Missioncraft {
 
     if (config.mission.readOnly !== true) return 0;        // writer-mission — Loop B no-op
 
-    // Resolve source-remote + source-branch per reader-flavor
+    // Resolve source-remote + source-branch per reader-flavor.
+    // mission-78 W4-new slice (v.b) auto-close mechanics: BRANCH-TRACKER detects writer-terminal
+    // via 2 paths — (1) writer mission-config gone OR (2) writer lifecycle in terminal-states.
+    // Both surface as ReaderAutoCloseError → watcher-entry catches → atomic lifecycle advance
+    // to 'abandoned' + SIGTERM-self. PERSISTENT-TRACKER has no writer-mission lookup; its
+    // auto-close path is via fetch-failure ("branch not found" upstream).
     let sourceRemote: string;
     let sourceBranch: string;
     if (config.mission.sourceRemote !== undefined && config.mission.sourceBranch !== undefined) {
@@ -1487,11 +1539,23 @@ export class Missioncraft {
       sourceBranch = config.mission.sourceBranch;
     } else if (config.mission.sourceMissionId !== undefined) {
       // BRANCH-TRACKER (msn join): resolve writer-mission's first-repo URL +
-      // `refs/heads/mission/<writer-id>` (v5.0 single-branch architecture)
+      // `refs/heads/mission/<writer-id>` (v5.0 single-branch architecture).
+      // mission-78 W4-new slice (v.b) auto-close: writer mission-config missing OR terminal →
+      // ReaderAutoCloseError (failure-mode 2 + writer-local-terminal detection).
       const writerPath = this.missionConfigPath(config.mission.sourceMissionId);
-      if (!existsSync(writerPath)) return 0;               // writer-mission gone → fetch will fail; auto-close (slice-v extension)
+      if (!existsSync(writerPath)) {
+        throw new ReaderAutoCloseError(
+          `BRANCH-TRACKER reader '${missionId}' auto-close: writer-mission '${config.mission.sourceMissionId}' config-file missing`,
+        );
+      }
       const writerContent = await readFile(writerPath, 'utf8');
       const writerConfig = parseMissionConfig(writerContent, writerPath, 'auto');
+      const writerLifecycle = writerConfig.mission.lifecycleState;
+      if (writerLifecycle === 'completed' || writerLifecycle === 'abandoned') {
+        throw new ReaderAutoCloseError(
+          `BRANCH-TRACKER reader '${missionId}' auto-close: writer-mission '${config.mission.sourceMissionId}' is terminal (${writerLifecycle})`,
+        );
+      }
       if (writerConfig.repos.length === 0) return 0;       // writer has no repos
       sourceRemote = writerConfig.repos[0].url;
       sourceBranch = `mission/${config.mission.sourceMissionId}`;
@@ -1506,21 +1570,78 @@ export class Missioncraft {
         const handles = await this.storage.list(missionId);
         const handle = handles.find((h) => basename(h.path) === repoName);
         if (!handle) continue;                              // workspace not allocated yet — skip
-        // git fetch source-remote source-branch:refs/remotes/source/source-branch
-        await this.gitEngine.fetch(handle, {
-          remote: sourceRemote,
-          branch: `${sourceBranch}:refs/remotes/source/source-branch`,
-        });
-        // git reset --hard refs/remotes/source/source-branch — sync working-tree to source-tip.
-        // GitEngine doesn't expose reset directly; shell out via gitExec helper if NativeEng,
-        // else fall back to checkout. Use a private helper to keep engine-pluggable surface clean.
-        await this.gitResetHard(handle, 'refs/remotes/source/source-branch');
-        successCount++;
+        // mission-78 W4-new slice (v.b): chmod-up workspace BEFORE fetch+reset (working-tree
+        // needs write-permission for `git reset --hard` to update files). chmod-down AFTER
+        // sync per slice (v.b) workspace-0444 invariant. .git/ tree excluded from chmod
+        // (engine-internal sync needs write throughout).
+        const { setReaderWorkspaceMode, setReaderWorkspaceWritable } = await import('./reader-workspace-mode.js');
+        let chmodUpApplied = false;
+        try {
+          await setReaderWorkspaceWritable(handle.path);
+          chmodUpApplied = true;
+          // git fetch source-remote source-branch:refs/remotes/source/source-branch
+          await this.gitEngine.fetch(handle, {
+            remote: sourceRemote,
+            branch: `${sourceBranch}:refs/remotes/source/source-branch`,
+          });
+          // git reset --hard refs/remotes/source/source-branch — sync working-tree to source-tip.
+          // GitEngine doesn't expose reset directly; shell out via gitExec helper if NativeEng,
+          // else fall back to checkout. Use a private helper to keep engine-pluggable surface clean.
+          await this.gitResetHard(handle, 'refs/remotes/source/source-branch');
+          successCount++;
+        } finally {
+          // chmod-down ALWAYS — even on fetch/reset failure (preserves 0444 invariant; best-effort)
+          if (chmodUpApplied) {
+            try { await setReaderWorkspaceMode(handle.path); } catch { /* best-effort */ }
+          }
+        }
       } catch {
         // Per-repo fetch+reset failure non-aborting; next tick retries
       }
     }
     return successCount;
+  }
+
+  /**
+   * Reader-mission auto-abandon path — daemon-side atomic lifecycle advance to 'abandoned' when
+   * Loop B detects writer-terminal (mission-78 W4-new slice (v.b) auto-close mechanics).
+   *
+   * Daemon-side mutation (not CLI-side abandon flow): just advances lifecycle to 'abandoned' +
+   * writes abandonMessage; lock-cleanup left to operator's subsequent `msn list` discovery + any
+   * cleanup pass. Watcher-entry calls this when ReaderAutoCloseError surfaces from Loop B, then
+   * SIGTERMs self.
+   *
+   * Idempotent: if mission already in terminal state, no-ops without error.
+   */
+  async readerAutoAbandon(missionId: string, reason: string): Promise<void> {
+    const path = this.missionConfigPath(missionId);
+    if (!existsSync(path)) return;
+    try {
+      await this._engineMutate(
+        missionId,
+        (config) => ({
+          ...config,
+          mission: {
+            ...config.mission,
+            lifecycleState: 'abandoned' as MissionStatePhase,
+            abandonMessage: config.mission.abandonMessage ?? reason,
+          },
+        }),
+        {
+          validate: (config) => {
+            const state = config.mission.lifecycleState;
+            if (state === 'completed' || state === 'abandoned') {
+              return `already-terminal: lifecycle '${state}'`;
+            }
+            return null;
+          },
+          sourceLabel: `Missioncraft.readerAutoAbandon('${missionId}')`,
+          role: 'auto',
+        },
+      );
+    } catch {
+      // Idempotent on already-terminal: validate-rejection swallowed (mission already auto-closed).
+    }
   }
 
   /**

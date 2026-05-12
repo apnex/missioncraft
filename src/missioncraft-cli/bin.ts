@@ -182,6 +182,13 @@ function renderFsmHint(verb: string, currentState: string, idOrName: string | un
 }
 
 async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputFormat): Promise<void> {
+  // mission-78 W4-new slice (v.b) housekeeping (architect observation thread-546 round 7):
+  // dispatch-switch invariant — CREATION VERBS (create, watch, join) live in main dispatch;
+  // RUNTIME-DEFERRED VERBS (start, complete, abandon, etc.) live in invokeRuntimeDeferred and
+  // operate on existing mission ids. W6-new hybrid grammar formalizes this distinction with
+  // id-first vs verb-first placement; until then, sister-verb placement enforces it manually
+  // (slice-(ii) `watch` + slice-(iii) `join` both required main-dispatch placement; misplacement
+  // surfaces as build-error since `format` is not in scope in invokeRuntimeDeferred).
   switch (parsed.verb) {
     case 'create': {
       // v1.0.5 bug-67 item 4: validate --repo URL via `new URL(...)` parse

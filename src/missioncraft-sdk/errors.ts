@@ -83,6 +83,20 @@ export class MissionStateError extends MissioncraftError {
 }
 
 /**
+ * Reader-mission auto-close signal — thrown by readerLoopBV5Tick when BRANCH-TRACKER detects
+ * writer-terminal (writer mission-config gone OR writer lifecycle terminal). Distinct from
+ * MissionStateError so watcher-entry can pattern-match → atomic lifecycle advance to
+ * 'abandoned' + SIGTERM-self path (mission-78 W4-new slice (v.b) auto-close mechanics).
+ */
+export class ReaderAutoCloseError extends MissioncraftError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'ReaderAutoCloseError';
+    Object.setPrototypeOf(this, ReaderAutoCloseError.prototype);
+  }
+}
+
+/**
  * Repo-lock conflict — repo already locked by a different mission (one-active-mission-per-repo invariant violation).
  * Per StorageProvider.acquireRepoLock contract.
  */

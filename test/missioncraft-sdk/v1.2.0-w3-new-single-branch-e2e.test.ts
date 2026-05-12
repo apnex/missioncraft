@@ -122,10 +122,17 @@ describe('v1.2.0 W3-new — Flow B canonical end-to-end: daemon-commit → missi
     );
     expect(readmeContent).toContain('W3-new Flow B canonical test content');
 
+    // Snapshot local main pre-complete for "main-unchanged" SHAPE assertion (Fix #9)
+    const localMainPreComplete = (await execFileAsync('git', ['rev-parse', 'main'], { cwd: wsPath })).stdout.trim();
+    const upstreamMainPreComplete = (await execFileAsync('git', ['rev-parse', 'refs/heads/main'], { cwd: bareDir })).stdout.trim();
+
     // Operator publishes via msn complete (Flow B canonical: operator never typed git)
-    const result = await mc.complete(handle.id, 'W3-new Flow B canonical e2e test — daemon→mission→publish');
+    const publishMessage = 'W3-new Flow B canonical e2e test — daemon→mission→publish';
+    const result = await mc.complete(handle.id, publishMessage);
     expect(result.lifecycleState).toBe('completed');
     expect(result.publishStatus?.['sandbox']).toBe('pr-opened');
+
+    // ─── CONTENT assertions (necessary-but-not-sufficient per Fix #9 calibration) ───
 
     // Verify upstream mission-branch was pushed + has the edited README content
     const { stdout: upstreamReadme } = await execFileAsync(
@@ -139,5 +146,45 @@ describe('v1.2.0 W3-new — Flow B canonical end-to-end: daemon-commit → missi
     );
     expect(diffStat).toContain('README.md');
     expect(diffStat).toMatch(/1 file changed/);
+
+    // ─── W3-new Fix #9 SHAPE assertions (architect-spec; closes the loop per dogfood-trail §E) ───
+
+    // SHAPE-1: upstream mission/<id> tip commit-message === publishMessage (operator's complete-msg)
+    // Pre-Fix-#8: tip was the daemon-commit ('[auto] daemon-commit') — not the operator's message.
+    const { stdout: upstreamTipMsg } = await execFileAsync(
+      'git', ['log', '-1', '--pretty=format:%s', `refs/heads/mission/${handle.id}`], { cwd: bareDir },
+    );
+    expect(upstreamTipMsg).toBe(publishMessage);
+
+    // SHAPE-2: upstream mission/<id> tip's parent === upstream main tip (squash-parent assertion).
+    // Single-parent commit = single squashed commit on top of main, NOT a chain.
+    const { stdout: tipParentList } = await execFileAsync(
+      'git', ['rev-list', '--parents', '-n1', `refs/heads/mission/${handle.id}`], { cwd: bareDir },
+    );
+    const tipParents = tipParentList.trim().split(/\s+/).slice(1);
+    expect(tipParents).toEqual([upstreamMainPreComplete]);
+
+    // SHAPE-3: upstream mission/<id> exactly 1 commit ahead of upstream main (squash collapsed
+    // daemon's chain to single commit; not the daemon-commits-chain).
+    // Pre-Fix-#8: count would be >= 1 (the daemon-chain), tip would be the daemon-commit.
+    const { stdout: aheadCount } = await execFileAsync(
+      'git', ['rev-list', '--count', `refs/heads/main..refs/heads/mission/${handle.id}`], { cwd: bareDir },
+    );
+    expect(aheadCount.trim()).toBe('1');
+
+    // SHAPE-4: local main UNCHANGED post-complete (Fix #8 correction: squash updates headRef,
+    // NOT baseRef). Pre-Fix-#8: local main was orphan-advanced to the squashed commit.
+    const localMainPostComplete = (await execFileAsync('git', ['rev-parse', 'main'], { cwd: wsPath })).stdout.trim();
+    expect(localMainPostComplete).toBe(localMainPreComplete);
+
+    // SHAPE-5: upstream main UNCHANGED post-complete (squash + push touches only mission/<id>)
+    const upstreamMainPostComplete = (await execFileAsync('git', ['rev-parse', 'refs/heads/main'], { cwd: bareDir })).stdout.trim();
+    expect(upstreamMainPostComplete).toBe(upstreamMainPreComplete);
+
+    // SHAPE-6: no `wip/<id>` ref anywhere (single-branch architecture; W3-new architectural-class-elimination)
+    const { stdout: localRefs } = await execFileAsync('git', ['for-each-ref', '--format=%(refname)'], { cwd: wsPath });
+    expect(localRefs).not.toMatch(/refs\/heads\/wip\//);
+    const { stdout: upstreamRefs } = await execFileAsync('git', ['for-each-ref', '--format=%(refname)'], { cwd: bareDir });
+    expect(upstreamRefs).not.toMatch(/refs\/heads\/wip\//);
   }, 60_000);
 });

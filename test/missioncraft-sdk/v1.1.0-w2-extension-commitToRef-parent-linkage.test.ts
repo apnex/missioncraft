@@ -128,43 +128,50 @@ describe('v1.1.0 W2-ext §2 — IsomorphicGitEngine.commitToRef parent-linkage p
 });
 
 // ════════════════════════════════════════════════════════════════════════════════════════
-// §3 End-to-end via squashCommit — wip-branch built by commitToRef can be squash-merged
-//    (the bug-reproduction path; load-bearing for `msn complete` flow)
+// §3 End-to-end via squashCommit — daemon-style commitToRef chain on mission-branch can be
+//    squash-published into a single commit on mission-branch (W3-new single-branch semantic;
+//    Fix #4 bypass-INDEX + Fix #8 update-ref headRef target both load-bearing)
 // ════════════════════════════════════════════════════════════════════════════════════════
 
-describe('v1.1.0 W2-ext §3 — squashCommit against wip-branch built via commitToRef succeeds (dogfood-repro)', () => {
+describe('v1.1.0 W2-ext §3 — squashCommit against commitToRef-built mission-branch succeeds (W3-new single-branch + Fix #4 + Fix #8 combined)', () => {
   for (const [engineName, engineFactory] of [
     ['NativeGitEngine', () => new NativeGitEngine()],
     ['IsomorphicGitEngine', () => new IsomorphicGitEngine()],
   ] as const) {
-    it(`${engineName}: commitToRef-built wip-branch squash-merges into base-branch with UNTRACKED FILES IN WORKING TREE (Fix #3 + Fix #4 combined; dogfood-repro)`, async () => {
+    it(`${engineName}: daemon commitToRef-chain on mission-branch + squashCommit publishes single commit on mission-branch with UNTRACKED FILES IN WORKING TREE (architecturally correct under v5.0 single-branch)`, async () => {
       const dir = join(tempRoot, `repo-${engineName}`);
       await seedRepo(dir);
       const ws = makeWorkspace(dir);
       const engine: GitEngine = engineFactory();
       await engine.init(ws, { fs: undefined, identity: IDENTITY });
 
-      // Simulate daemon-watcher flow: branch off main → checkout mission/<id> → wip-commit via commitToRef
+      // v5.0 single-branch flow: branch off main → checkout mission/<id> → daemon commits to
+      // mission/<id> directly via commitToRef (no wip/<id> sidecar per W3-new)
       await engine.branch(ws, 'mission/m-test');
       await engine.checkout(ws, 'mission/m-test');
 
-      // First wip-commit on a fresh wip ref — Fix #3 anchors to HEAD (no orphan-root)
+      const mainTipBefore = (await execFileAsync('git', ['rev-parse', 'main'], { cwd: dir })).stdout.trim();
+
+      // First daemon-commit on mission-branch — Fix #3 anchors to HEAD (no orphan-root)
       await writeFile(join(dir, 'work-1.txt'), 'work 1\n', 'utf8');
-      await engine.commitToRef(ws, 'refs/heads/wip/m-test', { message: 'daemon wip 1' });
-      // Subsequent wip-commit chains through (parent = previous wip-commit)
+      await engine.commitToRef(ws, 'refs/heads/mission/m-test', { message: '[auto] daemon-commit 1' });
+      // Subsequent daemon-commit chains through (parent = previous daemon-commit on mission-branch)
       await writeFile(join(dir, 'work-2.txt'), 'work 2\n', 'utf8');
-      await engine.commitToRef(ws, 'refs/heads/wip/m-test', { message: 'daemon wip 2' });
+      await engine.commitToRef(ws, 'refs/heads/mission/m-test', { message: '[auto] daemon-commit 2' });
 
       // CRITICAL: leave untracked work-*.txt files in working tree — this is the EXACT dogfood
       // failure-mode that exposed Fix #4. Pre-Fix-#4 squashCommit's `git merge --squash` would
       // abort with "untracked files would be overwritten by merge". Bypass-INDEX impl (Fix #4)
       // never touches the working tree, so the squash succeeds regardless of working-tree state.
 
+      // Squash mission-branch's daemon-chain into a single commit on mission-branch.
+      // baseRef='main' is the eventual PR target (parent of squashed commit);
+      // headRef='mission/m-test' is the publish artifact (update-ref target per Fix #8).
       const squashedSha = await engine.squashCommit(
         ws,
-        'mission/m-test',
-        'refs/heads/wip/m-test',
-        `${engineName}: scenario-02-style squash-merge of wip-chain back to mission-branch`,
+        'main',
+        'refs/heads/mission/m-test',
+        `${engineName}: v5.0 single-branch squash-publish — collapse daemon-chain into 1 commit on mission-branch`,
       );
       expect(squashedSha).toMatch(/^[0-9a-f]{40}$/);
 
@@ -173,9 +180,18 @@ describe('v1.1.0 W2-ext §3 — squashCommit against wip-branch built via commit
       expect(lsTree).toContain('work-1.txt');
       expect(lsTree).toContain('work-2.txt');
 
-      // mission-branch ref now points at the squashed commit (downstream push uses ref, not HEAD)
+      // W3-new extension Fix #8: HEADREF (mission-branch) ref now points at squashed commit
       const { stdout: missionTip } = await execFileAsync('git', ['rev-parse', 'mission/m-test'], { cwd: dir });
       expect(missionTip.trim()).toBe(squashedSha);
+
+      // baseRef (main) UNCHANGED post-squash (Fix #8 correction: base is parent-source, not target)
+      const mainTipAfter = (await execFileAsync('git', ['rev-parse', 'main'], { cwd: dir })).stdout.trim();
+      expect(mainTipAfter).toBe(mainTipBefore);
+
+      // Squashed commit has single parent === pre-squash main tip (squash is FF-style atop main)
+      const { stdout: parentList } = await execFileAsync('git', ['rev-list', '--parents', '-n1', squashedSha], { cwd: dir });
+      const parents = parentList.trim().split(/\s+/).slice(1);
+      expect(parents).toEqual([mainTipBefore]);
 
       // Working tree state UNTOUCHED — work-*.txt files still present as untracked
       // (proves Fix #4 bypass-INDEX semantic: operator's working-tree state never affects squash)

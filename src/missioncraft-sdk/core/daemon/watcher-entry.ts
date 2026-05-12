@@ -161,7 +161,13 @@ async function main(): Promise<void> {
     mcSdk = undefined as unknown as Missioncraft;
   }
 
-  watcher.on('change', () => {
+  // mission-78 W3-new extension Fix #6: subscribe to chokidar `add` + `unlink` + `change` events
+  // (Flow B canonical operator-DX includes "create new file" + "delete file" workflows, not just
+  // "modify existing file"). Pre-Fix-#6 only `change` was subscribed → operator's new-file-creation
+  // workflow silently dropped (architect dogfood §C verification surfaced the gap).
+  // `ignoreInitial: true` (line 143) already gates against commit-storming the initial clone-state;
+  // post-`ready` add events fire only for OPERATOR-created files.
+  const fireDebouncedCommit = (): void => {
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       debounceTimer = undefined;
@@ -190,21 +196,25 @@ async function main(): Promise<void> {
           } catch {
             // coord-remote push failure non-aborting; per-repo retries via next debounce-cycle
           }
-          // W6 slice (v) Director (Y): bundle-ops snapshot post wip-commit (disk-failure recovery
+          // W6 slice (v) Director (Y): bundle-ops snapshot post daemon-commit (disk-failure recovery
           // substrate per §2.6.2 v0.4 §AAA). Capability-gated; best-effort; per-repo failure
           // non-aborting. Bundles land at <snapshotRoot>/<missionId>/<repoName>/<sha>.bundle.
           try {
             await mcSdk.snapshotWipBranches(missionId);
           } catch {
             // Snapshot failure non-aborting; recovery-from-disk-failure may degrade but
-            // wip-branch local-state preserved + push-to-coord-remote already succeeded.
+            // mission-branch local-state preserved + push-to-coord-remote already succeeded.
           }
         } catch {
-          // Storage.list / identity.resolve failure → skip wip-commit cycle
+          // Storage.list / identity.resolve failure → skip daemon-commit cycle
         }
       })();
     }, DEBOUNCE_MS);
-  });
+  };
+
+  watcher.on('change', fireDebouncedCommit);
+  watcher.on('add', fireDebouncedCommit);
+  watcher.on('unlink', fireDebouncedCommit);
 
   // W5b slice (ii) item #4: config-mtime-watch — propagate non-participant config-mutation
   // to coord-remote per MINOR-R6.4. Watches `<workspaceRoot>/config/<missionId>.yaml` directly

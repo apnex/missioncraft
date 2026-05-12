@@ -311,10 +311,14 @@ export class IsomorphicGitEngine implements GitEngine {
   /**
    * v3.3 fold per HIGH-R3.1 — squash-merge primitive.
    *
-   * Bypass-INDEX impl (mission-78 W2-extension Fix #4 per thread-543; replaces the prior
-   * checkout + merge --squash + commit shell-out chain that failed when working tree had untracked
-   * files matching headRef's tree). Symmetric to NativeGitEngine.squashCommit Fix #4 + parallel
-   * to this engine's commitToRef bypass-INDEX pattern.
+   * Bypass-INDEX impl (mission-78 W2-extension Fix #4; W3-new extension Fix #8 corrects step-4 target).
+   * Symmetric to NativeGitEngine.squashCommit + parallel to this engine's commitToRef pattern.
+   *
+   * Semantic contract:
+   *   - baseRef = eventual merge target (parent of squashed commit; e.g., `main`)
+   *   - headRef = source-of-squash AND publish artifact branch (target of step-4 update-ref;
+   *               e.g., `mission/<id>`). After squashCommit, headRef points at a single squashed
+   *               commit whose tree equals the original headRef's tree, parent equals baseRef's tip.
    *
    * Native git CLI is still required (`git rev-parse` + `git commit-tree` + `git update-ref`);
    * preserves the existing capability-gated throws-on-unsupported contract per F13.
@@ -336,11 +340,11 @@ export class IsomorphicGitEngine implements GitEngine {
     }
     const cwd = workspace.path;
 
-    // (1) Get headRef's tree — the wip-branch content to squash
+    // (1) Get headRef's tree — the content to publish
     const { stdout: treeOut } = await execFileAsync('git', ['rev-parse', `${headRef}^{tree}`], { cwd });
     const treeSha = treeOut.trim();
 
-    // (2) Get baseRef's tip — parent for the squashed commit
+    // (2) Get baseRef's tip — parent for the squashed commit (eventual merge target)
     const { stdout: parentOut } = await execFileAsync('git', ['rev-parse', baseRef], { cwd });
     const parentSha = parentOut.trim();
 
@@ -353,9 +357,10 @@ export class IsomorphicGitEngine implements GitEngine {
     );
     const commitSha = commitOut.trim();
 
-    // (4) Update baseRef to point at the new squashed commit
-    const baseRefFull = baseRef.startsWith('refs/') ? baseRef : `refs/heads/${baseRef}`;
-    await execFileAsync('git', ['update-ref', baseRefFull, commitSha], { cwd });
+    // (4) Update HEADREF to point at the new squashed commit (W3-new extension Fix #8 correction;
+    // pre-Fix-#8 wrongly updated baseRef → publish silently shipped daemon-commits not the squash)
+    const headRefFull = headRef.startsWith('refs/') ? headRef : `refs/heads/${headRef}`;
+    await execFileAsync('git', ['update-ref', headRefFull, commitSha], { cwd });
 
     return commitSha;
   }

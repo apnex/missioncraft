@@ -131,8 +131,8 @@ describe('v1.1.0 W1 slice (iii) — NativeGitEngine.merge', () => {
   });
 });
 
-describe('v1.1.0 W1 slice (iii) — NativeGitEngine.squashCommit (W2 canonical-switch verification target)', () => {
-  it('produces a single squashed commit on baseRef with caller-supplied message; parent = baseRef tip pre-squash', async () => {
+describe('v1.1.0 W1 slice (iii) — NativeGitEngine.squashCommit (W2 canonical-switch verification target; W3-new extension Fix #8 corrected semantic)', () => {
+  it('produces a single squashed commit on HEADREF with caller-supplied message; parent = baseRef tip pre-squash; baseRef unchanged', async () => {
     const dir = join(tempRoot, 'repo');
     await seedRepo(dir);
     const ws = makeWorkspace(dir);
@@ -159,11 +159,13 @@ describe('v1.1.0 W1 slice (iii) — NativeGitEngine.squashCommit (W2 canonical-s
     // squashedSha is a 40-char SHA
     expect(squashedSha).toMatch(/^[0-9a-f]{40}$/);
 
-    // It's the new tip of main (engine left HEAD on main per impl)
+    // W3-new extension Fix #8: HEADREF (feature) gets updated to squashed commit; baseRef (main) unchanged
+    const featureTipAfter = (await gitExec(ws, ['rev-parse', 'feature'])).stdout.trim();
+    expect(featureTipAfter).toBe(squashedSha);
     const mainTipAfter = (await gitExec(ws, ['rev-parse', 'main'])).stdout.trim();
-    expect(mainTipAfter).toBe(squashedSha);
+    expect(mainTipAfter).toBe(mainTipBefore);                  // baseRef UNCHANGED
 
-    // Single-parent commit (squash collapsed feature's 3 commits into 1) — parent = main pre-squash
+    // Single-parent commit (squash collapsed feature's 3 commits into 1) — parent = main pre-squash (baseRef)
     const { stdout: parentList } = await gitExec(ws, ['rev-list', '--parents', '-n1', squashedSha]);
     const parents = parentList.trim().split(/\s+/).slice(1);
     expect(parents).toEqual([mainTipBefore]);
@@ -172,7 +174,7 @@ describe('v1.1.0 W1 slice (iii) — NativeGitEngine.squashCommit (W2 canonical-s
     const { stdout: subject } = await gitExec(ws, ['log', '-1', '--pretty=format:%s', squashedSha]);
     expect(subject).toBe('squash: collapse 3-commit feature into single commit');
 
-    // All 3 feature files present in the squashed tree
+    // All 3 feature files present in the squashed tree (working tree preserved since we're on feature)
     expect(existsSync(join(dir, 'f0.txt'))).toBe(true);
     expect(existsSync(join(dir, 'f1.txt'))).toBe(true);
     expect(existsSync(join(dir, 'f2.txt'))).toBe(true);

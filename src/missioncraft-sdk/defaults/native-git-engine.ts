@@ -284,6 +284,27 @@ export class NativeGitEngine implements GitEngine {
       // Update the ref to point at the new commit (creates ref if missing)
       await gitExec(workspace, ['update-ref', ref, commitSha]);
 
+      // mission-78 W3-new extension Fix #7: when target ref is HEAD's symbolic ref (single-branch
+      // architecture: daemon commits to mission/<id> AND operator is checked out on mission/<id>),
+      // the branch tip has advanced but operator's main INDEX still reflects the PRE-advance state.
+      // `git status` would then double-count the diff (worktree↔INDEX + INDEX↔HEAD both showing the
+      // file modified, but worktree↔HEAD is clean). Refresh operator's INDEX to align with new HEAD
+      // — pure index-refresh; doesn't touch working tree. Preserves Flow B canonical operator-DX
+      // promise: `git status` reports clean after debounce-tick.
+      const refFull = ref.startsWith('refs/') ? ref : `refs/heads/${ref}`;
+      try {
+        const { stdout: headSymbolic } = await gitExec(workspace, ['symbolic-ref', 'HEAD']);
+        if (headSymbolic.trim() === refFull) {
+          // Realign operator's main INDEX (no env-override → default `.git/index`) with new HEAD.
+          // Note: this does NOT use the temp index; it touches the operator-visible INDEX.
+          await gitExec(workspace, ['read-tree', 'HEAD']);
+        }
+      } catch {
+        // Detached HEAD (symbolic-ref fails) OR read-tree failure — index-refresh is non-essential
+        // for substrate-correctness (the ref is updated correctly); operator-DX gap surfaces as
+        // `git status` lies but doesn't affect publish-flow. Non-aborting per defense-in-depth.
+      }
+
       return commitSha;
     } finally {
       await unlink(tempIndex).catch(() => { /* idempotent — already-cleaned-up is fine */ });
@@ -373,17 +394,28 @@ export class NativeGitEngine implements GitEngine {
   /**
    * Squash-merge primitive (Design v4.8 §HIGH-R3.1 v3.3 fold; §2.4.1 v3.0 atomic PR-set publish-flow).
    *
-   * Bypass-INDEX impl (mission-78 W2-extension Fix #4 per thread-543; replaces the prior
-   * checkout + merge --squash + commit chain that failed when working tree had untracked files
-   * matching headRef's tree). Pattern parallel-symmetric to commitToRef:
-   *   1. rev-parse <headRef>^{tree} → headTree (the wip-branch content to squash)
-   *   2. rev-parse <baseRef>          → parent (the mission-branch tip = target ancestor)
-   *   3. commit-tree <headTree> -p <parent> -m <message>  → squashedSha (env-injected identity)
-   *   4. update-ref refs/heads/<baseRef> <squashedSha>
+   * Bypass-INDEX impl (mission-78 W2-extension Fix #4; W3-new extension Fix #8 corrects step-4 target).
    *
-   * HEAD + working tree are NOT touched. The publish-flow's downstream push() uses the ref directly;
-   * doesn't depend on HEAD position. Eliminates "untracked files would be overwritten by merge"
-   * surface (architect-side scenario-02 dogfood Fix #4 verification).
+   * Semantic contract:
+   *   - baseRef = the eventual merge target (parent of the squashed commit; e.g., `main`)
+   *   - headRef = the source-of-squash AND the publish artifact branch (target of step-4 update-ref;
+   *               e.g., `mission/<id>`). After squashCommit, headRef points at a single squashed
+   *               commit whose tree equals the original headRef's tree, parent equals baseRef's tip.
+   *
+   * Four steps:
+   *   (1) rev-parse <headRef>^{tree} → headTree (the content to publish)
+   *   (2) rev-parse <baseRef>         → parentSha (eventual merge-target tip)
+   *   (3) commit-tree <headTree> -p <parentSha> -m <message>  → squashedSha (env-injected identity)
+   *   (4) update-ref refs/heads/<headRef> <squashedSha>   — headRef becomes the squashed commit
+   *
+   * Pre-Fix-#8: step (4) updated baseRef. Symptom was hidden pre-W3-new because mission-branch had
+   * empty tree (daemon committed to wip-branch); local `main` got an orphan squash that was never
+   * pushed. W3-new single-branch makes mission-branch non-empty, so pushing mission-branch (HEAD-ref)
+   * ships the DAEMON commits, not the squash — `feedback_new_code_path_exposes_dormant_defects.md` class.
+   *
+   * HEAD + working tree are NOT touched by this primitive. The publish-flow's downstream
+   * push(headRef) uses the freshly-updated ref directly; PR head=headRef base=baseRef shows the
+   * single-squash diff.
    *
    * Note: in IsomorphicGitEngine this is `squashCommit?` (capability-gated optional, native shell-out).
    * NativeGitEngine implements unconditionally — git CLI is a hard dep per Path D2.
@@ -397,15 +429,15 @@ export class NativeGitEngine implements GitEngine {
     const identity = await resolveIdentity(workspace);
     const env = commitEnv(identity);
 
-    // (1) Get headRef's tree — the wip-branch content to squash
+    // (1) Get headRef's tree — the content to publish
     const treeResult = await gitExec(workspace, ['rev-parse', `${headRef}^{tree}`]);
     const treeSha = treeResult.stdout.trim();
 
-    // (2) Get baseRef's tip — parent for the squashed commit
+    // (2) Get baseRef's tip — parent for the squashed commit (eventual merge target)
     const parentResult = await gitExec(workspace, ['rev-parse', baseRef]);
     const parentSha = parentResult.stdout.trim();
 
-    // (3) Create the squashed commit pointing at baseRef's history with headRef's tree
+    // (3) Create the squashed commit with headRef's tree + baseRef's tip as parent
     const commitResult = await gitExec(
       workspace,
       ['commit-tree', treeSha, '-p', parentSha, '-m', message],
@@ -413,9 +445,10 @@ export class NativeGitEngine implements GitEngine {
     );
     const commitSha = commitResult.stdout.trim();
 
-    // (4) Update baseRef to point at the new squashed commit
-    const baseRefFull = baseRef.startsWith('refs/') ? baseRef : `refs/heads/${baseRef}`;
-    await gitExec(workspace, ['update-ref', baseRefFull, commitSha]);
+    // (4) Update HEADREF to point at the new squashed commit (W3-new extension Fix #8 correction;
+    // pre-Fix-#8 wrongly updated baseRef → publish silently shipped daemon-commits not the squash)
+    const headRefFull = headRef.startsWith('refs/') ? headRef : `refs/heads/${headRef}`;
+    await gitExec(workspace, ['update-ref', headRefFull, commitSha]);
 
     return commitSha;
   }

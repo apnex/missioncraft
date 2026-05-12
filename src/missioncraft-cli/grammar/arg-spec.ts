@@ -358,22 +358,25 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
     ],
     seeAlso: ['create', 'show'],
   },
-  // ─── Multi-participant verbs (v4.0 NEW per HIGH-R2.2) ───
+  // ─── Reader-mission verbs (mission-78 W4-new; Design v5.0 §2 row 4) ───
+  // `msn join` REPURPOSED at W4-new from v4.x multi-participant shared-mission to
+  // BRANCH-TRACKER reader-mission (creation-verb; positional writer-mission-id; auto-close on
+  // writer-terminal via Loop B detection — auto-close logic lands at slice (v); slice (iii)
+  // is creation-plumbing + scope-inheritance only).
   join: {
-    required: 1,                 // <id|name>
+    required: 1,                 // <writer-mission-id>
     optional: 0,
     flags: [
-      { name: '--coord-remote', takesValue: true, required: true, description: 'Coord-remote URL (REQUIRED)' },
-      { name: '--principal', takesValue: true, description: 'Optional principal-id override (defaults to IdentityProvider.resolve)' },
+      { name: '--name', takesValue: true, description: 'Optional human-friendly slug for the reader-mission' },
     ],
-    shortDesc: 'Join an existing mission as a reader-participant',
-    longDesc: 'Reader-side bootstrap: clones writer\'s wip-state from the coord-remote, chmod-down\'s the workspace (POSIX 0444/0555 strict-enforce). Transitions reader-local lifecycle "configured" → "joined" → "reading" via 7-step.',
-    argLabels: [{ label: '<id|name>', description: 'Mission identifier or name (must match writer\'s)' }],
+    shortDesc: 'Create a BRANCH-TRACKER reader-mission tied to a writer-mission (mission-78 W4-new)',
+    longDesc: 'mission-78 W4-new repurpose (Design v5.0 §2 row 4): creates an independent reader-mission with readOnly: true + sourceMissionId pointing at the writer-mission. Inherits writer-mission\'s repos[] (scope-inheritance). Reader-daemon Loop B (slice v) will fetch writer\'s mission-branch updates + auto-close when writer terminates (fetch-not-found OR branch-tip stale). v1.x slice (iii) is creation-plumbing only; auto-close logic lands at slice (v). Distinct from `msn watch` (PERSISTENT-TRACKER; long-lived remote+branch).',
+    argLabels: [{ label: '<writer-mission-id>', description: 'Writer-mission id (msn-<8hex>) OR name to track' }],
     examples: [
-      { cmd: 'msn join alpha --coord-remote https://github.com/x/coord.git', comment: 'reader joins alpha via coord-remote' },
-      { cmd: 'msn join alpha --coord-remote ... --principal me@example.com', comment: 'with explicit principal' },
+      { cmd: 'msn join msn-deadbeef', comment: 'create reader-mission tracking writer msn-deadbeef' },
+      { cmd: 'msn join alpha --name alpha-reader', comment: 'named reader by writer-mission name' },
     ],
-    seeAlso: ['leave', 'workspace'],
+    seeAlso: ['watch', 'leave', 'workspace'],
   },
   leave: {
     required: 1,                 // <id|name>

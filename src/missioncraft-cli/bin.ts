@@ -54,7 +54,7 @@ Mission update:
 
 Reader-mission flavors (mission-78 W4-new; Design v5.0):
   msn watch --repo <url> --branch <ref> [--name <slug>]   PERSISTENT-TRACKER reader (long-lived; operator-explicit-abandon)
-  msn join <writer-mission-id> [--name <slug>]            BRANCH-TRACKER reader (auto-close on writer-terminal) [W4-new slice (iii); TODO]
+  msn join <writer-mission-id> [--name <slug>]            BRANCH-TRACKER reader (auto-close on writer-terminal via Loop B; slice v)
   msn leave <id|name> [--purge-workspace]
 
 Scope namespace:
@@ -285,7 +285,27 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
       console.log(format === 'text' ? handle.name ? `${handle.id}\t${handle.name}` : handle.id : formatValue(handle, format));
       return;
     }
+    // mission-78 W4-new slice (iii) (Design v5.0 §2 row 4): BRANCH-TRACKER reader-mission via
+    // `msn join <writer-mission-id>`. Creates reader-mission with readOnly: true +
+    // sourceMissionId; inherits writer-mission's repos[] (scope-inheritance per task-408 §6
+    // component-change 6). REPURPOSED from v4.x multi-participant join shared-mission semantic.
+    // SDK mc.join(id, coordRemote, principal?) API method retained for v4.x test compat;
+    // cleanup deferred to slice (vi) or W8-new.
+    case 'join': {
+      // Writer-mission positional (accepts id OR name; SDK createMission resolves name→id via
+      // resolveMissionRef internally; schema validates resolved msn-<8hex> form).
+      const handle = await mc.create('mission', {
+        ...(parsed.flags.has('--name') && { name: String(parsed.flags.get('--name')) }),
+        readOnly: true,
+        sourceMissionId: parsed.positionals[0],
+      });
+      console.log(format === 'text' ? handle.name ? `${handle.id}\t${handle.name}` : handle.id : formatValue(handle, format));
+      return;
+    }
     // ─── Runtime-deferred (W4/W5) — verbs that the SDK throws "not yet implemented" ───
+    // mission-78 W4-new slice (iii): 'join' MOVED to main dispatch (creation-verb sister to
+    // 'watch'; BRANCH-TRACKER reader-mission). v4.x mc.join(id, coordRemote, principal) SDK
+    // method retained (vestigial; cleanup at slice (vi) or W8-new) but no longer reached via CLI.
     case 'start':
     case 'apply':
     case 'complete':
@@ -293,7 +313,6 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
     case 'tick':
     case 'workspace':
     case 'cd':
-    case 'join':
     case 'leave':
       await invokeRuntimeDeferred(mc, parsed);
       return;
@@ -628,12 +647,6 @@ async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): P
       process.stderr.write(
         `hint: 'msn cd' inside the binary can't change your shell's cwd; install the shell-function wrapper via \`eval "$(msn shell-init bash)"\` (or zsh/fish) for direct cd.\n`,
       );
-      return;
-    }
-    case 'join': {
-      const coordRemote = String(parsed.flags.get('--coord-remote') ?? '');
-      const principal = parsed.flags.get('--principal');
-      await mc.join(parsed.positionals[0], coordRemote, typeof principal === 'string' ? principal : undefined);
       return;
     }
     case 'leave':

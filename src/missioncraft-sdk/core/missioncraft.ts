@@ -1963,7 +1963,32 @@ export class Missioncraft {
       scopeBoundRepos = scopeConfig.repos.map((r) => ({ ...r }));
     }
 
-    const repos: RepoSpec[] = scopeBoundRepos ?? (
+    // mission-78 W4-new slice (iii): BRANCH-TRACKER reader scope-inheritance — when readOnly +
+    // sourceMissionId AND no explicit opts.repo, copy writer-mission's repos[] (scope-inheritance
+    // per task-408 §6 component-change 6; multi-repo at slice (vi)). Reject with clear error if
+    // writer-mission doesn't exist. CLI accepts id-OR-name for `msn join <writer-mission-id>`;
+    // resolveMissionRef normalizes name→canonical-id so the persisted sourceMissionId matches
+    // schema's msn-<8hex> regex.
+    let writerInheritedRepos: RepoSpec[] | null = null;
+    let resolvedSourceMissionId: string | undefined = opts.sourceMissionId;
+    if (opts.readOnly === true && opts.sourceMissionId !== undefined) {
+      try {
+        resolvedSourceMissionId = this.resolveMissionRef(opts.sourceMissionId);
+      } catch {
+        throw new MissionStateError(
+          `writer-mission '${opts.sourceMissionId}' not found; cannot create BRANCH-TRACKER reader-mission`,
+        );
+      }
+      if (opts.repo === undefined) {
+        const writerPath = this.missionConfigPath(resolvedSourceMissionId);
+        const writerContent = await readFile(writerPath, 'utf8');
+        const writerConfig = parseMissionConfig(writerContent, writerPath, 'auto');
+        // Inherit writer's repos[] verbatim (reader-mission is read-only; same upstream URL set)
+        writerInheritedRepos = writerConfig.repos.map((r) => ({ ...r }));
+      }
+    }
+
+    const repos: RepoSpec[] = scopeBoundRepos ?? writerInheritedRepos ?? (
       opts.repo
         ? (Array.isArray(opts.repo) ? opts.repo : [opts.repo]).map((url) => ({ url, name: repoNameFromUrl(url) }))
         : []
@@ -1990,7 +2015,7 @@ export class Missioncraft {
         lifecycleState: initialLifecycle,
         createdAt: now,
         ...(isReaderMission && { readOnly: true }),
-        ...(opts.sourceMissionId !== undefined && { sourceMissionId: opts.sourceMissionId }),
+        ...(resolvedSourceMissionId !== undefined && { sourceMissionId: resolvedSourceMissionId }),
         ...(opts.sourceRemote !== undefined && { sourceRemote: opts.sourceRemote }),
         ...(opts.sourceBranch !== undefined && { sourceBranch: opts.sourceBranch }),
       },

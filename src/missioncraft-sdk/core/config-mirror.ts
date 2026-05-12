@@ -43,7 +43,8 @@ async function ensureMirrorInit(ctx: ConfigMirrorContext): Promise<WorkspaceHand
   const path = configMirrorPath(ctx.workspaceRoot, ctx.missionId);
   await mkdir(path, { recursive: true });
   const handle = configMirrorHandle(ctx.workspaceRoot, ctx.missionId);
-  // Engine.init is idempotent: skips if .git already exists (per W2 IsomorphicGitEngine impl).
+  // Engine.init is idempotent (both NativeGitEngine via `git init --quiet` AND IsomorphicGitEngine
+  // re-init are safe to call multiple times); the existsSync gate is belt-and-braces.
   if (!existsSync(join(path, '.git'))) {
     await ctx.gitEngine.init(handle, { fs: undefined, identity: ctx.identity });
   }

@@ -1,5 +1,8 @@
 // GitEngine pluggable interface (Design v4.8 §2.1.4 — v0.2 fold per §C.1 comprehensive API)
-// Default v1 implementation: IsomorphicGitEngine (pure-TS; portable; no native bindings).
+// Default implementation (mission-78 W2 Path D2): NativeGitEngine (shells to native `git` CLI;
+// argv-only via execFile; hard-depends on the `git` binary on PATH).
+// Alternate (W3-bridge until mission-78 W4 removal): IsomorphicGitEngine (pure-TS via the
+// isomorphic-git library; no native bindings; portable). Pre-v1.1.0 default.
 
 import type { AgentIdentity } from './identity.js';
 import type { WorkspaceHandle } from './storage.js';

@@ -698,9 +698,20 @@ export class Missioncraft {
         // (No fallback path at W4.3; engine-internal-fallback shell-out per MINOR-R4.1 = W4.x follow-on)
         await this.recordPublishStatus(missionId, repoName, 'squashed');
 
-        // Push to remote (fast-forward; no force) with network-partition retry per §2.6.3.
+        // Push squashed mission/<id> to upstream with network-partition retry per §2.6.3.
         // Exponential backoff: 100ms, 400ms, 1600ms (3 attempts max; ~2.1s total max delay).
-        await this.pushWithRetry(handle, headRef);
+        //
+        // mission-78 W5-new Fix #12 (architect-dogfood-surfaced thread-548 round 13 BLOCKER):
+        // **force: true** is required because slice (iii) push-cadence may have already pushed
+        // the pre-squash daemon-chain mission/<id> to upstream (independent setInterval at 60s
+        // default per Design v5.0 §10.2). complete()'s squashCommit then rewrites mission/<id>
+        // history (single squashed commit on top of base); the subsequent push to upstream is
+        // NON-FAST-FORWARD relative to the daemon-chain version. Force-push semantically: "this
+        // published squash supersedes the in-progress daemon-chain". Pre-Fix-#12 (pre-slice-iii)
+        // push was always FIRST push of mission/<id> upstream → fast-forward succeeded; post-
+        // slice-iii push-cadence breaks that invariant under the architect's real-upstream
+        // dogfood scenario (msn complete after waiting > pushIntervalSeconds).
+        await this.pushWithRetry(handle, { branch: headRef, force: true });
         await this.recordPublishStatus(missionId, repoName, 'pushed');
 
         // Open PR via RemoteProvider (capability-gated; SKIP if not supported per F13)

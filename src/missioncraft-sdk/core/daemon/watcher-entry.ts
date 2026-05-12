@@ -78,17 +78,26 @@ async function main(): Promise<void> {
     // Daemon-tick advance is best-effort; failure doesn't crash daemon
   }
 
-  // W5c mode-dispatch: detect reader-mode at boot via per-principal role lookup against
-  // mission-config participants. Reader-mode runs Loop B only (no Loop A wip-commit in v1;
-  // tamper-detect-rollback is a deeper concern deferred to W5c follow-on).
+  // Mode-dispatch: detect reader-mode at boot. mission-78 W4-new slice (v) (Design v5.0 §2 row 4):
+  // PRIMARY detection is `config.mission.readOnly === true` (v5.0 reader-mission: BRANCH-TRACKER
+  // OR PERSISTENT-TRACKER). Pre-v5.0 v4.x detection via participant-role-lookup is RETAINED for
+  // back-compat with v4.x missions through W4-new + W7-new (IsoEng removal). Both paths converge
+  // on Loop B dispatch; v5.0 path uses new readerLoopBV5Tick (direct fetch+reset from source-
+  // remote), v4.x path uses legacy readerLoopBTick (coord-mirror semantics).
   let role: 'writer' | 'reader' = 'writer';
+  let isV5Reader = false;
   let coordPollMs = COORD_POLL_DEFAULT_MS;
   try {
     const configPath = join(workspaceRoot, 'config', `${missionId}.yaml`);
     if (existsSync(configPath)) {
       const cfgContent = await readFile(configPath, 'utf8');
       const cfg = parseMissionConfig(cfgContent, configPath, 'auto');
-      if (principalArg) {
+      // v5.0 PRIMARY: config.mission.readOnly === true (per Design v5.0 §2 row 4)
+      if (cfg.mission.readOnly === true) {
+        role = 'reader';
+        isV5Reader = true;
+      } else if (principalArg) {
+        // v4.x LEGACY: participant-role-lookup (back-compat; pre-v5.0 multi-participant missions)
         const matched = cfg.mission.participants?.find((p) => p.principal === principalArg);
         if (matched && matched.role === 'reader') role = 'reader';
       }
@@ -101,7 +110,9 @@ async function main(): Promise<void> {
   }
 
   // Reader-mode dispatch: Loop B setInterval timer-poll; SIGTERM/SIGINT handlers reused.
-  if (role === 'reader' && principalArg) {
+  // mission-78 W4-new slice (v): dispatch on isV5Reader → new readerLoopBV5Tick (Design v5.0
+  // direct fetch+reset semantic); legacy v4.x path uses readerLoopBTick (coord-mirror).
+  if (role === 'reader') {
     let mcReader: Missioncraft;
     try {
       mcReader = new Missioncraft({ workspaceRoot, principal: principalArg });
@@ -110,9 +121,17 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     const loopBTimer = setInterval(() => {
-      void mcReader.readerLoopBTick(missionId, principalArg).catch(() => {
-        // Loop B tick failure non-aborting; next tick retries
-      });
+      if (isV5Reader) {
+        // v5.0 reader-mission (BRANCH-TRACKER or PERSISTENT-TRACKER): direct fetch+reset
+        void mcReader.readerLoopBV5Tick(missionId).catch(() => {
+          // Loop B tick failure non-aborting; next tick retries
+        });
+      } else if (principalArg) {
+        // v4.x legacy reader-mode: coord-mirror semantics (preserved through W7-new)
+        void mcReader.readerLoopBTick(missionId, principalArg).catch(() => {
+          // Loop B tick failure non-aborting; next tick retries
+        });
+      }
     }, coordPollMs);
     const readerShutdown = async (_sig: string): Promise<void> => {
       if (shutdownInProgress) return;

@@ -1450,8 +1450,99 @@ export class Missioncraft {
   }
 
   /**
+   * Reader-daemon Loop B v5.0 — direct fetch+reset against source-remote+source-branch
+   * (mission-78 W4-new slice (v); Design v5.0 §2 row 4 + task-408 §6 component-change 5).
+   *
+   * v5.0 reader-mission (BRANCH-TRACKER or PERSISTENT-TRACKER) per-tick:
+   *   1. Read mission config; require `readOnly: true`; resolve sourceRemote+sourceBranch
+   *      (PERSISTENT-TRACKER: explicit config fields; BRANCH-TRACKER: derive from writer-mission
+   *      lookup via sourceMissionId → writer.repos[0].url + `refs/heads/mission/<writer-id>`)
+   *   2. For each repo-workspace: `git fetch source-remote source-branch:refs/remotes/source/source-branch`
+   *   3. `git reset --hard refs/remotes/source/source-branch` — sync working-tree to source-tip
+   *
+   * Returns count of repos successfully synced (0 on no-op or all-failed; per-repo failure
+   * non-aborting; next tick retries).
+   *
+   * Auto-close on writer-terminal (BRANCH-TRACKER): fetch-not-found OR branch-tip-stale-detection
+   * deferred to slice-(v) extension OR follow-on idea — slice (v) core is fetch+reset; auto-close
+   * polish post-architect-disposition.
+   *
+   * No-op for writer-missions (readOnly false/undefined) — daemon-watcher's writer-mode dispatch
+   * runs Loop A (chokidar) instead of this method.
+   */
+  async readerLoopBV5Tick(missionId: string): Promise<number> {
+    const path = this.missionConfigPath(missionId);
+    if (!existsSync(path)) return 0;
+    const content = await readFile(path, 'utf8');
+    const config = parseMissionConfig(content, path, 'auto');
+
+    if (config.mission.readOnly !== true) return 0;        // writer-mission — Loop B no-op
+
+    // Resolve source-remote + source-branch per reader-flavor
+    let sourceRemote: string;
+    let sourceBranch: string;
+    if (config.mission.sourceRemote !== undefined && config.mission.sourceBranch !== undefined) {
+      // PERSISTENT-TRACKER (msn watch): explicit source-remote + source-branch in config
+      sourceRemote = config.mission.sourceRemote;
+      sourceBranch = config.mission.sourceBranch;
+    } else if (config.mission.sourceMissionId !== undefined) {
+      // BRANCH-TRACKER (msn join): resolve writer-mission's first-repo URL +
+      // `refs/heads/mission/<writer-id>` (v5.0 single-branch architecture)
+      const writerPath = this.missionConfigPath(config.mission.sourceMissionId);
+      if (!existsSync(writerPath)) return 0;               // writer-mission gone → fetch will fail; auto-close (slice-v extension)
+      const writerContent = await readFile(writerPath, 'utf8');
+      const writerConfig = parseMissionConfig(writerContent, writerPath, 'auto');
+      if (writerConfig.repos.length === 0) return 0;       // writer has no repos
+      sourceRemote = writerConfig.repos[0].url;
+      sourceBranch = `mission/${config.mission.sourceMissionId}`;
+    } else {
+      return 0;                                              // schema invariant violation; should not reach
+    }
+
+    let successCount = 0;
+    for (const repo of config.repos) {
+      const repoName = repo.name ?? repoNameFromUrl(repo.url);
+      try {
+        const handles = await this.storage.list(missionId);
+        const handle = handles.find((h) => basename(h.path) === repoName);
+        if (!handle) continue;                              // workspace not allocated yet — skip
+        // git fetch source-remote source-branch:refs/remotes/source/source-branch
+        await this.gitEngine.fetch(handle, {
+          remote: sourceRemote,
+          branch: `${sourceBranch}:refs/remotes/source/source-branch`,
+        });
+        // git reset --hard refs/remotes/source/source-branch — sync working-tree to source-tip.
+        // GitEngine doesn't expose reset directly; shell out via gitExec helper if NativeEng,
+        // else fall back to checkout. Use a private helper to keep engine-pluggable surface clean.
+        await this.gitResetHard(handle, 'refs/remotes/source/source-branch');
+        successCount++;
+      } catch {
+        // Per-repo fetch+reset failure non-aborting; next tick retries
+      }
+    }
+    return successCount;
+  }
+
+  /**
+   * Internal helper: `git reset --hard <ref>` via direct execFile (substrate-bypass; GitEngine
+   * pluggable contract doesn't expose reset at v1 per `reset/diff/lsRemote` deferred-idea filing).
+   * Used by readerLoopBV5Tick to sync working-tree to source-branch tip.
+   *
+   * Native git CLI is hard-dep per Path D2; this helper is engine-agnostic shell-out.
+   */
+  private async gitResetHard(workspace: WorkspaceHandle, ref: string): Promise<void> {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const execFileAsync = promisify(execFile);
+    await execFileAsync('git', ['reset', '--hard', ref], { cwd: workspace.path });
+  }
+
+  /**
    * Reader-daemon Loop B tick — single coord-fetch + 3-path ref-detection + cascade dispatch
    * (Design v4.9 §2.10 W5c MEDIUM-R8.1).
+   *
+   * v4.x LEGACY method retained for back-compat with v4.x missions through W7-new. v5.0 reader-
+   * missions use readerLoopBV5Tick (above) which dispatches via daemon-watcher's isV5Reader check.
    *
    * Steps:
    *   1. Ensure `.coord-mirror/` initialized (idempotent; uses mission's coordinationRemote URL)

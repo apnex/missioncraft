@@ -116,7 +116,7 @@ describe('W5c slice (i) — coord-mirror.ts helpers', () => {
     const missionId = 'msn-show1';
     const remoteUrl = 'https://github.com/example/coord.git';
     const mirrorPath = await ensureCoordMirrorInit(tempRoot, missionId, remoteUrl);
-    await writeFile(join(mirrorPath, 'mission.yaml'), 'mission-config-schema-version: 1\n', 'utf8');
+    await writeFile(join(mirrorPath, 'mission.yaml'), 'mission-config-schema-version: 2\n', 'utf8');
     await execFileAsync('git', ['config', 'user.email', 't@x.com'], { cwd: mirrorPath });
     await execFileAsync('git', ['config', 'user.name', 'Test'], { cwd: mirrorPath });
     await execFileAsync('git', ['add', '.'], { cwd: mirrorPath });
@@ -124,7 +124,7 @@ describe('W5c slice (i) — coord-mirror.ts helpers', () => {
     await execFileAsync('git', ['branch', '-M', 'config-branch'], { cwd: mirrorPath });
 
     const yaml = await showMirrorRefFile(tempRoot, missionId, 'refs/heads/config-branch', 'mission.yaml');
-    expect(yaml).toBe('mission-config-schema-version: 1\n');
+    expect(yaml).toBe('mission-config-schema-version: 2\n');
 
     const missing = await showMirrorRefFile(tempRoot, missionId, 'refs/heads/nope', 'mission.yaml');
     expect(missing).toBeNull();
@@ -234,7 +234,7 @@ describe('W5c slice (i) — cascadeConfigUpdate SDK method', () => {
 
     // Mirror YAML has a different description (writer-side change to propagate)
     const ts = new Date().toISOString();
-    const mirrorYaml = `mission-config-schema-version: 1
+    const mirrorYaml = `mission-config-schema-version: 2
 mission:
   id: ${handle.id}
   lifecycle-state: in-progress

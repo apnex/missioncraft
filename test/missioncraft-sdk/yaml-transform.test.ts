@@ -63,7 +63,7 @@ describe('YAML wire-format ↔ TS canonical transform — W3 smoke-tests', () =>
 
   describe('parseMissionConfig (full pipeline)', () => {
     const validYaml = `
-mission-config-schema-version: 1
+mission-config-schema-version: 2
 mission:
   id: msn-a1b2c3d4
   lifecycle-state: configured
@@ -74,7 +74,7 @@ repos:
 
     it('parses valid kebab-case YAML to camelCase TS object', () => {
       const result = parseMissionConfig(validYaml);
-      expect(result.missionConfigSchemaVersion).toBe(1);
+      expect(result.missionConfigSchemaVersion).toBe(2);
       expect(result.mission.id).toBe('msn-a1b2c3d4');
       expect(result.mission.lifecycleState).toBe('configured');
       expect(result.repos).toHaveLength(1);
@@ -88,7 +88,7 @@ repos:
     it('throws ConfigValidationError on schema-validation failure', () => {
       expect(() =>
         parseMissionConfig(`
-mission-config-schema-version: 1
+mission-config-schema-version: 2
 mission:
   id: NOT_VALID_FORMAT
   created-at: 2026-05-10T12:00:00Z
@@ -101,7 +101,7 @@ repos: []
   describe('serializeMissionConfig (round-trip)', () => {
     it('serializes camelCase TS object to kebab-case YAML; round-trip parseable', () => {
       const original = `
-mission-config-schema-version: 1
+mission-config-schema-version: 2
 mission:
   id: msn-a1b2c3d4
   lifecycle-state: configured

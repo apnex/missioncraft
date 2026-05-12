@@ -24,7 +24,7 @@ async function persistMissionAtState(id: string, lifecycleState: string): Promis
   const missionsDir = join(tempRoot, 'config', 'missions');
   await mkdir(missionsDir, { recursive: true });
   const yaml = [
-    `mission-config-schema-version: 1`,
+    `mission-config-schema-version: 2`,
     `mission:`,
     `  id: ${id}`,
     `  lifecycle-state: ${lifecycleState}`,

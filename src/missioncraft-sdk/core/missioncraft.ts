@@ -1960,7 +1960,7 @@ export class Missioncraft {
         : []
     );
     const config: MissionConfig = {
-      missionConfigSchemaVersion: 1,
+      missionConfigSchemaVersion: 2,
       mission: {
         id,
         ...(opts.name !== undefined && { name: opts.name }),

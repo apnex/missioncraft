@@ -46,7 +46,7 @@ describe('Zod schemas — W1 smoke-tests', () => {
 
   describe('MissionConfigSchema (default writer-role)', () => {
     const baseValid = {
-      missionConfigSchemaVersion: 1 as const,
+      missionConfigSchemaVersion: 2 as const,
       mission: {
         id: 'msn-a1b2c3d4',
         lifecycleState: 'configured' as const,
@@ -93,13 +93,148 @@ describe('Zod schemas — W1 smoke-tests', () => {
         }),
       ).toThrow(/exactly 1 writer/);
     });
+
+    // ─── mission-78 W4-new (Design v5.0 §2 row 4 + §12 no-backward-compat) ───
+
+    it('REFUSES schema-v1 configs at parse (no backward-compat per Design v5.0 §12)', () => {
+      expect(() =>
+        MissionConfigSchema.parse({ ...baseValid, missionConfigSchemaVersion: 1 }),
+      ).toThrow();
+    });
+
+    it('schema-v2: accepts writer-mission without source* fields', () => {
+      // writer-mission (readOnly undefined; no source* fields) — minimal v5.0 baseline
+      expect(() => MissionConfigSchema.parse(baseValid)).not.toThrow();
+    });
+
+    it('schema-v2: writer-mission with readOnly: true is rejected (writers must not have readOnly:true)', () => {
+      expect(() =>
+        MissionConfigSchema.parse({
+          ...baseValid,
+          mission: { ...baseValid.mission, readOnly: true },
+        }),
+      ).toThrow(/MUST specify EITHER sourceMissionId.*OR sourceRemote\+sourceBranch/);
+    });
+
+    it('schema-v2: writer-mission MUST NOT specify source* fields', () => {
+      expect(() =>
+        MissionConfigSchema.parse({
+          ...baseValid,
+          mission: { ...baseValid.mission, sourceMissionId: 'msn-deadbeef' },
+        }),
+      ).toThrow(/writer-mission.*MUST NOT specify source/);
+    });
+
+    it('schema-v2: reader-mission BRANCH-TRACKER accepts readOnly+sourceMissionId only', () => {
+      const readerSchema = makeMissionConfigSchema('reader');
+      expect(() =>
+        readerSchema.parse({
+          missionConfigSchemaVersion: 2,
+          mission: {
+            id: 'msn-a1b2c3d4',
+            lifecycleState: 'reading',
+            createdAt: '2026-05-10T12:00:00Z',
+            readOnly: true,
+            sourceMissionId: 'msn-deadbeef',
+          },
+          repos: [{ url: 'https://github.com/example/repo' }],
+        }),
+      ).not.toThrow();
+    });
+
+    it('schema-v2: reader-mission PERSISTENT-TRACKER accepts readOnly+sourceRemote+sourceBranch', () => {
+      const readerSchema = makeMissionConfigSchema('reader');
+      expect(() =>
+        readerSchema.parse({
+          missionConfigSchemaVersion: 2,
+          mission: {
+            id: 'msn-a1b2c3d4',
+            lifecycleState: 'reading',
+            createdAt: '2026-05-10T12:00:00Z',
+            readOnly: true,
+            sourceRemote: 'https://github.com/example/repo',
+            sourceBranch: 'main',
+          },
+          repos: [{ url: 'https://github.com/example/repo' }],
+        }),
+      ).not.toThrow();
+    });
+
+    it('schema-v2: reader-mission REJECTS both BRANCH-TRACKER + PERSISTENT-TRACKER fields (mutually exclusive)', () => {
+      const readerSchema = makeMissionConfigSchema('reader');
+      expect(() =>
+        readerSchema.parse({
+          missionConfigSchemaVersion: 2,
+          mission: {
+            id: 'msn-a1b2c3d4',
+            lifecycleState: 'reading',
+            createdAt: '2026-05-10T12:00:00Z',
+            readOnly: true,
+            sourceMissionId: 'msn-deadbeef',
+            sourceRemote: 'https://github.com/example/repo',
+            sourceBranch: 'main',
+          },
+          repos: [{ url: 'https://github.com/example/repo' }],
+        }),
+      ).toThrow(/MUST be either BRANCH-TRACKER.*OR PERSISTENT-TRACKER.*both specified/);
+    });
+
+    it('schema-v2: reader-mission PERSISTENT-TRACKER REJECTS sourceRemote without sourceBranch (partial)', () => {
+      const readerSchema = makeMissionConfigSchema('reader');
+      expect(() =>
+        readerSchema.parse({
+          missionConfigSchemaVersion: 2,
+          mission: {
+            id: 'msn-a1b2c3d4',
+            lifecycleState: 'reading',
+            createdAt: '2026-05-10T12:00:00Z',
+            readOnly: true,
+            sourceRemote: 'https://github.com/example/repo',
+          },
+          repos: [{ url: 'https://github.com/example/repo' }],
+        }),
+      ).toThrow(/MUST specify BOTH sourceRemote AND sourceBranch/);
+    });
+
+    it('schema-v2: reader-mission with readOnly: true MUST specify at least one source', () => {
+      const readerSchema = makeMissionConfigSchema('reader');
+      expect(() =>
+        readerSchema.parse({
+          missionConfigSchemaVersion: 2,
+          mission: {
+            id: 'msn-a1b2c3d4',
+            lifecycleState: 'reading',
+            createdAt: '2026-05-10T12:00:00Z',
+            readOnly: true,
+          },
+          repos: [{ url: 'https://github.com/example/repo' }],
+        }),
+      ).toThrow(/MUST specify EITHER sourceMissionId.*OR sourceRemote\+sourceBranch/);
+    });
+
+    it('schema-v2: sourceMissionId must match msn-<8hex> regex', () => {
+      const readerSchema = makeMissionConfigSchema('reader');
+      expect(() =>
+        readerSchema.parse({
+          missionConfigSchemaVersion: 2,
+          mission: {
+            id: 'msn-a1b2c3d4',
+            lifecycleState: 'reading',
+            createdAt: '2026-05-10T12:00:00Z',
+            readOnly: true,
+            sourceMissionId: 'not-a-valid-id',
+          },
+          repos: [{ url: 'https://github.com/example/repo' }],
+        }),
+      ).toThrow();
+    });
   });
 
   describe('makeMissionConfigSchema(reader)', () => {
     it('accepts reader-side lifecycle-state in reader-role schema', () => {
       const readerSchema = makeMissionConfigSchema('reader');
       const result = readerSchema.parse({
-        missionConfigSchemaVersion: 1,
+        missionConfigSchemaVersion: 2,
         mission: {
           id: 'msn-a1b2c3d4',
           lifecycleState: 'reading',
@@ -119,7 +254,7 @@ describe('Zod schemas — W1 smoke-tests', () => {
       const readerSchema = makeMissionConfigSchema('reader');
       expect(() =>
         readerSchema.parse({
-          missionConfigSchemaVersion: 1,
+          missionConfigSchemaVersion: 2,
           mission: {
             id: 'msn-a1b2c3d4',
             lifecycleState: 'in-progress',

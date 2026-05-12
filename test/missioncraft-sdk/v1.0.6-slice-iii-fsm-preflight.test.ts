@@ -31,7 +31,7 @@ async function persistMissionAtState(
   const missionsDir = join(workspaceRoot, 'config', 'missions');
   await mkdir(missionsDir, { recursive: true });
   const yaml = [
-    `mission-config-schema-version: 1`,
+    `mission-config-schema-version: 2`,
     `mission:`,
     `  id: ${id}`,
     `  lifecycle-state: ${lifecycleState}`,

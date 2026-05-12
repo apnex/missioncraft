@@ -135,7 +135,9 @@ export interface MissionFilter {
  * Engine-side persisted as YAML with kebab-case keys; zod schema transforms to camelCase TS at parse-time.
  */
 export interface MissionConfig {
-  readonly missionConfigSchemaVersion: 1;
+  // mission-78 W4-new (Design v5.0 §2 row 5): schema-version 1 → 2 (no-backward-compat;
+  // schema-v1 REFUSED at parse per Design v5.0 §12).
+  readonly missionConfigSchemaVersion: 2;
   readonly mission: {
     readonly id: string;
     readonly name?: string;
@@ -149,6 +151,16 @@ export interface MissionConfig {
     // v4.0 NEW per idea-265 multi-participant — populated when mission has multi-participant flow
     readonly participants?: readonly MissionParticipant[];
     readonly coordinationRemote?: string;       // git remote URL; required IFF participants[] contains a reader (zod superRefine)
+    // ─── mission-78 W4-new (Design v5.0 §2 row 4): reader-mission fields ───
+    // readOnly: true → reader-mission (BRANCH-TRACKER via msn join OR PERSISTENT-TRACKER via msn watch)
+    // sourceMissionId: BRANCH-TRACKER references writer-mission whose branch is tracked
+    // sourceRemote + sourceBranch: PERSISTENT-TRACKER references long-lived remote+branch
+    // Validation: BRANCH-TRACKER (sourceMissionId only) XOR PERSISTENT-TRACKER (sourceRemote+sourceBranch);
+    //             writer-missions (readOnly false/undefined) MUST NOT specify source* fields.
+    readonly readOnly?: boolean;
+    readonly sourceMissionId?: string;          // msn-<8-char-hex>
+    readonly sourceRemote?: string;             // git remote URL
+    readonly sourceBranch?: string;             // ref name (e.g., 'main', 'mission/msn-<id>')
     // ─── W4.3 publish-flow + abandon-flow runtime-state (Design v4.9 §2.4.1 lines 640-650) ───
     // Persisted in YAML; written by complete()/abandon() flows; read for idempotent retry semantics.
     readonly publishMessage?: string;                     // immutable post-first-complete per v3.2 MEDIUM-R2.6

@@ -542,7 +542,7 @@ async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): P
       const progressSink = makeProgressSink(parsed);                       // v1.0.5 idea-273
       let handle;
       if (parsed.flags.has('-f')) {
-        handle = await mc.start({ config: { missionConfigSchemaVersion: 1, mission: { id: 'placeholder', lifecycleState: 'created', createdAt: new Date() }, repos: [] } }, { onProgress: progressSink });
+        handle = await mc.start({ config: { missionConfigSchemaVersion: 2, mission: { id: 'placeholder', lifecycleState: 'created', createdAt: new Date() }, repos: [] } }, { onProgress: progressSink });
       } else {
         handle = await mc.start(parsed.positionals[0], { onProgress: progressSink });
       }
@@ -555,7 +555,7 @@ async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): P
       return;
     }
     case 'apply':
-      await mc.apply({ missionConfigSchemaVersion: 1, mission: { id: 'placeholder', lifecycleState: 'created', createdAt: new Date() }, repos: [] });
+      await mc.apply({ missionConfigSchemaVersion: 2, mission: { id: 'placeholder', lifecycleState: 'created', createdAt: new Date() }, repos: [] });
       return;
     case 'complete': {
       const progressSink = makeProgressSink(parsed);                       // v1.0.5 idea-273

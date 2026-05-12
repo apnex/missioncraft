@@ -78,7 +78,11 @@ const StateDurabilityConfigSchema = z.object({
 // ─── MissionConfigSchema factory (v4.5 fold per MEDIUM-R6.4) ───
 
 const baseMissionConfigShape = z.object({
-  missionConfigSchemaVersion: z.literal(1),         // REQUIRED top-level; parser-side version-dispatch (v1.3 fold per MINOR-R2.1 — number not string)
+  // mission-78 W4-new (Design v5.0 §2 row 5): schema-version 1 → 2. Schema-v1 REFUSED at parse
+  // per no-backward-compat ship discipline (Design v5.0 §12). z.literal(2) rejects any value
+  // other than 2; the ConfigValidationError wrapping at yaml-transform.ts:154-160 surfaces a
+  // clear "schema-validation-fail" message for v1 configs.
+  missionConfigSchemaVersion: z.literal(2),
   mission: z.object({
     id: z.string().regex(/^msn-[a-f0-9]{8}$/, 'mission.id MUST match msn-<8-char-hex>'),
     name: z
@@ -96,6 +100,20 @@ const baseMissionConfigShape = z.object({
     // v4.0 NEW per idea-265 multi-participant
     participants: z.array(MissionParticipantSchema).optional(),
     coordinationRemote: z.string().url().optional(),
+    // ─── mission-78 W4-new (Design v5.0 §2 row 4): reader-mission fields ───
+    // readOnly: true identifies a reader-mission (BRANCH-TRACKER via msn join OR
+    //           PERSISTENT-TRACKER via msn watch). false/undefined = writer-mission.
+    // sourceMissionId: present iff BRANCH-TRACKER (msn join <writer-mission-id>); references
+    //                  the writer-mission whose branch is tracked. Auto-close on writer-terminal.
+    // sourceRemote + sourceBranch: present iff PERSISTENT-TRACKER (msn watch --repo --branch);
+    //                              reader-daemon Loop B fetches from this remote+branch at
+    //                              pullCadence. Long-lived; operator-explicit-abandon terminal only.
+    // Validation: BRANCH-TRACKER uses sourceMissionId; PERSISTENT-TRACKER uses
+    //             sourceRemote+sourceBranch; mutually-exclusive (one OR the other, not both).
+    readOnly: z.boolean().optional(),
+    sourceMissionId: z.string().regex(/^msn-[a-f0-9]{8}$/, 'mission.sourceMissionId MUST match msn-<8-char-hex>').optional(),
+    sourceRemote: z.string().url().optional(),
+    sourceBranch: z.string().optional(),
     // W4.3 publish-flow + abandon-flow runtime-state (Design v4.9 §2.4.1 lines 640-650)
     publishMessage: z.string().optional(),
     abandonMessage: z.string().optional(),
@@ -153,6 +171,53 @@ export function makeMissionConfigSchema(owningPrincipalRole: 'writer' | 'reader'
           'mission.coordinationRemote required when mission.participants[] contains a reader (F-V4.2 conditional-validation per Design v4.8 §2.5)',
         path: ['mission', 'coordinationRemote'],
       });
+    }
+    // ─── mission-78 W4-new (Design v5.0 §2 row 4): reader-mission field validation ───
+    // readOnly: true → MUST have sourceMissionId (BRANCH-TRACKER) XOR
+    //                   sourceRemote+sourceBranch (PERSISTENT-TRACKER)
+    // readOnly: false/undefined → MUST NOT have source* fields (writer-missions don't track sources)
+    const isReadOnly = config.mission.readOnly === true;
+    const hasBranchTracker = config.mission.sourceMissionId !== undefined;
+    const hasPersistentTracker =
+      config.mission.sourceRemote !== undefined && config.mission.sourceBranch !== undefined;
+    const hasPersistentPartial =
+      (config.mission.sourceRemote !== undefined) !== (config.mission.sourceBranch !== undefined);
+
+    if (isReadOnly) {
+      if (hasBranchTracker && (hasPersistentTracker || hasPersistentPartial)) {
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'reader-mission MUST be either BRANCH-TRACKER (sourceMissionId only) OR PERSISTENT-TRACKER (sourceRemote+sourceBranch); both specified',
+          path: ['mission', 'readOnly'],
+        });
+      } else if (hasPersistentPartial) {
+        // sourceRemote OR sourceBranch (one but not both) — surface the partial-spec error
+        // BEFORE the "EITHER...OR" no-source error (more specific takes precedence)
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'PERSISTENT-TRACKER reader-mission MUST specify BOTH sourceRemote AND sourceBranch (one without the other is invalid)',
+          path: ['mission', config.mission.sourceRemote === undefined ? 'sourceRemote' : 'sourceBranch'],
+        });
+      } else if (!hasBranchTracker && !hasPersistentTracker) {
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'reader-mission (readOnly: true) MUST specify EITHER sourceMissionId (BRANCH-TRACKER via msn join) OR sourceRemote+sourceBranch (PERSISTENT-TRACKER via msn watch)',
+          path: ['mission', 'readOnly'],
+        });
+      }
+    } else {
+      // writer-mission (readOnly false/undefined): source* fields are not applicable
+      if (hasBranchTracker || config.mission.sourceRemote !== undefined || config.mission.sourceBranch !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'writer-mission (readOnly false/undefined) MUST NOT specify source* fields (sourceMissionId/sourceRemote/sourceBranch are reader-mission-only)',
+          path: ['mission', 'readOnly'],
+        });
+      }
     }
     // v1 exactly-1-writer enforcement; co-writer mode deferred to v1.x per Lean 6 YAGNI
     if (config.mission.participants && config.mission.participants.length > 0) {

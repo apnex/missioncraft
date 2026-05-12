@@ -196,7 +196,7 @@ describe('Missioncraft SDK class — W3 smoke-tests', () => {
     it('start() rejects config-input form (W4.3-only string-id supported)', async () => {
       const mc = new Missioncraft({ workspaceRoot: tempRoot });
       await expect(
-        mc.start({ config: { missionConfigSchemaVersion: 1, mission: { id: 'msn-x', lifecycleState: 'configured', createdAt: new Date() }, repos: [] } }),
+        mc.start({ config: { missionConfigSchemaVersion: 2, mission: { id: 'msn-x', lifecycleState: 'configured', createdAt: new Date() }, repos: [] } }),
       ).rejects.toBeInstanceOf(ConfigValidationError);
     });
 

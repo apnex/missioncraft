@@ -144,10 +144,15 @@ async function main(): Promise<void> {
     awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 100 },
   });
 
-  // Process-crash recovery (slice iii follow-on): wip-commit-on-debounce per Design v0.2 §B.1.
+  // Process-crash recovery (slice iii follow-on): auto-commit-on-debounce per Design v0.2 §B.1.
   // SDK-bootstrapped Missioncraft instance (mc) provides storage + gitEngine pluggable access.
-  // Per workspace: gitEngine.commitToRef(workspace, 'refs/heads/wip/<missionId>', ...) commits
-  // current working-tree state to wip-branch WITHOUT moving HEAD WITHOUT polluting INDEX.
+  // mission-78 W3-new (Design v5.0 single-branch): daemon commits to `refs/heads/mission/<missionId>`
+  // (was `refs/heads/wip/<missionId>` pre-v5.0); the wip-branch sidecar is dropped. HEAD points
+  // symbolically at mission/<id>; commitToRef's bypass-HEAD bypass-INDEX semantic + update-ref to
+  // the target branch advances mission/<id>'s tip — HEAD now resolves to the new commit; working
+  // tree matches the just-committed tree exactly, so `git status` reports clean. This IS the
+  // Flow B canonical operator-DX promise: operator never sees dirty working tree after a
+  // debounce-tick (operator never runs git commands).
   let mcSdk: Missioncraft;
   try {
     mcSdk = new Missioncraft({ workspaceRoot });
@@ -167,13 +172,13 @@ async function main(): Promise<void> {
           const identity = await mcSdk.identity.resolve();
           for (const handle of handles) {
             try {
-              await mcSdk.gitEngine.commitToRef(handle, `refs/heads/wip/${missionId}`, {
-                message: `[wip] auto-commit ${new Date().toISOString()}`,
+              await mcSdk.gitEngine.commitToRef(handle, `refs/heads/mission/${missionId}`, {
+                message: `[auto] daemon-commit ${new Date().toISOString()}`,
                 author: identity,
                 autoStage: true,
               });
             } catch {
-              // Per-repo wip-commit failure is non-aborting; daemon continues watching
+              // Per-repo daemon-commit failure is non-aborting; daemon continues watching
             }
           }
           // W5b slice (ii) item #2: push-on-cadence-conditional to coord-remote.

@@ -63,16 +63,37 @@ afterEach(async () => {
   if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
 });
 
-/** Simulate operator file-edit + commit. Operator's only direct git interaction is the standard
- * git add + git commit workflow inside the workspace; branch setup is substrate's responsibility
- * (per `feedback_operator_never_runs_git_commands.md`). If start() doesn't set up the working
- * branch correctly, the operator's commit lands in the wrong place and complete fails. */
-async function simulateOperatorEdit(workspacePath: string): Promise<void> {
+/** Simulate operator file-edit Flow B canonical (per Design v5.0 §2 row 2 + mission-78 W3-new):
+ * operator NEVER runs git commands; only edits files. Daemon-watcher fires commitToRef on
+ * debounce. Modify the cloned README (chokidar watches `change` events, not `add` — modifying
+ * an EXISTING file reliably triggers the debounce-tick).
+ *
+ * Returns once the daemon has fired at least one commit (mission-branch advanced past baseSha).
+ * Caller is responsible for verifying mission-branch state if needed. */
+async function simulateOperatorEdit(workspacePath: string, missionId: string): Promise<void> {
+  // git config user.email/user.name kept for git's commit-tree env-fallback in case it's not set
+  // globally on the test machine (NativeGitEngine's resolveIdentity falls through to git config
+  // when WeakMap miss; see W2-extension Fix #1).
   await execFileAsync('git', ['config', 'user.email', 'op@x.com'], { cwd: workspacePath });
   await execFileAsync('git', ['config', 'user.name', 'Operator'], { cwd: workspacePath });
-  await writeFile(join(workspacePath, 'work.md'), 'operator work\n', 'utf8');
-  await execFileAsync('git', ['add', '.'], { cwd: workspacePath });
-  await execFileAsync('git', ['commit', '-m', 'operator commit'], { cwd: workspacePath });
+
+  const baseSha = (await execFileAsync('git', ['rev-parse', `refs/heads/mission/${missionId}`], { cwd: workspacePath })).stdout.trim();
+
+  // Modify EXISTING file (README from clone) — chokidar's `change` event fires on file-modify;
+  // `add` event for new files is skipped (ignoreInitial: true + watcher start may race the test).
+  await writeFile(join(workspacePath, 'README.md'), '# sandbox\n\noperator edit Flow B canonical\n', 'utf8');
+
+  // Wait for daemon-watcher debounce-tick to fire commitToRef(refs/heads/mission/<id>, ...) —
+  // mission-branch advances past baseSha (was the daemon's prior advance from the clone-base).
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline) {
+    try {
+      const { stdout } = await execFileAsync('git', ['rev-parse', `refs/heads/mission/${missionId}`], { cwd: workspacePath });
+      if (stdout.trim() !== baseSha) return;
+    } catch { /* ref may not exist mid-test */ }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`simulateOperatorEdit: daemon-watcher did not advance mission-branch within 8s for mission ${missionId}`);
 }
 
 /** Poll for lifecycle-state advance with a short timeout — daemon-tick happens at boot, so this
@@ -116,7 +137,7 @@ describe('v1.0.7 slice (iii) — bug-73 full-lifecycle integration (scope-bound 
     // Phase 5: operator-work — checkout mission branch + commit (real-world operator does this
     // between start and complete; complete's squash-loop requires mission/<id> to exist).
     const workspacePath = await mc.workspace(mission.id, 'sandbox');
-    await simulateOperatorEdit(workspacePath);
+    await simulateOperatorEdit(workspacePath, mission.id);
 
     // Phase 6: complete-success — pre-v1.0.7 this threw "workspace handle missing for repo
     // 'sandbox'" because storage.list returned handles with empty repoUrl. Post-fix the basename
@@ -138,7 +159,7 @@ describe('v1.0.7 slice (iii) — bug-73 full-lifecycle integration (scope-bound 
 
     // Operator-work seeds the mission branch so abandon's deleteBranch has something to remove.
     const workspacePath = await mc.workspace(mission.id, 'sandbox');
-    await simulateOperatorEdit(workspacePath);
+    await simulateOperatorEdit(workspacePath, mission.id);
 
     // Same bug-73 surface but via abandon path (line 864 fix)
     const result = await mc.abandon(mission.id, 'integration-test cleanup');
@@ -159,7 +180,7 @@ describe('v1.0.7 slice (iii) — bug-73 full-lifecycle integration (scope-bound 
     await waitForLifecycle(mc, mission.id, 'in-progress');
 
     const workspacePath = await mc.workspace(mission.id, 'sandbox');
-    await simulateOperatorEdit(workspacePath);
+    await simulateOperatorEdit(workspacePath, mission.id);
 
     const result = await mc.complete(mission.id, 'direct-bind publish');
 

@@ -1101,9 +1101,15 @@ export class Missioncraft {
   }
 
   /**
-   * Snapshot a mission's wip-branch into the snapshotRoot bundle (Design v4.9 §2.6.2 v0.4 §AAA;
-   * W6 slice (v) Director (Y)). Called best-effort post commitToRef-to-wip; preserves disk-failure
-   * recovery substrate. Bundle path: `<snapshotRoot>/<missionId>/<repoName>/<sha>.bundle`.
+   * Snapshot a mission's daemon-watched branch into the snapshotRoot bundle (Design v4.9 §2.6.2
+   * v0.4 §AAA; W6 slice (v) Director (Y); v5.0 single-branch refactor at mission-78 W3-new).
+   * Called best-effort post daemon-commit-to-mission-branch; preserves disk-failure recovery substrate.
+   * Bundle path: `<snapshotRoot>/<missionId>/<repoName>/<sha>.bundle`.
+   *
+   * Method retains its W6-era name (`snapshotWipBranches`) for API backward-compat through v1.x;
+   * under v5.0 single-branch architecture the snapshotted ref is `refs/heads/mission/<id>` (not
+   * `refs/heads/wip/<id>` as in pre-v5.0). Future rename to `snapshotMissionBranches` at W8-new
+   * closing-audit OR via standalone idea-filing post-v1.2.0 ship.
    *
    * Conditional gating: returns 0 IF gitEngine doesn't implement createBundle (capability-gated
    * per F13). Per-repo failure non-aborting; returns count of successful bundle-creates.
@@ -1119,14 +1125,15 @@ export class Missioncraft {
       await import('./snapshot.js');
     const snapshotRoot = resolveSnapshotRoot(this.workspaceRoot, config.stateDurability?.snapshotRoot);
 
-    const wipRef = `refs/heads/wip/${missionId}`;
+    // v5.0 single-branch: daemon commits to mission-branch directly; snapshot the same.
+    const missionRef = `refs/heads/mission/${missionId}`;
     let successCount = 0;
     for (const repo of config.repos) {
       const repoName = repo.name ?? repoNameFromUrl(repo.url);
       const handle = await this.storage.allocate(missionId, repo.url);
       try {
-        // Resolve current SHA of wip-ref (skip if doesn't exist yet)
-        const sha = await this.gitEngine.revparse(handle, wipRef).catch(() => null);
+        // Resolve current SHA of mission-ref (skip if doesn't exist yet)
+        const sha = await this.gitEngine.revparse(handle, missionRef).catch(() => null);
         if (!sha) continue;
         await ensureSnapshotRepoDir(snapshotRoot, missionId, repoName);
         const bundlePath = snapshotBundlePath(snapshotRoot, missionId, repoName, sha);
@@ -1134,7 +1141,7 @@ export class Missioncraft {
           successCount++;     // already-snapshotted at this SHA; idempotent
           continue;
         }
-        await this.gitEngine.createBundle(handle, bundlePath, wipRef);
+        await this.gitEngine.createBundle(handle, bundlePath, missionRef);
         successCount++;
       } catch {
         // Per-repo bundle-create failure non-aborting; next snapshot-cycle retries
@@ -1149,7 +1156,8 @@ export class Missioncraft {
    *
    * For each repo: locates latest-mtime bundle in `<snapshotRoot>/<missionId>/<repoName>/`,
    * re-allocates workspace via storage.allocate (init's a fresh git-dir), then restoreBundle
-   * unbundles + updates the wip-ref. Capability-gated per F13.
+   * unbundles + updates the mission-ref (v5.0 single-branch; was wip-ref pre-v5.0).
+   * Capability-gated per F13.
    *
    * Returns count of repos successfully restored. Per-repo failure non-aborting (mission-level
    * partial-recovery preserved per W5b publishStatus discipline).
@@ -1167,7 +1175,8 @@ export class Missioncraft {
     const { resolveSnapshotRoot, findLatestBundle } = await import('./snapshot.js');
     const snapshotRoot = resolveSnapshotRoot(this.workspaceRoot, config.stateDurability?.snapshotRoot);
 
-    const wipRef = `refs/heads/wip/${missionId}`;
+    // v5.0 single-branch: restore unbundles into mission-ref (was wip-ref pre-v5.0)
+    const missionRef = `refs/heads/mission/${missionId}`;
     let successCount = 0;
     for (const repo of config.repos) {
       const repoName = repo.name ?? repoNameFromUrl(repo.url);
@@ -1179,7 +1188,7 @@ export class Missioncraft {
         if (!existsSync(`${handle.path}/.git`)) {
           await this.gitEngine.init(handle, { fs: undefined, identity: await this.identity.resolve() });
         }
-        await this.gitEngine.restoreBundle(handle, latestBundle, wipRef);
+        await this.gitEngine.restoreBundle(handle, latestBundle, missionRef);
         successCount++;
       } catch {
         // Per-repo restore failure non-aborting

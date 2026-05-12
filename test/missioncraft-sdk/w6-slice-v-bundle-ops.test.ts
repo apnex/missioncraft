@@ -142,12 +142,12 @@ describe('W6 slice (v) — Missioncraft.snapshotWipBranches SDK orchestration', 
     const handle = await mc.create('mission', { repo: 'file:///tmp/w6-v-1' });
     const ws = await mc.storage.allocate(handle.id, 'file:///tmp/w6-v-1');
 
-    // Create wip-branch in workspace
+    // Create mission-branch in workspace (v5.0 single-branch)
     await execFileAsync('git', ['init', '--quiet'], { cwd: ws.path });
     await execFileAsync('git', ['config', 'user.email', 't@x.com'], { cwd: ws.path });
     await execFileAsync('git', ['config', 'user.name', 'T'], { cwd: ws.path });
     await writeFile(join(ws.path, 'work.txt'), 'work\n', 'utf8');
-    await mc.gitEngine.commitToRef(ws, `refs/heads/wip/${handle.id}`, {
+    await mc.gitEngine.commitToRef(ws, `refs/heads/mission/${handle.id}`, {
       message: 'wip-1',
       author: { name: 'T', email: 't@x.com' },
       autoStage: true,
@@ -172,7 +172,7 @@ describe('W6 slice (v) — Missioncraft.snapshotWipBranches SDK orchestration', 
     await execFileAsync('git', ['config', 'user.email', 't@x.com'], { cwd: ws.path });
     await execFileAsync('git', ['config', 'user.name', 'T'], { cwd: ws.path });
     await writeFile(join(ws.path, 'a.txt'), 'a', 'utf8');
-    await mc.gitEngine.commitToRef(ws, `refs/heads/wip/${handle.id}`, {
+    await mc.gitEngine.commitToRef(ws, `refs/heads/mission/${handle.id}`, {
       message: 'wip',
       author: { name: 'T', email: 't@x.com' },
       autoStage: true,
@@ -207,12 +207,12 @@ describe('W6 slice (v) — disk-failure recovery via Missioncraft.restoreFromSna
     await execFileAsync('git', ['config', 'user.email', 't@x.com'], { cwd: ws.path });
     await execFileAsync('git', ['config', 'user.name', 'T'], { cwd: ws.path });
     await writeFile(join(ws.path, 'critical-data.txt'), 'must-survive-disk-failure\n', 'utf8');
-    await mc.gitEngine.commitToRef(ws, `refs/heads/wip/${handle.id}`, {
+    await mc.gitEngine.commitToRef(ws, `refs/heads/mission/${handle.id}`, {
       message: 'wip-pre-disaster',
       author: { name: 'T', email: 't@x.com' },
       autoStage: true,
     });
-    const { stdout: preSha } = await execFileAsync('git', ['rev-parse', `refs/heads/wip/${handle.id}`], { cwd: ws.path });
+    const { stdout: preSha } = await execFileAsync('git', ['rev-parse', `refs/heads/mission/${handle.id}`], { cwd: ws.path });
     await mc.snapshotWipBranches(handle.id);
 
     // Phase 2: simulate disk-failure (rm -rf workspaceRoot's missions/<id>/ tree)
@@ -230,11 +230,11 @@ describe('W6 slice (v) — disk-failure recovery via Missioncraft.restoreFromSna
 
     // Verify wip-branch reconstructed at original SHA
     const newWs = await mc.storage.allocate(handle.id, 'file:///tmp/w6-v-recover');
-    const { stdout: recoveredSha } = await execFileAsync('git', ['rev-parse', `refs/heads/wip/${handle.id}`], { cwd: newWs.path });
+    const { stdout: recoveredSha } = await execFileAsync('git', ['rev-parse', `refs/heads/mission/${handle.id}`], { cwd: newWs.path });
     expect(recoveredSha.trim()).toBe(preSha.trim());
 
     // Checkout + verify content survived
-    await execFileAsync('git', ['checkout', `refs/heads/wip/${handle.id}`, '--', 'critical-data.txt'], { cwd: newWs.path });
+    await execFileAsync('git', ['checkout', `refs/heads/mission/${handle.id}`, '--', 'critical-data.txt'], { cwd: newWs.path });
     expect(existsSync(join(newWs.path, 'critical-data.txt'))).toBe(true);
     const content = await readFile(join(newWs.path, 'critical-data.txt'), 'utf8');
     expect(content).toBe('must-survive-disk-failure\n');

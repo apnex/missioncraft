@@ -299,7 +299,7 @@ export class Missioncraft {
         repoLocks.push(repoLock);
       }
 
-      // Step 3: allocate workspaces + Step 4: clone repos
+      // Step 3: allocate workspaces + Step 4: clone repos + create+checkout working branch
       const identity = await this.identity.resolve();
       for (const repo of initialConfig.repos) {
         emit({ phase: 'allocate-workspace', message: `allocating workspace for repo '${repo.name ?? repo.url}'` });
@@ -311,6 +311,15 @@ export class Missioncraft {
           identity,
           ...(this.remote !== undefined && { remote: this.remote }),
         });
+        // v1.0.7 bug-73 fix part B (per mission-types.ts:46 / Design v1.7 MINOR-R6.6):
+        // engine substitutes `mission/<missionId>` as the working branch and checks it out
+        // post-clone. Operator's subsequent `git add` + `git commit` then lands on the mission
+        // branch automatically — no operator-side `git checkout` needed (operator-never-runs-git
+        // substrate invariant per Director correction 2026-05-12). complete()'s squash-loop later
+        // reads from this branch via `headRef = 'mission/<missionId>'` (missioncraft.ts:630).
+        const workingBranch = repo.branch ?? `mission/${missionId}`;
+        await this.gitEngine.branch(workspace, workingBranch);
+        await this.gitEngine.checkout(workspace, workingBranch);
       }
 
       // Step 5: atomic-write lifecycle 'configured' → 'started' (transient state per v3.2 MEDIUM-R2.4)
@@ -542,7 +551,11 @@ export class Missioncraft {
       for (let i = 0; i < initialConfig.repos.length; i++) {
         const lock = repoLocks[i];
         const handles = await this.storage.list(id);
-        const handle = handles.find((h) => h.repoUrl === initialConfig.repos[i].url);
+        // v1.0.7 bug-73 fix: match by basename(path) rather than h.repoUrl. storage.list()
+        // returns handles with empty repoUrl per its v1 limitation (filesystem layout preserves
+        // repo-name only); URL-equality find always failed. Mirrors working pattern at :1074.
+        const expectedRepoName = initialConfig.repos[i].name ?? repoNameFromUrl(initialConfig.repos[i].url);
+        const handle = handles.find((h) => basename(h.path) === expectedRepoName);
         if (handle) {
           try {
             await this.gitEngine.deleteBranch(handle, `mission/${id}`, { force: true });
@@ -611,7 +624,8 @@ export class Missioncraft {
       }
 
       const handles = await this.storage.list(missionId);
-      const handle = handles.find((h) => h.repoUrl === repo.url);
+      // v1.0.7 bug-73 fix: basename(path) match — see Step 6 cleanup-branches site for rationale.
+      const handle = handles.find((h) => basename(h.path) === repoName);
       if (!handle) {
         await this.recordPublishStatus(missionId, repoName, 'failed');
         throw new MissionStateError(
@@ -861,7 +875,8 @@ export class Missioncraft {
     for (const repo of initialConfig.repos) {
       const repoName = repo.name ?? repoNameFromUrl(repo.url);
       const handles = await this.storage.list(id);
-      const handle = handles.find((h) => h.repoUrl === repo.url);
+      // v1.0.7 bug-73 fix: basename(path) match — see complete()'s Step 6 site for rationale.
+      const handle = handles.find((h) => basename(h.path) === repoName);
       if (handle) {
         try {
           await this.gitEngine.deleteBranch(handle, `mission/${id}`, { force: true });

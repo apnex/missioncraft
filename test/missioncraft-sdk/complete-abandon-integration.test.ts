@@ -90,6 +90,13 @@ async function preAllocateWorkspace(
       message: 'initial',
       author: { name: 'Test User', email: 't@x.com' },
     });
+    // v1.0.7 bug-73 fix companion: pre-allocate the mission branch (matches real start() flow).
+    // abandon Step 5 + complete Step 6 call deleteBranch on `mission/<id>`; pre-fix the URL-empty
+    // find-handle silently no-op'd; post-fix the find succeeds and deleteBranch actually fires.
+    await mc.gitEngine.commitToRef(handle, `refs/heads/mission/${missionId}`, {
+      message: 'mission-branch seed',
+      author: { name: 'Test User', email: 't@x.com' },
+    });
   }
   return handle.path;
 }
@@ -203,15 +210,18 @@ describe('W4.3 slice (iv) — complete() real-engine integration (push-failure p
     await advanceLifecycle(tempRoot, handle.id, 'in-progress');
     await seedMissionLockfile(tempRoot, handle.id);
 
-    // complete() will: persist publishMessage → squash succeeds → push fails (no HTTP transport for file://)
-    // Verify partial-failure preserves publishStatus state for idempotent retry
+    // complete() will: persist publishMessage → squash succeeds (local) → push fails
+    // (isomorphic-git has no file:// transport). publishLoop's catch records 'failed' and rethrows.
+    // v1.0.7 bug-73 calibration: pre-fix assertion was `toMatch(/^(failed|squashed|pushed)$/)`,
+    // which was green for BOTH the (then-silent) handle-find-failure 'failed' AND the push-failure
+    // 'failed'. Tightened to specific `toBe('failed')` so the test no longer accepts the
+    // missing-handle path (which post-fix should never fire for this setup).
     await expect(mc.complete(handle.id, 'first-publish-msg')).rejects.toThrow();
 
-    // publishMessage persisted (immutability discipline) + publishStatus tracks failure
     const after = await mc.get('mission', handle.id);
     expect(after.publishMessage).toBe('first-publish-msg');
     expect(after.lifecycleState).toBe('in-progress');                // did NOT advance to 'completed' (push-failure)
-    expect(after.publishStatus?.['test-repo-pub-1']).toMatch(/^(failed|squashed|pushed)$/);
+    expect(after.publishStatus?.['test-repo-pub-1']).toBe('failed');
   });
 
   it('publishMessage immutability: retry with different message uses persisted', async () => {

@@ -113,6 +113,7 @@ export {
   type LocalFilesystemStorageOptions,
 } from './defaults/local-filesystem-storage.js';
 export { IsomorphicGitEngine } from './defaults/isomorphic-git-engine.js';
+export { NativeGitEngine, gitExec } from './defaults/native-git-engine.js';
 
 // ─── RemoteProvider implementations (Design v4.8 §2.1.5) ───
 export { PureGitRemoteProvider } from './providers/pure-git-remote-provider.js';

@@ -16,6 +16,7 @@ import {
   type MissionMutation,
   type ScopeMutation,
   VERSION,
+  detectSubstrate,
 } from '@apnex/missioncraft';
 
 import { parse, type ParsedCommand } from './grammar/parser.js';
@@ -105,7 +106,9 @@ async function main(argv: readonly string[]): Promise<number> {
     return 0;
   }
   if (parsed.verb === '--version') {
-    console.log(`missioncraft ${VERSION}`);
+    // v1.0.8 idea-285: extended output via substrate-detect; --version short-circuit uses text-format
+    // by default. Operators wanting JSON/YAML use `msn version --output <fmt>` verb form.
+    console.log(await renderVersion('text'));
     return 0;
   }
 
@@ -292,13 +295,48 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
       return;
     }
     case 'version': {
-      // v1.0.4 bug-66 item 1 alias-handler (defensive; parser usually short-circuits version → --version)
-      console.log(`missioncraft ${VERSION}`);
+      // v1.0.8 idea-285: extended output — substrate-detect git + gh; tree-format text OR JSON/YAML.
+      console.log(await renderVersion(format));
       return;
     }
     default:
       throw new ConfigValidationError(`internal: dispatcher missing case for verb '${parsed.verb}'`);
   }
+}
+
+/**
+ * v1.0.8 idea-285 — render `msn version` output. Tree-format for text (cyan tree chars per
+ * existing palette); JSON/YAML emit via formatValue. Calls detectSubstrate non-throwing so
+ * missing binaries surface as `NOT FOUND` instead of failing the version probe itself.
+ *
+ * Text-format example:
+ *   missioncraft 1.0.8
+ *   ├── git    2.43.0
+ *   └── gh     2.42.0
+ *
+ * JSON: `{"missioncraft":"1.0.8","git":"2.43.0","gh":"2.42.0"}` (null when missing).
+ */
+async function renderVersion(format: OutputFormat): Promise<string> {
+  const detection = await detectSubstrate();
+  if (format === 'json' || format === 'yaml') {
+    return formatValue(
+      { missioncraft: VERSION, git: detection.git, gh: detection.gh },
+      format,
+    );
+  }
+  // Text: tree-format with cyan tree-chars per architect spec.
+  const branch = colors.info('├──');
+  const last = colors.info('└──');
+  const renderEntry = (bin: 'git' | 'gh'): string => {
+    const version = detection[bin];
+    if (version !== null) return `${bin.padEnd(6)}${version}`;
+    return `${bin.padEnd(6)}NOT FOUND (${detection.missing[bin]})`;
+  };
+  return [
+    `missioncraft ${VERSION}`,
+    `${branch} ${renderEntry('git')}`,
+    `${last} ${renderEntry('gh')}`,
+  ].join('\n');
 }
 
 function emitShellInit(shell: string): string {

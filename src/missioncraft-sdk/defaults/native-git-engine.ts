@@ -48,14 +48,37 @@ interface NativeOptionsInternal {
 
 const optionsByWorkspace = new WeakMap<WorkspaceHandle, NativeOptionsInternal>();
 
-function getIdentity(workspace: WorkspaceHandle): AgentIdentity {
+/**
+ * Resolve identity for commit-firing-time. Tries the per-workspace WeakMap first; on miss,
+ * falls back to reading the workspace's local git config (`user.name`/`user.email`) which the
+ * SDK lifecycle reliably populates via `git config` writes during workspace setup OR which
+ * inherits from the operator's `~/.gitconfig` global. This mirrors IsomorphicGitEngine's
+ * implicit reliance on git config for shell-out ops (squashCommit/createBundle/restoreBundle)
+ * and ensures W2 canonical-switch is transparent for SDK internal call-sites that thread fresh
+ * WorkspaceHandle objects from `storage.list()` (different object identity from the handle
+ * passed to `clone()`).
+ *
+ * Throws UnsupportedOperationError only when BOTH WeakMap AND git config lookups fail.
+ */
+async function resolveIdentity(workspace: WorkspaceHandle): Promise<AgentIdentity> {
   const stored = optionsByWorkspace.get(workspace);
-  if (!stored) {
-    throw new UnsupportedOperationError(
-      `NativeGitEngine: workspace ${workspace.path} has no associated GitOptions; call init() or clone() first`,
-    );
+  if (stored) return stored.identity;
+  // Fallback: read git config user.name + user.email from the workspace.
+  // Both fall through to ~/.gitconfig global if not set locally — matches native git behavior.
+  try {
+    const [nameResult, emailResult] = await Promise.all([
+      gitExec(workspace, ['config', 'user.name']),
+      gitExec(workspace, ['config', 'user.email']),
+    ]);
+    const name = nameResult.stdout.trim();
+    const email = emailResult.stdout.trim();
+    if (name && email) return { name, email };
+  } catch {
+    // git config lookup failed (no .git, no global config) — fall through to throw
   }
-  return stored.identity;
+  throw new UnsupportedOperationError(
+    `NativeGitEngine: workspace ${workspace.path} has no associated identity (WeakMap empty AND git config user.name/user.email unset); call init() or clone() with options.identity, OR set git config user.name + user.email`,
+  );
 }
 
 /** Build an env object that injects GIT_AUTHOR_/GIT_COMMITTER_ name+email for argv-only commit-firing. */
@@ -164,7 +187,7 @@ export class NativeGitEngine implements GitEngine {
     args.push(name);
     if (options.ref !== undefined) args.push(options.ref);
     const env = options.message !== undefined
-      ? commitEnv(getIdentity(workspace))
+      ? commitEnv(await resolveIdentity(workspace))
       : process.env;
     await gitExec(workspace, args, { env });
   }
@@ -187,7 +210,7 @@ export class NativeGitEngine implements GitEngine {
   }
 
   async commit(workspace: WorkspaceHandle, options: CommitOptions): Promise<string> {
-    const identity = options.author ?? getIdentity(workspace);
+    const identity = options.author ?? (await resolveIdentity(workspace));
     const env = commitEnv(identity);
     if (options.autoStage) {
       await gitExec(workspace, ['add', '-A']);
@@ -213,7 +236,7 @@ export class NativeGitEngine implements GitEngine {
     ref: string,
     options: CommitOptions,
   ): Promise<string> {
-    const identity = options.author ?? getIdentity(workspace);
+    const identity = options.author ?? (await resolveIdentity(workspace));
     // Temp index lives inside .git/ so it's auto-collected with the workspace; UUID-suffixed for
     // concurrency-safety across overlapping wip-commit invocations.
     const tempIndex = join(workspace.path, '.git', `wip-index-${randomUUID()}`);
@@ -259,8 +282,16 @@ export class NativeGitEngine implements GitEngine {
     branchName: string,
     options: { force?: boolean } = {},
   ): Promise<void> {
-    const flag = options.force ? '-D' : '-d';
-    await gitExec(workspace, ['branch', flag, branchName]);
+    void options;       // contract-uniform with IsomorphicGitEngine; force is implicit at the ref level
+    // Use `git update-ref -d refs/heads/<name>` (low-level ref-removal) instead of `git branch -d/-D`
+    // to MATCH IsomorphicGitEngine's `git.deleteBranch` semantic exactly: checkout-state-agnostic.
+    // `git branch -D` refuses to delete the currently-checked-out branch; isomorphic-git's
+    // deleteBranch unlinks the ref unconditionally. For substrate-transparency at the W2
+    // canonical-switch (mission-78), the engines must agree. Caller (e.g., abandon-flow) handles
+    // workspace teardown immediately after, so the orphan-HEAD that update-ref leaves behind is
+    // not a footgun in the SDK lifecycle.
+    const ref = branchName.startsWith('refs/') ? branchName : `refs/heads/${branchName}`;
+    await gitExec(workspace, ['update-ref', '-d', ref]);
   }
 
   // ─── Wire ───
@@ -341,7 +372,7 @@ export class NativeGitEngine implements GitEngine {
     headRef: string,
     message: string,
   ): Promise<string> {
-    const identity = getIdentity(workspace);
+    const identity = await resolveIdentity(workspace);
     const env = commitEnv(identity);
     await gitExec(workspace, ['checkout', baseRef]);
     await gitExec(workspace, ['merge', '--squash', headRef]);

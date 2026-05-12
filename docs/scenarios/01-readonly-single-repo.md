@@ -131,7 +131,7 @@ Expected: JSON with:
 - `name: "test-readonly"`
 - `repos` array with 1 entry (name + url + base)
 - `lifecycleState: "configured"`
-- 4 pluggable provider-names at defaults: `identityProviderName: "local-git-config"` + `approvalProviderName: "trust-all"` + `storageProviderName: "local-filesystem"` + `gitEngineProviderName: "isomorphic-git"`
+- 4 pluggable provider-names at defaults: `identityProviderName: "local-git-config"` + `approvalProviderName: "trust-all"` + `storageProviderName: "local-filesystem"` + `gitEngineProviderName: "native-git"` (mission-78 W2 Path D2; was `"isomorphic-git"` pre-v1.1.0)
 
 Output:
 ```json
@@ -152,7 +152,7 @@ Output:
   "identityProviderName": "local-git-config",
   "approvalProviderName": "trust-all",
   "storageProviderName": "local-filesystem",
-  "gitEngineProviderName": "isomorphic-git"
+  "gitEngineProviderName": "native-git"
 }
 ```
 
@@ -381,7 +381,7 @@ Output:
   "identityProviderName": "local-git-config",
   "approvalProviderName": "trust-all",
   "storageProviderName": "local-filesystem",
-  "gitEngineProviderName": "isomorphic-git",
+  "gitEngineProviderName": "native-git",
   "abandonMessage": "readonly scenario teardown",
   "abandonProgress": "workspace-handled",
   "abandonRepoStatus": {

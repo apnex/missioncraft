@@ -152,16 +152,27 @@ Sibling to #69 v2 outward-facing diagnostic (`feedback_verify_directional_vs_mec
 
 ---
 
-## §5 Bug summary
+## §5 Bug summary + W8-new dispositions (slice (iv) engineer-judgment)
 
-| Bug | Class | Surface | W8-new disposition |
-|---|---|---|---|
-| bug-77 | publishStatus vocabulary | `'pr-opened'` status emitted in pure-git mode (no PR; just push to upstream); misleading operator-DX | TBD W8-new slice (iv) engineer-judgment |
-| bug-78 | msn-start workspace-exists | Pre-existing workspace dir blocks `msn start` clone-step with cryptic error; needs pre-clone existence check + clean error message | TBD W8-new slice (iv) engineer-judgment |
-| bug-79 | chokidar startup-race | Operator file-edit immediately after `msn start` may not fire chokidar `'change'` event because watcher hasn't reached `ready`-event yet; minor; document workflow constraint OR post-`ready`-detection refactor | TBD W8-new slice (iv) engineer-judgment |
-| bug-80 | update-name .names symlink refresh | `msn update <id> name <new-name>` updates mission YAML but does NOT refresh `.names/<slug>.yaml` symlink → subsequent slug-resolution using NEW name fails; workaround: canonical msn-<8hex> id | **fix-in-W8-new Component E.iv** per engineer-disposition (pre-disposed at thread-552 round 6 close_no_action; surgical-scope; composability with Component D update-verb surface touches) |
+| Bug | Class | Severity | Surface | W8-new disposition |
+|---|---|---|---|---|
+| bug-77 | schema-validation-gap | minor | `'pr-opened'` status emitted in pure-git mode (no PR; just push to upstream); misleading operator-DX | **DEFER to post-v1.2.0-hotfix-roadmap** — vocabulary refinement is operator-DX cleanup; adding new status-value is API-contract surface; safer as v1.2.x hotfix with explicit migration note |
+| bug-78 | missing-feature | minor | Pre-existing workspace dir blocks `msn start` clone-step with cryptic error; needs pre-clone existence check + clean error OR transactional rollback | **DEFER to post-v1.2.0-hotfix-roadmap** — fix is non-trivial; workaround (manual `rm -rf workspace`) exists; affects edge-case failure-recovery only; not blocking ship |
+| bug-79 | race | minor | Operator file-edit immediately after `msn start` may not fire chokidar `'change'` event because watcher hasn't reached `ready`-event yet | **DEFER to post-v1.2.0-hotfix-roadmap** — operator-DX edge-case; data eventually captured via combined commit on next event-trigger; substrate fix (option (a) `ready`-event-wait) risks daemon-startup latency regression |
+| bug-80 | dedup/state-consistency-gap | minor | `msn update <id> name <new-name>` updates mission YAML but does NOT refresh `.names/<slug>.yaml` symlink → subsequent slug-resolution using NEW name fails; workaround: canonical msn-<8hex> id | **FIXED at W8-new slice (ii) part 1** (commit `0337e53`; surgical 22-LOC fix at applyMissionMutation parallel to applyScopeMutation rename-handling pattern) |
 
-All 4 bugs are pre-existing (NOT introduced by mission-78 substrate-rewrite); surfaced during architect-dogfood cycles + bug-80 specifically uncovered by update-verb-first PRESERVE commitment exercising slug-resolution path.
+**Slice (iv) disposition rationale**:
+
+All 4 bugs are pre-existing (NOT introduced by mission-78 substrate-rewrite); surfaced during architect-dogfood cycles + bug-80 specifically uncovered by W7-new update-verb-first PRESERVE commitment exercising slug-resolution path.
+
+Engineer-judgment fix-vs-defer decision-rubric:
+- **bug-80 fix-in-W8-new**: surgical 22-LOC fix; composability with Component D update-verb surface touches; pre-ship operator-DX-consistency rationale (operators discovering bug between ship + hotfix is documentation-gap risk)
+- **bug-77/78/79 defer to post-v1.2.0-hotfix-roadmap**: each carries non-trivial fix-cost (vocabulary expansion / transactional-rollback / chokidar-ready-wait); each has acceptable-workaround OR low-frequency-impact; ship-cycle stability prioritized over edge-case fixes given (vi) Director Release-gate + (vii) pre-publish wire-flow rehearsal both NOT-WAIVABLE gates remaining
+
+Post-v1.2.0-hotfix-roadmap (per architect §6 W8-new note + idea-291 + idea-292 hotfix-cycle scope):
+- bug-77 → v1.2.x publishStatus vocabulary refinement (separable idea-filing candidate)
+- bug-78 → v1.2.x msn-start failure-recovery (pre-clone existence check OR transactional rollback)
+- bug-79 → v1.2.x chokidar ready-event-wait (or documentation-only mitigation in scenario doc operator-DX section)
 
 ---
 

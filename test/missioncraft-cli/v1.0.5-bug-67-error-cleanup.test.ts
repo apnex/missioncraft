@@ -14,27 +14,31 @@ function runMsn(args: string[], wsRoot?: string): SpawnSyncReturns<string> {
   return spawnSync(process.execPath, [binPath, ...fullArgs], { encoding: 'utf8', timeout: 10000 });
 }
 
-describe('v1.0.5 bug-67 item 1 — strip SDK class-name + method-path prefixes', () => {
-  it('mission-not-found error does NOT leak "Missioncraft.start:" prefix', () => {
+describe('v1.0.5 bug-67 item 1 — strip SDK class-name + method-path prefixes (W6-new id-first migration)', () => {
+  it('mission-not-found error does NOT leak "Missioncraft.start:" prefix (id-first form)', () => {
+    // mission-78 W6-new slice (v.b): legacy `msn start <slug>` verb-first REMOVED; id-first
+    // canonical. Slugs no longer parseable directly (operator runs `msn list` to find id).
+    // Test uses fake msn-id to trigger not-found path through id-first form parsing.
     const wsRoot = mkdtempSync(join(tmpdir(), 'msn-bug67-i1-'));
     try {
-      const result = runMsn(['start', 'no-such-mission'], wsRoot);
+      const result = runMsn(['msn-deadbeef', 'start'], wsRoot);
       expect(result.status).not.toBe(0);
       expect(result.stderr).not.toMatch(/Missioncraft\.\w+/);
       expect(result.stderr).not.toMatch(/MissionStateError:/);
-      expect(result.stderr).toMatch(/mission 'no-such-mission' not found/);
+      expect(result.stderr).toMatch(/mission 'msn-deadbeef' not found/);
     } finally {
       rmSync(wsRoot, { recursive: true, force: true });
     }
   });
 });
 
-describe('v1.0.5 bug-67 item 2 — hint suffix on name-not-found', () => {
-  it('mission-not-found appends `hint: run msn list ...`', () => {
+describe('v1.0.5 bug-67 item 2 — hint suffix on name-not-found (W6-new id-first migration)', () => {
+  it('mission-not-found appends `hint: run msn list ...` (id-first form)', () => {
+    // mission-78 W6-new slice (v.b): use fake msn-id to trigger not-found via id-first parsing
     const wsRoot = mkdtempSync(join(tmpdir(), 'msn-bug67-i2-'));
     try {
-      const result = runMsn(['show', 'absent-mission'], wsRoot);
-      expect(result.stderr).toMatch(/mission 'absent-mission' not found/);
+      const result = runMsn(['msn-deadbeef', 'show'], wsRoot);
+      expect(result.stderr).toMatch(/mission 'msn-deadbeef' not found/);
       expect(result.stderr).toMatch(/hint: run 'msn list' to see available missions/);
     } finally {
       rmSync(wsRoot, { recursive: true, force: true });

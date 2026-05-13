@@ -99,14 +99,15 @@ describe('CLI bin-shim symlink-bootstrap regression', () => {
     }
   });
 
-  // bug-64 item 3 (v1.0.3): `msn show` no-arg → enriched LLM-discoverable error
-  it('bug-64 item 3 — `msn show` no-arg emits enriched error with discovery hint', () => {
+  // bug-64 item 3 (v1.0.3): `msn show` no-arg → W6-new id-first-form-required error
+  // mission-78 W6-new slice (v.b): legacy verb-first form REMOVED; error now directs to id-first
+  it('W6-new slice (v.b) — `msn show` no-arg emits id-first-form-required error', () => {
     const result = spawnSync(process.execPath, [symlinkPath, 'show'], {
       encoding: 'utf8',
       timeout: 10000,
     });
     expect(result.status).toBe(64);  // EX_USAGE per bin.ts main()
-    expect(result.stderr).toMatch(/'show' requires <id\|name>/);
+    expect(result.stderr).toMatch(/requires id-first form/);
     expect(result.stderr).toMatch(/hint: run 'msn list'/);
   });
 
@@ -175,9 +176,10 @@ describe('CLI bin-shim symlink-bootstrap regression', () => {
       expect(createResult.status).toBe(0);
       const missionId = createResult.stdout.trim();
 
+      // mission-78 W6-new slice (v.b): id-first form `msn <id> cd` (legacy `msn cd <id>` removed)
       const cdResult = spawnSync(
         process.execPath,
-        [symlinkPath, 'cd', missionId, '--workspace-root', wsRoot],
+        [symlinkPath, missionId, 'cd', '--workspace-root', wsRoot],
         { encoding: 'utf8', timeout: 10000 },
       );
       expect(cdResult.status).toBe(0);
@@ -215,10 +217,11 @@ describe('CLI bin-shim symlink-bootstrap regression', () => {
       const missionId = createResult.stdout.trim();
       expect(missionId).toMatch(/^msn-[a-f0-9]{8}$/);
 
-      // Step 2: run `msn workspace <id> --workspace-root <wsRoot>` via symlinked bin
+      // Step 2: run `msn <id> workspace --workspace-root <wsRoot>` via symlinked bin
+      // mission-78 W6-new slice (v.b): id-first form (legacy `msn workspace <id>` removed)
       const workspaceResult = spawnSync(
         process.execPath,
-        [symlinkPath, 'workspace', missionId, '--workspace-root', wsRoot],
+        [symlinkPath, missionId, 'workspace', '--workspace-root', wsRoot],
         { encoding: 'utf8', timeout: 10000 },
       );
       expect(workspaceResult.status).toBe(0);

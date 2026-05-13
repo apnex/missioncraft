@@ -163,20 +163,23 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
     ],
     seeAlso: ['show', 'create'],
   },
+  // mission-78 W6-new slice (v.b): mission-targeted verbs require id-first form per Design v5.0
+  // §10.6 (`msn <id> show` etc.); v1.x verb-first `msn show <id>` REMOVED. Examples + usage
+  // updated to reflect canonical id-first shape.
   show: {
-    required: 1,                 // <id|name>; supports coord-form per Rule N
+    required: 1,                 // <id|name>; supports coord-form per Rule N (deprecated under W6-new)
     optional: 0,
     flags: [
       { name: '--repos', takesValue: false, description: 'Show just the repo-list' },
     ],
-    shortDesc: 'Show mission details by id or name',
-    longDesc: 'Detail view (kubectl-describe style). Accepts coord-form `<id>:<repo>` for repo-granularity. Returns full mission state including lifecycle, repos, participants, daemon-IPC fields, audit progress.',
-    argLabels: [{ label: '<id|name>', description: 'Mission identifier or name' }],
+    shortDesc: 'Show mission details (id-first per W6-new: `msn <id> show`)',
+    longDesc: 'Detail view (kubectl-describe style). Returns full mission state including lifecycle, repos, participants, daemon-IPC fields, audit progress. **W6-new id-first form**: `msn <mission-id> show` (legacy `msn show <id>` REMOVED per Design v5.0 §12 no-backward-compat). Bare `msn <mission-id>` (no verb) defaults to `show` for operator-DX-convenience.',
+    argLabels: [{ label: '<id|name>', description: 'Mission identifier or name (id-first form: `msn <id> show`)' }],
     examples: [
-      { cmd: 'msn show alpha', comment: 'full mission detail by name' },
-      { cmd: 'msn show msn-abc123', comment: 'by id' },
-      { cmd: 'msn show alpha --repos', comment: 'just the repo-list section' },
-      { cmd: 'msn show alpha --output json', comment: 'JSON for machine consumption' },
+      { cmd: 'msn msn-abc12345 show', comment: 'id-first form (W6-new canonical)' },
+      { cmd: 'msn msn-abc12345', comment: 'bare-id default-to-show convenience' },
+      { cmd: 'msn msn-abc12345 show --repos', comment: 'just the repo-list section' },
+      { cmd: 'msn msn-abc12345 show --output json', comment: 'JSON for machine consumption' },
     ],
     seeAlso: ['list', 'workspace'],
   },
@@ -188,15 +191,15 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
       { name: '--retain', takesValue: false, description: 'Preserve workspace at terminal' },
     ],
     disjunctive: { flagName: '-f', altRequired: 0 },
-    shortDesc: 'Realize a configured mission — clone repos, spawn daemon, allocate workspace',
-    longDesc: 'Transitions lifecycle "configured" → "started". Clones each repo into the workspace, spawns a per-mission daemon-watcher (writes pid + IPC state to the mission-lockfile), and returns once the daemon is running. Daemon advances to "in-progress" on first tick.',
-    argLabels: [{ label: '<id|name>', description: 'Mission identifier or name (disjunctive with -f)' }],
+    shortDesc: 'Realize a configured mission (id-first per W6-new; idempotent — no-op if running)',
+    longDesc: 'Transitions lifecycle "configured" → "started". Clones each repo into the workspace, spawns a per-mission daemon-watcher (writes pid + IPC state to the mission-lockfile), and returns once the daemon is running. Daemon advances to "in-progress" on first tick. **W6-new id-first form**: `msn <mission-id> start` (idempotent: no-op if daemon already running; replaces dropped v1.x `msn <id> resume` verb). Creation-verbs (`msn create/join/watch`) accept `--start` flag for sequential mc.create + mc.start composition.',
+    argLabels: [{ label: '<id|name>', description: 'Mission identifier or name (id-first form: `msn <id> start`)' }],
     examples: [
-      { cmd: 'msn start alpha', comment: 'start the configured mission named alpha' },
-      { cmd: 'msn start -f /path/to/mission.yaml', comment: 'apply config + start in one shot' },
+      { cmd: 'msn msn-abc12345 start', comment: 'id-first form (W6-new canonical; idempotent)' },
+      { cmd: 'msn create --repo X --start', comment: 'sequential create + start via --start flag' },
     ],
-    seeAlso: ['complete', 'abandon', 'workspace', 'cd'],
-    usageOverride: 'msn start <id|name> | -f <path> [--retain]',
+    seeAlso: ['complete', 'abandon', 'workspace', 'cd', 'create', 'join', 'watch'],
+    usageOverride: 'msn <mission-id> start | msn start -f <path> [--retain]',
   },
   // mission-78 W6-new slice (v) (Design v5.0 §10.6 perfection-grade revisions): `apply` DROPPED
   // entirely. Overlap with `msn create -f` (single creation surface; no need for separate verb).
@@ -207,16 +210,16 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
       { name: '--purge-config', takesValue: false, description: 'Delete config + symlink at terminal' },
       { name: '--purge-workspace', takesValue: false, description: 'Remove workspace at terminal (default: preserve for forensic-history)' },
     ],
-    shortDesc: 'Complete a mission — squash, push, open PRs, terminate daemon',
-    longDesc: 'Transitions lifecycle "in-progress|started" → "completed". Per-repo: squash wip-commits, push, open PR via RemoteProvider. SIGTERMs the daemon-watcher, cleans up local mission-branches. Workspace preserved by default (forensic-history); pass --purge-workspace to remove. publishMessage is recorded immutably on first invocation.',
+    shortDesc: 'Complete a mission (id-first per W6-new) — squash, force-push (Fix #12), open PRs, terminate daemon',
+    longDesc: 'Transitions lifecycle "in-progress|started" → "completed". Per-repo: squash wip-commits, force-push (per W5-new Fix #12 — overrides daemon-chain pushed by push-cadence), open PR via RemoteProvider. SIGTERMs the daemon-watcher, cleans up local mission-branches. Workspace preserved by default (forensic-history); pass --purge-workspace to remove. publishMessage is recorded immutably on first invocation. **W6-new id-first form**: `msn <mission-id> complete <message>`.',
     argLabels: [
-      { label: '<id|name>', description: 'Mission identifier or name' },
+      { label: '<id|name>', description: 'Mission identifier or name (id-first form: `msn <id> complete`)' },
       { label: '<message>', description: 'Publish message (immutable; used as PR title)' },
     ],
     examples: [
-      { cmd: 'msn complete alpha "feat: add login flow"', comment: 'squash + push + open PRs across all repos' },
-      { cmd: 'msn complete alpha "..." --purge-config', comment: 'delete the mission config after completion' },
-      { cmd: 'msn complete alpha "..." --purge-workspace --purge-config', comment: 'full cleanup (workspace + config)' },
+      { cmd: 'msn msn-abc12345 complete "feat: add login flow"', comment: 'id-first form (W6-new canonical); squash + force-push + open PRs across all repos' },
+      { cmd: 'msn msn-abc12345 complete "..." --purge-config', comment: 'delete the mission config after completion' },
+      { cmd: 'msn msn-abc12345 complete "..." --purge-workspace --purge-config', comment: 'full cleanup (workspace + config)' },
     ],
     seeAlso: ['abandon', 'start'],
   },
@@ -227,15 +230,15 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
       { name: '--purge-config', takesValue: false, description: 'Delete config + symlink at terminal' },
       { name: '--retain', takesValue: false, description: 'Preserve workspace (default: destroy)' },
     ],
-    shortDesc: 'Abandon a mission — cleanup only; no PRs created',
-    longDesc: 'Transitions lifecycle "in-progress|started" → "abandoned". SIGTERMs daemon, deletes local mission-branches per repo. abandonMessage is recorded immutably on first invocation. Use this when work is wrong or no longer needed; use `complete` for shipping work.',
+    shortDesc: 'Abandon a mission (id-first per W6-new) — cleanup only; no PRs created',
+    longDesc: 'Transitions lifecycle "in-progress|started" → "abandoned". SIGTERMs daemon, deletes local mission-branches per repo. abandonMessage is recorded immutably on first invocation. Use this when work is wrong or no longer needed; use `complete` for shipping work. **W6-new id-first form**: `msn <mission-id> abandon <message>`.',
     argLabels: [
-      { label: '<id|name>', description: 'Mission identifier or name' },
+      { label: '<id|name>', description: 'Mission identifier or name (id-first form: `msn <id> abandon`)' },
       { label: '<message>', description: 'Teardown message (immutable; recorded in audit trail)' },
     ],
     examples: [
-      { cmd: 'msn abandon alpha "rolling back: API change too disruptive"', comment: 'standard cleanup' },
-      { cmd: 'msn abandon alpha "..." --retain', comment: 'preserve workspace for forensic inspection' },
+      { cmd: 'msn msn-abc12345 abandon "rolling back: API change too disruptive"', comment: 'id-first form (W6-new canonical); standard cleanup' },
+      { cmd: 'msn msn-abc12345 abandon "..." --retain', comment: 'preserve workspace for forensic inspection' },
     ],
     seeAlso: ['complete', 'start'],
   },
@@ -247,17 +250,18 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
     required: 1,                 // <id|name> OR <coord> per Rule N
     optional: 1,                 // <repo-name>
     flags: [],
-    shortDesc: 'Print absolute path to mission workspace directory',
-    longDesc: 'Returns the workspace path for a mission\'s repo. For multi-repo missions, supply <repo-name> or use coord-form `<id>:<repo>` or `<id>:<repo>/<path>`. Errors with terminal-state-guard if mission is abandoned/completed (workspace destroyed).',
+    shortDesc: 'Print mission workspace path (id-first per W6-new + coord-form exception)',
+    longDesc: 'Returns the workspace path for a mission\'s repo. **W6-new id-first form**: `msn <mission-id> workspace [<repo-name>]`. **Coord-form exception**: legacy `msn workspace <id>:<repo>[/<path>]` PRESERVED (coord-form embeds mission-id; redundant to require id-first prefix). For multi-repo missions, supply <repo-name> or use coord-form. Errors with terminal-state-guard if mission is abandoned/completed (workspace destroyed).',
     argLabels: [
-      { label: '<id|name>', description: 'Mission identifier, name, or coord-form `<id>:<repo>[/<path>]`' },
+      { label: '<id|name>', description: 'Mission identifier (id-first) OR coord-form `<id>:<repo>[/<path>]` (coord-form exception)' },
       { label: '[<repo-name>]', description: 'Optional repo name for multi-repo missions (use coord-form instead)' },
     ],
     examples: [
-      { cmd: 'msn workspace alpha', comment: 'single-repo mission → repo path' },
-      { cmd: 'msn workspace alpha:backend', comment: 'multi-repo coord-form' },
-      { cmd: 'msn workspace alpha:backend/src/app.ts', comment: 'coord-form with path suffix' },
-      { cmd: 'cd "$(msn workspace alpha)"', comment: 'jump into workspace (or use `msn cd alpha` with shell-init)' },
+      { cmd: 'msn msn-abc12345 workspace', comment: 'id-first form (W6-new canonical); single-repo mission → repo path' },
+      { cmd: 'msn msn-abc12345 workspace backend', comment: 'id-first form + repo-name for multi-repo' },
+      { cmd: 'msn workspace msn-abc12345:backend', comment: 'coord-form exception (legacy verb-first preserved)' },
+      { cmd: 'msn workspace msn-abc12345:backend/src/app.ts', comment: 'coord-form with path suffix' },
+      { cmd: 'cd "$(msn msn-abc12345 workspace)"', comment: 'jump into workspace (or use `msn <id> cd` with shell-init)' },
     ],
     seeAlso: ['cd', 'shell-init', 'show'],
   },
@@ -472,14 +476,15 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
     required: 1,                 // <id|name>; semantic = `cd $(msn workspace <id>)` via bash-fn wrapper
     optional: 1,                 // <repo-name> for multi-repo missions
     flags: [],
-    shortDesc: 'Quick-jump into a mission workspace (requires shell-function wrapper)',
-    longDesc: 'When the shell-function wrapper from `msn shell-init` is installed, intercepts `msn cd <id>` to `cd $(msn workspace <id>)`. Without the wrapper, prints the path + a stderr hint to install it.',
+    shortDesc: 'Quick-jump into mission workspace (id-first per W6-new + coord-form exception; requires shell-fn wrapper)',
+    longDesc: 'When the shell-function wrapper from `msn shell-init` is installed, intercepts `msn <id> cd` (or coord-form `msn cd <id>:<repo>`) to `cd $(msn workspace ...)`. Without the wrapper, prints the path + a stderr hint to install it. **W6-new id-first form**: `msn <mission-id> cd`. **Coord-form exception**: `msn cd <id>:<repo>` PRESERVED.',
     argLabels: [
-      { label: '<id|name>', description: 'Mission identifier, name, or coord-form `<id>:<repo>[/<path>]`' },
+      { label: '<id|name>', description: 'Mission identifier (id-first) OR coord-form `<id>:<repo>[/<path>]` (coord-form exception)' },
       { label: '[<repo-name>]', description: 'Optional repo name for multi-repo missions' },
     ],
     examples: [
-      { cmd: 'msn cd alpha', comment: 'with wrapper installed: cd into alpha\'s workspace' },
+      { cmd: 'msn msn-abc12345 cd', comment: 'id-first form (W6-new canonical); cd into workspace via shell-fn wrapper' },
+      { cmd: 'msn cd msn-abc12345:backend', comment: 'coord-form exception (legacy verb-first preserved)' },
       { cmd: 'eval "$(msn shell-init bash)"', comment: 'one-time setup (append to ~/.bashrc)' },
     ],
     seeAlso: ['shell-init', 'workspace'],

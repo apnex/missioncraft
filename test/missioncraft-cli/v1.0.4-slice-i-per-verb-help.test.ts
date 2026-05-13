@@ -68,10 +68,11 @@ describe('v1.0.4 slice (i) — resolveSpec walks the arg-spec tree', () => {
 });
 
 describe('v1.0.4 slice (i) — renderVerbHelp output format', () => {
-  it('renders complete help with all sections for substantive verbs', () => {
+  it('renders complete help with all sections for substantive verbs (W6-new id-first reconciled)', () => {
+    // mission-78 W6-new slice (vi): show shortDesc/longDesc updated to W6-new id-first form
     const help = renderVerbHelp(['show']);
     expect(help).toMatch(/^usage: msn show/m);
-    expect(help).toMatch(/Show mission details by id or name/);
+    expect(help).toMatch(/Show mission details \(id-first per W6-new/);
     expect(help).toMatch(/Detail view \(kubectl-describe style\)/);
     expect(help).toMatch(/^Arguments:$/m);
     expect(help).toMatch(/<id\|name>\s+Mission identifier or name/);
@@ -104,8 +105,9 @@ describe('v1.0.4 slice (i) — renderVerbHelp output format', () => {
     expect(help).toMatch(/run 'msn help' for the full verb list/);
   });
 
-  it('usage-line override is honored when present', () => {
+  it('usage-line override is honored when present (W6-new id-first reconciled)', () => {
+    // mission-78 W6-new slice (vi): start usageOverride updated to W6-new id-first form
     const help = renderVerbHelp(['start']);
-    expect(help).toMatch(/^usage: msn start <id\|name> \| -f <path> \[--retain\]$/m);
+    expect(help).toMatch(/^usage: msn <mission-id> start \| msn start -f <path> \[--retain\]$/m);
   });
 });

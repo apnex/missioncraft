@@ -29,18 +29,39 @@ import {
 
 const HELP_TEXT = `missioncraft ${VERSION} — sovereign mission-orchestration substrate
 
-Usage: msn <verb> [args] [--flags]
+Usage: msn <verb> [args]                       (verb-first; global + creation verbs)
+       msn <mission-id> <verb> [args]          (id-first; mission-targeted verbs per Design v5.0 §10.6)
 
-Mission verbs:
-  msn create [--name <slug>] [--repo <url>...] [--scope <id|name>]
+Hybrid grammar (mission-78 W6-new): three verb-classes per Design v5.0 §10.6:
+  (1) GLOBAL          verb-first; no mission target
+  (2) CREATION        verb-first; return mission-id (with optional --start flag)
+  (3) MISSION-TARGETED  id-first canonical; v1.x verb-first form REMOVED
+
+(1) Global verbs:
   msn list [--status <state>] [--output json|yaml]
-  msn show <id|name>
-  msn start <id|name> | -f <path> [--retain]
-  msn complete <id|name> <message> [--purge-config]
-  msn abandon <id|name> <message> [--purge-config]
-  msn workspace <id|name> [<repo-name>]   (also accepts <id>:<repo>[/<path>] coord-form)
+  msn config get <key>
+  msn config set <key> <value>
+  msn scope <sub-verb> [args]                  (see Scope namespace below)
+  msn shell-init bash | zsh | fish             Emit shell-fn blob; \`eval "$(msn shell-init bash)"\`
+  msn tree [--depth <N>]                       Tree-style verb-hierarchy
+  msn version                                  missioncraft + git/gh substrate-detect
 
-Mission update:
+(2) Creation verbs (return mission-id; --start flag opts into immediate daemon-spawn):
+  msn create [--name <slug>] [--repo <url>...] [--scope <id|name>] [--start]
+  msn join <writer-mission-id> [--name <slug>] [--start]      BRANCH-TRACKER reader-mission
+  msn watch --repo <url> --branch <ref> [--name <slug>] [--start]   PERSISTENT-TRACKER reader
+
+(3) Mission-targeted verbs (id-first; canonical \`msn <mission-id> <verb>\`):
+  msn <id> show
+  msn <id> start                               Idempotent (no-op if daemon already running)
+  msn <id> complete <message> [--purge-config] [--purge-workspace]
+  msn <id> abandon <message> [--retain] [--purge-config]
+  msn <id> workspace [<repo-name>]             (also legacy verb-first \`msn workspace <id>:<repo>[/<path>]\` coord-form)
+  msn <id> cd [<repo-name>]                    Requires shell-function wrapper (one-time setup)
+
+  Bare-id-default: \`msn <mission-id>\` (no verb) → defaults to \`show\` (operator-DX-convenience)
+
+Mission update (verb-first preserved through W6-new for sub-action shape):
   msn update <id|name> repo-add <url> [--name <slug>] [--branch <name>] [--base <branch>]
   msn update <id|name> repo-remove <repo-name>
   msn update <id|name> name <new-name>
@@ -49,11 +70,10 @@ Mission update:
   msn update <id|name> scope-id <scope-id|name|"">
   msn update <id|name> tags-set <key> <value>
   msn update <id|name> tags-remove <key>
+  (id-first form also works: \`msn <id> update <sub-action> [args]\`)
 
-Reader-mission flavors (mission-78 W4-new; Design v5.0):
-  msn watch --repo <url> --branch <ref> [--name <slug>]   PERSISTENT-TRACKER reader (long-lived; operator-explicit-abandon)
-  msn join <writer-mission-id> [--name <slug>]            BRANCH-TRACKER reader (auto-close on writer-terminal via Loop B; slice v)
-  msn leave <id|name> [--purge-workspace]
+Reader-mission auxiliary (v4.x carry-forward through W7-new):
+  msn leave <id|name> [--purge-workspace]      Reader-side disengagement
 
 Scope namespace:
   msn scope create [--name <slug>] [--description <text>] [--repo <url>...]
@@ -62,14 +82,6 @@ Scope namespace:
   msn scope update <id|name> <sub-action> [args]
   msn scope delete <id|name>
 
-Operator-config:
-  msn config get <key>
-  msn config set <key> <value>
-
-Operator quick-jump (v1.0.3):
-  msn cd <id|name> [<repo-name>]              Requires shell-function wrapper (one-time setup)
-  msn shell-init bash | zsh | fish            Emit shell-fn blob; \`eval "$(msn shell-init bash)"\`
-
 Global flags (apply to all verbs):
   --workspace-root <path>    Override workspace-root for this invocation
   --wip-cadence-ms <ms>      Override WIP commit cadence
@@ -77,6 +89,12 @@ Global flags (apply to all verbs):
   --lock-wait-ms <ms>        Override lock-acquire wait timeout
   --lock-validity-ms <ms>    Override lock-validity TTL
   --output <text|json|yaml>  Override default output format
+
+W6-new operator-DX migration note:
+  v1.x verb-first form for mission-targeted verbs (\`msn show <id>\` etc.) REMOVED entirely
+  per Design v5.0 §12 no-backward-compat ratification. Use id-first form: \`msn <id> show\`.
+  To find a mission-id: run \`msn list\`. \`msn apply\` + \`msn <id> tick\` DROPPED entirely
+  (apply: overlap with create -f; tick: was unimplemented + W5-new push/pullCadence subsume).
 
 For more: https://github.com/apnex/missioncraft
 `;

@@ -373,5 +373,84 @@ mission-78 is architecturally COMPLETE at apnex/missioncraft@2dd6637. Wave-arc d
 
 ---
 
+## §12 Post-publish addendum — W8-new slice (ix.a) ship-completion narrative
+
+**Ship confirmation**: `@apnex/missioncraft@1.2.0` LIVE on npm registry as of 2026-05-13 06:14Z UTC.
+- npm view metadata: `.tarball: https://registry.npmjs.org/@apnex/missioncraft/-/missioncraft-1.2.0.tgz`
+- SHA-512 integrity: `sha512-Gm+6VpBMrWUQ72RRKe+p00qGa2b2kSM/4YVdGKfxr3sCTLgEkJyoPQSxB6Y5zQnlDFjn6gOFfXYry88LR1WGkg==`
+- OIDC-signed provenance attestation attached
+- npm-versions array: `[1.0.0, 1.0.1, ..., 1.0.7, 1.2.0]` (v1.1.0 skipped per Director-direct W2-extension re-scope)
+- apnex/missioncraft `main` final HEAD: `e253ca0` (tag `v1.2.0` at this commit)
+
+### §12.1 Slice (viii.a) CI-fix arc (Director-direct (a) FIX IT verdict within 60-min time-box)
+
+W8-new slice (viii) tag-push initially FAILED at release.yml `vitest (missioncraft)` step (4 CI failures pre-existing red-for-15-commits since W6-new slice v); npm-publish DID NOT FIRE. Director-direct verdict 2026-05-13: "Approved for a) fix it" — 60-min time-box authorized.
+
+**4-part fix arc** (3 commits + sed-rename across 8 test files):
+
+| Commit | Slice | Component | Description |
+|---|---|---|---|
+| `8d06444` | (viii.a) v1 | substrate defensive | `readerLoopBV5Tick` writer-config parse-wrap with try/catch → cascade parse-failures to `ReaderAutoCloseError` (defensive: writer-side state opaque externalism per W4-new slice (v.b) auto-close mechanics); SD2 daemon-shutdown poll-tolerance 5s → 30s (CI runner slowness buffer) |
+| `11fffeb` | (viii.a) v2 | substrate canonical | `parseMissionConfig` auto-mode peek `readOnly` field FIRST (canonical reader-mission marker per W4-new schema-v2; immutable across lifecycle); fallback to lifecycleState peek otherwise. `READER_STATES` schema-tuple includes `'started'` + `'abandoned'` (transient-shared-across-roles per mc.start Step 5 + readerAutoAbandon auto-close cascade) |
+| `e253ca0` | (viii.a) v3 | TEST ROOT-CAUSE | Test-fixture regex `/lifecycle-state: \w+/` → `/lifecycle-state: [\w-]+/` sed-replace across 8 test files (10 occurrences). The `\w+` character class doesn't match `-` (hyphen) → partial-match left YAML as `lifecycle-state: completed-progress` under CI-deterministic timing where daemon-tick advances writer to `in-progress` BEFORE test-mutation |
+
+**Root-cause**: test-fixture regex bug under CI-deterministic-faster-daemon-tick timing (calibration #67/#68 + `feedback_local_test_masking_via_cached_state.md` AMPLIFIED instance). Architect's hypothesis at thread-553 round 5 §2 ("non-flake-shape; deterministic-error-class mismatch") CORRECT.
+
+**Defensive substrate hardening (v1 + v2) REMAINS VALID** post-root-cause-fix:
+- `readerLoopBV5Tick` parse-wrap: protects future writer-config-corruption scenarios + fs-race during writer abandon-flow workspace destroy
+- `parseMissionConfig` auto-mode `readOnly` peek: canonical reader-marker-first dispatch (immutable; structurally correct) replaces lifecycle-state-only peek (transient-window-fragile)
+- `READER_STATES` extension: schema correctly models substrate-actual reader-state transitions through universal `'started'` transient + `'abandoned'` auto-close terminal
+
+**Time-box discipline reflection** (Director-authorized 60-min window):
+- t+0 (05:12Z UTC) START
+- t+15 (~05:27Z): v1 + v2 hypothesis identified
+- t+30 (~05:42Z): v2 shipped → CI failures 4 → 2 (significant progress)
+- t+45 (~05:57Z): v3 root-cause identified via FULL CI error capture
+- t+57 (~06:09Z): v3 committed + pushed
+- t+62 (~06:14Z): retag-force-push + release.yml npm-publish SUCCESS
+
+Within 60-min hard-limit. Director-ratified (a) FIX IT vindicated over (b) skip-vitest + (c) manual-bypass expedience options; calibration #76 ship-verify 3-layer discipline (tsc-strict + npm-test + commit-message-claims-reflect-actual-execution) UPHELD.
+
+### §12.2 Final mission-78 metrics
+
+| Metric | Value |
+|---|---|
+| Waves shipped | 10 (W0–W8-new) |
+| Commits to apnex/missioncraft main | ~47 |
+| Test-suite arc | 393 (pre-mission-78) → 559 (v1.2.0 ship) = +166 net |
+| Architect-dogfood cycles | 4 (W3-new + W4-new + W5-new + W7-new) |
+| Substrate BLOCKERS caught + corrected | 3 (Fix #8 + #10 + #12) |
+| CI BLOCKERS caught + corrected | 1 (W8-new slice (viii.a) within 60-min time-box) |
+| Calibrations filed | 6 (#71-#76) |
+| Inward-application instances of #73 | 3 (W4-new slice (iv) Hub-policy deferral + W6-new slice (v.b) verb-first-removal scope-gap + W6-new update-exception structural-requirement) |
+| Director-engagement moments | 3 (Director-direct re-scope 2026-05-12 + Director Release-gate (vi) PROCEED + Director-direct (a) FIX IT verdict (viii.a)) |
+| Total mission-78 thread-553 round usage | 8/15 at convergence |
+
+### §12.3 NEW calibration candidates surfaced at slice (viii.a)
+
+Filed for architect-Director-bilateral post-Phase-10-engagement:
+- **"CI-deterministic-test-fixture-regex-failed-on-hyphenated-states"**: test-fixture YAML-mutation regex must handle ALL possible lifecycle-state values including hyphenated forms (`in-progress`, `readonly-completed`). Sibling to `feedback_test_assertion_too_permissive_regex.md`.
+- **"Defensive-substrate-hardening-shipped-alongside-root-cause-fix"**: when root-cause is detected late in diagnostic (post-failed-fix-attempts), defensive substrate hardening shipped alongside the test-root-cause-fix REMAINS VALID + improves future-substrate robustness; engineer-judgment pattern for when to retain defensive layers.
+
+### §12.4 mission-78 lifecycle FLIPPED
+
+Architect-driven `update_mission` MCP call at 2026-05-13 ~06:15Z: `missionId=mission-78, status=completed` ✓. plannedTasks bookkeeping (issued/completed task-ids) carried forward as historical record; thread-based execution canonical (thread-540 through thread-553 captures full mission-arc).
+
+### §12.5 Phase 10 Retrospective parallel-track
+
+Architect-side parallel-track post-converge per Director "post-publish per engineer-judgment cadence" disposition. Doc location: `docs/retrospectives/mission-78-retrospective.md` (architect-authored; engineer-side review post-draft).
+
+Ratified retrospective candidates (Director-ratified at thread-553 §1.(c) + post-(viii.a) supplements):
+- #71 substrate-redesign-collapses-symptoms-not-root-causes
+- #72 transparency-gate-test-strength
+- #73 inward-application 3-instance pattern + §A.4 NEW pattern (defensive-substrate-hardening alongside root-cause-fixes when latter detected late)
+- #76 tsc-strict-build-mandatory commit-verify
+- 3-tier risk-precedent (substrate > CLI > cleanup/doc)
+- NEW W8-new: CI-deterministic-test-fixture-regex-failed-on-hyphenated-states
+- Forward-pointers: idea-291 (Hub-missioncraft integration end-to-end design) + idea-292 (Hub thread-design review) + idea-293 (fork-model triage)
+
+---
+
 — apnex-greg (engineer; agent-0d2c690e)
-— Closing-audit doc shipped as W8-new slice (i) per mission-78 wave-close protocol; pending architect ratification + Director Release-gate engagement (slice vi) + tag-push + npm publish (slice viii)
+— mission-78 architecturally COMPLETE + v1.2.0 npm-live ✓; Phase 10 Retrospective architect-side parallel-track in progress
+— Closing-audit final form post slice (ix.a) post-publish addendum 2026-05-13

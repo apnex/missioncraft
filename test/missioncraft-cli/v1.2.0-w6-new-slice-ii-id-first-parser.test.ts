@@ -63,13 +63,11 @@ describe('v1.2.0 W6-new slice (ii) — id-first parser detection', () => {
     expect(parsed.positionals).toEqual(['msn-fedcba98', 'new-alpha']);
   });
 
-  it('verb-first `msn show <msn-id>` STILL WORKS (legacy compat; slice v REMOVES it)', () => {
-    // Note: slice (v) of W6-new removes v1.x verb-first form entirely per no-backward-compat.
-    // This test documents the slice (ii) transitional behavior — both forms parseable.
-    const parsed = parse(['show', 'msn-12345678']);
-    expect(parsed.verb).toBe('show');
-    expect(parsed.missionRef).toBeUndefined();
-    expect(parsed.positionals).toEqual(['msn-12345678']);
+  it('verb-first `msn show <msn-id>` REJECTED at slice (v.b) (no-backward-compat per Design v5.0 §10.6)', () => {
+    // mission-78 W6-new slice (v.b): verb-first form for mission-targeted verbs REMOVED entirely.
+    // Operator-DX-clear error directs to id-first form `msn <id> show`. Replaces the slice (ii)
+    // transitional state where both forms were parseable.
+    expect(() => parse(['show', 'msn-12345678'])).toThrow(/requires id-first form/);
   });
 
   it('verb-first `msn create --repo X` (creation verb; no missionRef)', () => {
@@ -85,11 +83,12 @@ describe('v1.2.0 W6-new slice (ii) — id-first parser detection', () => {
     expect(parsed.missionRef).toBeUndefined();
   });
 
-  it('verb-first `msn show <slug-name>` (slug, NOT id-first; slugs still verb-first per γ)', () => {
-    const parsed = parse(['show', 'alpha-mission']);
-    expect(parsed.verb).toBe('show');
-    expect(parsed.missionRef).toBeUndefined();
-    expect(parsed.positionals).toEqual(['alpha-mission']);
+  it('verb-first `msn show <slug-name>` REJECTED at slice (v.b) (slug-via-verb-first removed; use msn list + id-first)', () => {
+    // mission-78 W6-new slice (v.b): verb-first form removed for ALL mission-targeted verbs,
+    // regardless of positional shape (id OR slug). Operator workflow: `msn list` to find id,
+    // then `msn <id> show`. Per (γ) parser disposition, slugs are NOT detected at parse-time;
+    // only canonical msn-<8hex> ids trigger id-first form.
+    expect(() => parse(['show', 'alpha-mission'])).toThrow(/requires id-first form/);
   });
 
   it('rejects partial-hex msn-id (less than 8 hex chars) — not matched as id-first; verb-first parsing applies', () => {

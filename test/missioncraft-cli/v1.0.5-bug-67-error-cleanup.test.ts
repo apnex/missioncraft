@@ -53,19 +53,22 @@ describe('v1.0.5 bug-67 item 2 — hint suffix on name-not-found', () => {
   });
 });
 
-describe('v1.0.5 bug-67 item 3 — missing-arg reports correct positional', () => {
-  it("'msn abandon <id>' (id provided, message missing) reports 'requires <message>'", () => {
-    // `abandon` argLabels: [<id|name>, <message>]; with 1 positional provided, the missing
-    // one is `<message>` (index 1), NOT `<id|name>` (index 0).
-    expect(() => parse(['abandon', 'msn-foo'])).toThrow(/'abandon' requires <message>/);
+describe('v1.0.5 bug-67 item 3 — missing-arg reports correct positional (W6-new slice (v.b) id-first migration)', () => {
+  it("id-first 'msn <id> abandon' (no message) reports 'requires <message>'", () => {
+    // mission-78 W6-new slice (v.b): legacy `abandon <id>` verb-first REMOVED; id-first canonical.
+    // `abandon` argLabels: [<id|name>, <message>]; with id provided via missionRef-prepend,
+    // missing positional is <message>.
+    expect(() => parse(['msn-12345678', 'abandon'])).toThrow(/'abandon' requires <message>/);
   });
 
-  it("'msn complete <id>' reports 'requires <message>' similarly", () => {
-    expect(() => parse(['complete', 'msn-foo'])).toThrow(/'complete' requires <message>/);
+  it("id-first 'msn <id> complete' (no message) reports 'requires <message>' similarly", () => {
+    expect(() => parse(['msn-12345678', 'complete'])).toThrow(/'complete' requires <message>/);
   });
 
-  it("'msn abandon' (no args) reports 'requires <id|name>' (first missing)", () => {
-    expect(() => parse(['abandon'])).toThrow(/'abandon' requires <id\|name>/);
+  it("verb-first 'msn abandon' (no args) REJECTED at slice (v.b) — id-first form required", () => {
+    // mission-78 W6-new slice (v.b): bare `msn abandon` (no missionRef + no positionals) →
+    // id-first-form-required error replaces legacy 'requires <id|name>' error
+    expect(() => parse(['abandon'])).toThrow(/requires id-first form/);
   });
 });
 

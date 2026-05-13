@@ -357,6 +357,32 @@ export function parse(argv: readonly string[]): ParsedCommand {
       subNamespacePath: verb === '--help' || verb === 'help' ? [] : [verb],
     };
   }
+  // mission-78 W6-new slice (v.b) (Design v5.0 §10.6 + no-backward-compat ratification):
+  // verb-first form for mission-targeted verbs is REMOVED entirely. These verbs require id-first
+  // form (`msn <msn-id> <verb>`) per Design v5.0 §10.6 hybrid grammar three-class taxonomy.
+  // `leave` PRESERVED at this slice (v4.x carry-forward; deferred to W7-new alongside mc.join SDK).
+  // `update` allowed verb-first under sub-action shape `msn update <id> <sub>`; W6-new id-first
+  // form `msn <id> update <sub>` works via missionRef-prepend (slice ii); both forms permitted
+  // through W6-new (legacy verb-first form for update remains operator-DX-friendly during migration).
+  // Operator-DX-clear error directs to id-first form. Slug access via id-lookup pattern (operator
+  // runs `msn list` to find id; then types `msn <id> <verb>`).
+  //
+  // **Coord-form exception** (workspace/cd): `msn workspace <id>:<repo>` legacy form preserved
+  // because coord-form embeds the mission-id; redundant to require id-first prefix. Detected
+  // by argv[1] containing ':' (Rule 7 substrate-coordinate; parseCoordinate validates further).
+  const MISSION_TARGETED_REQUIRES_ID_FIRST = new Set(['show', 'start', 'complete', 'abandon', 'workspace', 'cd']);
+  const COORD_FORM_VERBS = new Set(['workspace', 'cd']);
+  if (MISSION_TARGETED_REQUIRES_ID_FIRST.has(verb) && missionRefOverride === undefined) {
+    // Coord-form exception: workspace/cd accept `<coord>` positional containing ':' as legacy form
+    const firstPositional = effectiveArgv[1];
+    const isCoordForm = COORD_FORM_VERBS.has(verb) && typeof firstPositional === 'string' && firstPositional.includes(':');
+    if (!isCoordForm) {
+      throw new ConfigValidationError(
+        `verb '${verb}' requires id-first form: \`msn <mission-id> ${verb}\` (W6-new no-backward-compat)\n\n` +
+        `hint: run 'msn list' to find the mission-id, then 'msn <mission-id> ${verb}'`,
+      );
+    }
+  }
   const verbSpec = VERB_SPECS[verb];
   if (!verbSpec) {
     throw new ConfigValidationError(

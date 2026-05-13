@@ -27,8 +27,12 @@
  */
 const RESERVED_NAMES_PROTECTED_SDK: ReadonlySet<string> = new Set([
   // Top-level verbs (W6-new hybrid grammar; mirror RESERVED_VERBS in CLI arg-spec.ts)
-  'create', 'list', 'show', 'start', 'apply', 'update', 'complete', 'abandon',
-  'tick', 'scope', 'workspace', 'config', 'join', 'leave', 'watch', 'help',
+  // mission-78 W6-new slice (v): `apply` + `tick` DROPPED entirely (per Design v5.0 §10.6
+  // perfection-grade revisions). Removed from this set so future operator-name 'apply'/'tick'
+  // is accepted at slug-validation. RESERVED_VERBS in CLI arg-spec.ts also no longer includes
+  // these verbs (sync-discipline maintained per cross-ref comment).
+  'create', 'list', 'show', 'start', 'update', 'complete', 'abandon',
+  'scope', 'workspace', 'config', 'join', 'leave', 'watch', 'help',
   'cd', 'shell-init', 'version', 'tree', '--help', '--version',
   // Update sub-actions
   'repo-add', 'repo-remove', 'name', 'description', 'hub-id', 'scope-id',

@@ -238,7 +238,8 @@ function renderMissingArgError(spec: VerbArgSpec, contextPath: readonly string[]
   try {
     const help = renderVerbHelp(contextPath);
     const verb = contextPath[0];
-    const ID_NAME_VERBS = new Set(['show', 'start', 'abandon', 'complete', 'workspace', 'update', 'tick', 'cd']);
+    // mission-78 W6-new slice (v): `tick` REMOVED (verb DROPPED); `apply` was never in this set
+    const ID_NAME_VERBS = new Set(['show', 'start', 'abandon', 'complete', 'workspace', 'update', 'cd']);
     const hint = ID_NAME_VERBS.has(verb)
       ? `\n\nhint: run 'msn list' to see available missions`
       : '';

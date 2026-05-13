@@ -36,10 +36,8 @@ Mission verbs:
   msn list [--status <state>] [--output json|yaml]
   msn show <id|name>
   msn start <id|name> | -f <path> [--retain]
-  msn apply -f <path>
   msn complete <id|name> <message> [--purge-config]
   msn abandon <id|name> <message> [--purge-config]
-  msn tick <id|name>
   msn workspace <id|name> [<repo-name>]   (also accepts <id>:<repo>[/<path>] coord-form)
 
 Mission update:
@@ -157,7 +155,7 @@ async function main(argv: readonly string[]): Promise<number> {
  *   complete on terminal      → same
  *   complete on 'configured'  → "run 'msn start <id>' first to begin the mission"
  *   start on non-configured   → "run 'msn show <id>' to inspect current lifecycle state"
- *   tick on terminal          → "run 'msn show <id>' to inspect current lifecycle state"
+ *   (mission-78 W6-new slice (v): `tick` hint REMOVED — `tick` verb DROPPED entirely)
  */
 function renderFsmHint(verb: string, currentState: string, idOrName: string | undefined): string {
   const TERMINAL = new Set(['completed', 'abandoned']);
@@ -173,9 +171,6 @@ function renderFsmHint(verb: string, currentState: string, idOrName: string | un
     return `\n\nhint: run 'msn start ${idToken}' first to begin the mission`;
   }
   if (verb === 'start') {
-    return `\n\nhint: run 'msn show ${idToken}' to inspect current lifecycle state`;
-  }
-  if (verb === 'tick' && TERMINAL.has(currentState)) {
     return `\n\nhint: run 'msn show ${idToken}' to inspect current lifecycle state`;
   }
   return '';
@@ -331,16 +326,17 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
 
     // ─── (3) MISSION-TARGETED VERBS — id-first under W6-new (slice ii parser-changes);
     //         currently verb-first under v1.x (positional[0] = mission-id) ───
-    // Per W6-new slice (v): `apply` + `tick` + `leave` will be DROPPED; `resume` (was unimplemented)
-    // merged into idempotent `start`. show + update MOVED here from main dispatch (W6-new
-    // taxonomy: both consume positional[0]=missionId; mission-targeted by definition).
+    // mission-78 W6-new slice (v) (Design v5.0 §10.6 perfection-grade revisions): `apply` + `tick`
+    // DROPPED entirely (apply: overlap with `create -f`; tick: was unimplemented + documentation-
+    // lie; W5-new pushCadence/pullCadence subsume the cadence-tick semantic). `resume` already
+    // merged into idempotent start at slice (iii). `leave` PRESERVED at this slice (v4.x carry-
+    // forward; deferred to W7-new "v4.x carry-forward surface cleanup" batch alongside mc.join
+    // SDK method retention).
     case 'show':
     case 'update':
     case 'start':
-    case 'apply':
     case 'complete':
     case 'abandon':
-    case 'tick':
     case 'workspace':
     case 'cd':
     case 'leave':
@@ -653,9 +649,7 @@ async function dispatchMissionTargeted(mc: Missioncraft, parsed: ParsedCommand, 
       console.log(colors.success(`started mission ${handle.id}${nameSuffix}${pidSuffix}`));
       return;
     }
-    case 'apply':
-      await mc.apply({ missionConfigSchemaVersion: 2, mission: { id: 'placeholder', lifecycleState: 'created', createdAt: new Date() }, repos: [] });
-      return;
+    // mission-78 W6-new slice (v): `apply` + `tick` cases REMOVED; both verbs DROPPED entirely.
     case 'complete': {
       const progressSink = makeProgressSink(parsed);                       // v1.0.5 idea-273
       // v1.0.6 bug-72: --purge-workspace flag; default preserves workspace at terminal.
@@ -689,9 +683,6 @@ async function dispatchMissionTargeted(mc: Missioncraft, parsed: ParsedCommand, 
       console.log(colors.success(`abandoned mission ${result.id}${nameSuffix}${wsSuffix}; daemon stopped`));
       return;
     }
-    case 'tick':
-      await mc.tick(parsed.positionals[0]);
-      return;
     case 'workspace': {
       // SD1 fix (v1.0.2 slice iii): print the resolved workspace path to stdout. Pre-fix the
       // return value was discarded → silent exit-0; SDK API worked but CLI never emitted output.

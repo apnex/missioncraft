@@ -10,16 +10,17 @@ export const RESERVED_VERBS = [
   'list',
   'show',
   'start',
-  'apply',
+  // mission-78 W6-new slice (v): 'apply' DROPPED (overlap with `msn create -f`)
   'update',
   'complete',
   'abandon',
-  'tick',
+  // mission-78 W6-new slice (v): 'tick' DROPPED (was unimplemented; documentation-lie risk;
+  // W5-new pushCadence/pullCadence subsumes the cadence-tick semantic at substrate-level)
   'scope',
   'workspace',
   'config',
   'join',         // v4.0 NEW per HIGH-R2.2; mission-78 W4-new repurposes as BRANCH-TRACKER reader
-  'leave',        // v4.0 NEW per HIGH-R2.2
+  'leave',        // v4.0 NEW per HIGH-R2.2; W7-new "v4.x carry-forward surface cleanup" deferral
   'watch',        // mission-78 W4-new (Design v5.0 §2 row 4): PERSISTENT-TRACKER reader
   'help',         // v1.0.3 bug-64 item 8: primary help-verb; `--help` alias retained
   'cd',           // v1.0.3 idea-269: operator quick-jump via bash-fn wrapper (msn shell-init)
@@ -197,19 +198,8 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
     seeAlso: ['complete', 'abandon', 'workspace', 'cd'],
     usageOverride: 'msn start <id|name> | -f <path> [--retain]',
   },
-  apply: {
-    required: 0,
-    optional: 0,
-    flags: [
-      { name: '-f', takesValue: true, required: true, description: 'Apply from YAML path' },
-    ],
-    shortDesc: 'Upsert mission config from YAML (additive-only mid-mission)',
-    longDesc: 'Reads the YAML at -f path and applies it as an upsert: missing missions are created, existing missions accept additive mutations (repo-add, tag-set, etc.). Subtractive changes are rejected mid-mission; use update verbs instead.',
-    examples: [
-      { cmd: 'msn apply -f ./mission.yaml', comment: 'upsert mission from declarative config' },
-    ],
-    seeAlso: ['create', 'update'],
-  },
+  // mission-78 W6-new slice (v) (Design v5.0 §10.6 perfection-grade revisions): `apply` DROPPED
+  // entirely. Overlap with `msn create -f` (single creation surface; no need for separate verb).
   complete: {
     required: 2,                 // <id|name> <message>
     optional: 0,
@@ -249,15 +239,10 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
     ],
     seeAlso: ['complete', 'start'],
   },
-  tick: {
-    required: 1,                 // <id|name>
-    optional: 0,
-    flags: [],
-    shortDesc: 'Explicit cadence-tick trigger (W4 follow-on)',
-    longDesc: 'Fires a pendingTick signal to the daemon for the named mission. Daemon performs its next wip-commit/snapshot cycle immediately rather than waiting for the next cadence-interval. Useful for ad-hoc checkpointing.',
-    argLabels: [{ label: '<id|name>', description: 'Mission identifier or name' }],
-    seeAlso: ['start'],
-  },
+  // mission-78 W6-new slice (v) (Design v5.0 §10.6 perfection-grade revisions): `tick` DROPPED
+  // entirely. Was unimplemented (SDK threw "not yet implemented; planned for v1.x roadmap");
+  // documentation-lie risk. W5-new pushCadence/pullCadence already provide the cadence-tick
+  // semantic at substrate-level (no need for explicit operator-trigger).
   workspace: {
     required: 1,                 // <id|name> OR <coord> per Rule N
     optional: 1,                 // <repo-name>

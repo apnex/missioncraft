@@ -473,9 +473,11 @@ export class Missioncraft {
     return handle;
   }
 
-  async apply(_config: MissionConfig): Promise<MissionState> {
-    throw new MissionStateError('apply: full-config-upsert not yet implemented (planned for v1.x roadmap)');
-  }
+  /**
+   * mission-78 W6-new slice (v): `mc.apply()` SDK method DELETED entirely (verb DROPPED per
+   * Design v5.0 §10.6 perfection-grade revisions; was unimplemented + overlapped with
+   * `mc.create('mission', { -f spec })` which is the single creation-surface).
+   */
 
   /**
    * 8-step atomic PR-set publish-flow (Design v4.9 §2.4.1 lines 1700+; v3.1+v3.2+v3.3+v3.4 folds).
@@ -1098,9 +1100,11 @@ export class Missioncraft {
     );
   }
 
-  async tick(_id: string): Promise<{ wipCommitSha?: string; snapshotPath?: string }> {
-    throw new MissionStateError('tick: explicit cadence-tick not yet implemented (planned for v1.x roadmap)');
-  }
+  /**
+   * mission-78 W6-new slice (v): `mc.tick()` SDK method DELETED entirely (verb DROPPED per
+   * Design v5.0 §10.6 perfection-grade revisions; was unimplemented + W5-new pushCadence/
+   * pullCadence subsume the cadence-tick semantic at substrate-level).
+   */
 
   /**
    * Resolve workspace filesystem-path for a mission-id or substrate-coordinate (Design v4.9 §2.3

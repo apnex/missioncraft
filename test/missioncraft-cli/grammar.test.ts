@@ -4,8 +4,10 @@ import { ConfigValidationError } from '@apnex/missioncraft';
 
 describe('CLI grammar parser — Rules 1-7 — W3 smoke-tests', () => {
   describe('Rule 1: reserved-verbs', () => {
-    it('accepts all 15 reserved-verbs at v4.0', () => {
-      const verbs = ['create', 'list', 'show', 'start', 'apply', 'update', 'complete', 'abandon', 'tick', 'scope', 'workspace', 'config', 'join', 'leave'];
+    it('accepts all reserved-verbs (W6-new slice (v): apply + tick DROPPED)', () => {
+      // mission-78 W6-new slice (v): `apply` + `tick` DROPPED entirely per Design v5.0 §10.6
+      // perfection-grade revisions (apply: overlap with create -f; tick: unimplemented)
+      const verbs = ['create', 'list', 'show', 'start', 'update', 'complete', 'abandon', 'scope', 'workspace', 'config', 'join', 'leave'];
       for (const v of verbs) {
         // Each verb without args may fail Rule 6 but Rule 1 dispatch should pass; catch ConfigValidationError text accordingly
         try {

@@ -3,20 +3,15 @@
 // Mission-config YAML specifies pluggables by string-name (e.g., `identity.provider: 'gh-cli'`).
 // When mission-config overrides SDK-constructor's instance-injection (per precedence chain), engine instantiates from string-name.
 //
-// Canonical names (mission-78 W1 slice (iv) addition: 'native-git'):
+// Canonical names:
 //   identity:  'local-git-config'
 //   approval:  'trust-all'
 //   storage:   'local-filesystem'
-//   gitEngine: 'isomorphic-git', 'native-git' (mission-78 Path D2; canonical default flips to
-//              'native-git' in mission-78 W2; 'isomorphic-git' removed entirely in W4)
+//   gitEngine: 'native-git' (Path D2; canonical; hard-depends on the `git` binary on PATH)
 //   remote:    'pure-git', 'gh-cli'
 //
 // Closed registry at v1 (NOT exported; not extensible at v1). 3rd-party providers via SDK-constructor INSTANCE injection only.
 // v2.x can open the registry via `Missioncraft.registerProvider('my-custom', factory)` if 3rd-party-string-name demand emerges (additive).
-// Strict-1.0 commits the closed-registry-at-v1 model + the canonical string-names for built-in providers.
-// W1 slice (iv) wave-close: 'native-git' added per Path D2 substrate-replacement plan; mission-78
-// W2 flips the default; W4 drops 'isomorphic-git' entry + the file. STRICT-1.0-additive at the
-// registry level (new entry; existing 'isomorphic-git' still resolves until W4).
 
 import type {
   ApprovalPolicy,
@@ -33,7 +28,6 @@ import {
   LocalFilesystemStorage,
   type LocalFilesystemStorageOptions,
 } from '../defaults/local-filesystem-storage.js';
-import { IsomorphicGitEngine } from '../defaults/isomorphic-git-engine.js';
 import { NativeGitEngine } from '../defaults/native-git-engine.js';
 import { PureGitRemoteProvider } from '../providers/pure-git-remote-provider.js';
 import {
@@ -62,7 +56,6 @@ const PROVIDER_REGISTRY = {
       new LocalFilesystemStorage(config),
   },
   gitEngine: {
-    'isomorphic-git': () => new IsomorphicGitEngine(),
     'native-git': () => new NativeGitEngine(),
   },
   remote: {

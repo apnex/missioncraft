@@ -1,6 +1,6 @@
-// v1.1.0 W1 slice (iv) WAVE-CLOSE — mission-78 NativeGitEngine canonical build.
+// v1.1.0 W1 slice (iv) WAVE-CLOSE — NativeGitEngine canonical build.
 //
-// Three coverage targets:
+// Two coverage targets (§3 IsoEng-parity removed in W7-new alongside IsomorphicGitEngine deletion):
 //
 // §1 PROVIDER_REGISTRY 'native-git' entry — instantiateProvider('gitEngine', 'native-git')
 //    returns a working NativeGitEngine instance; listProviderNames includes 'native-git';
@@ -8,14 +8,7 @@
 //
 // §2 Full-contract integration test suite — all 17 GitEngine contract methods exercised
 //    end-to-end through PROVIDER_REGISTRY-instantiated NativeGitEngine, against an HTTP
-//    fixture upstream. Validates wire-up + happy-path correctness for the canonical W2-flip
-//    target.
-//
-// §3 Side-by-side IsoEng vs NativeEng merge-comparison test — W2 canonical-switch confidence
-//    target per architect (`feedback_new_code_path_exposes_dormant_defects.md` discipline);
-//    same workspace state through both engines, assert tree-equivalence + commit-message
-//    equivalence. Documents any observable divergence (which would be folded back to slice (iii)
-//    OR documented as W2 known-difference).
+//    fixture upstream. Validates wire-up + happy-path correctness.
 
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
@@ -27,7 +20,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   NativeGitEngine,
-  IsomorphicGitEngine,
   instantiateProvider,
   listProviderNames,
   gitExec,
@@ -83,10 +75,10 @@ describe('v1.1.0 W1 slice (iv) §1 — PROVIDER_REGISTRY native-git entry', () =
     expect((engine.constructor as typeof NativeGitEngine).providerName).toBe('native-git');
   });
 
-  it("listProviderNames('gitEngine') includes BOTH 'isomorphic-git' AND 'native-git' (W4 will drop the former)", () => {
+  it("listProviderNames('gitEngine') returns ['native-git'] (sole canonical provider post-W7-new)", () => {
     const names = listProviderNames('gitEngine');
     expect(names).toContain('native-git');
-    expect(names).toContain('isomorphic-git');
+    expect(names).not.toContain('isomorphic-git');
   });
 
   it("instantiateProvider rejects unknown gitEngine names with ConfigValidationError naming registered providers", () => {
@@ -95,7 +87,6 @@ describe('v1.1.0 W1 slice (iv) §1 — PROVIDER_REGISTRY native-git entry', () =
       instantiateProvider('gitEngine', 'unknown-engine');
     } catch (err) {
       expect((err as Error).message).toMatch(/native-git/);
-      expect((err as Error).message).toMatch(/isomorphic-git/);
     }
   });
 
@@ -247,118 +238,5 @@ describe('v1.1.0 W1 slice (iv) §2 — full-contract integration via PROVIDER_RE
   }, 60_000);
 });
 
-// ════════════════════════════════════════════════════════════════════════════════════════
-// §3 Side-by-side IsoEng vs NativeEng merge-comparison (W2 canonical-switch confidence)
-// ════════════════════════════════════════════════════════════════════════════════════════
-
-describe('v1.1.0 W1 slice (iv) §3 — IsoEng vs NativeEng merge-semantic parity (W2 canonical-switch)', () => {
-  /**
-   * Materialize identical repo state in two workspaces (same upstream + same diverged branches),
-   * run merge through both engines, compare resulting trees + commit-messages.
-   *
-   * Shared setup helper that creates two workspaces from the same upstream + same feature commits;
-   * caller chooses strategy + executes merges through each engine + asserts equivalence.
-   */
-  async function setupParallelWorkspaces(
-    bareDir: string,
-    cloneUrl: string,
-  ): Promise<{ nativeWs: WorkspaceHandle; isoWs: WorkspaceHandle; nativeEng: GitEngine; isoEng: GitEngine }> {
-    const nativeDir = join(tempRoot, 'native-ws');
-    const isoDir = join(tempRoot, 'iso-ws');
-
-    const nativeEng = new NativeGitEngine();
-    const isoEng = new IsomorphicGitEngine();
-
-    const nativeWs = makeWorkspace(nativeDir, 'm-N', cloneUrl);
-    const isoWs = makeWorkspace(isoDir, 'm-I', cloneUrl);
-
-    await nativeEng.clone(nativeWs, cloneUrl, { fs: undefined, identity: IDENTITY });
-    await isoEng.clone(isoWs, cloneUrl, { fs: undefined, identity: IDENTITY });
-
-    // Seed each with a feature branch + 1 commit (identical content; identical message;
-    // committed via raw native git so author/email are pinned identically across both workspaces).
-    for (const dir of [nativeDir, isoDir]) {
-      await execFileAsync('git', ['config', 'user.email', IDENTITY.email], { cwd: dir });
-      await execFileAsync('git', ['config', 'user.name', IDENTITY.name], { cwd: dir });
-      await execFileAsync('git', ['checkout', '-b', 'feature'], { cwd: dir });
-      await writeFile(join(dir, 'parity.txt'), 'parity-content\n', 'utf8');
-      await execFileAsync('git', ['add', '.'], { cwd: dir });
-      // Pin commit-time so author-date is identical across the two workspaces (otherwise
-      // commit-SHAs diverge for unrelated reasons; we want to test merge-semantic equivalence,
-      // not author-date stability)
-      await execFileAsync(
-        'git', ['commit', '--quiet', '-m', 'feature: parity commit'],
-        { cwd: dir, env: { ...process.env, GIT_AUTHOR_DATE: '1700000000 +0000', GIT_COMMITTER_DATE: '1700000000 +0000' } },
-      );
-      await execFileAsync('git', ['checkout', 'main'], { cwd: dir });
-    }
-
-    return { nativeWs, isoWs, nativeEng, isoEng };
-  }
-
-  let fixture: GitHttpFixture | undefined;
-  let cloneUrl: string;
-  let bareDir: string;
-
-  beforeEach(async () => {
-    const repoBase = join(tempRoot, 'origin-repos');
-    bareDir = join(repoBase, 'upstream.git');
-    const seedDir = join(tempRoot, 'seed');
-    await seedBareUpstream(bareDir, seedDir);
-    fixture = await createGitHttpFixture(repoBase, { autoCreate: false });
-    cloneUrl = `${fixture.url}/upstream.git`;
-  });
-
-  afterEach(async () => {
-    if (fixture) {
-      await fixture.close();
-      fixture = undefined;
-    }
-  });
-
-  it("'no-ff' merge: NativeEng + IsoEng produce equivalent merge-commit-tree (canonical W2-switch confidence)", async () => {
-    const { nativeWs, isoWs, nativeEng, isoEng } = await setupParallelWorkspaces(bareDir, cloneUrl);
-
-    // Merge via both engines — same source branch ('feature') into 'main', same strategy ('no-ff')
-    await nativeEng.merge(nativeWs, 'feature', { strategy: 'no-ff' });
-    await isoEng.merge(isoWs, 'feature', { strategy: 'no-ff' });
-
-    // Capture the merge-commit's tree-SHA from each workspace
-    const { stdout: nativeTreeOut } = await execFileAsync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: nativeWs.path });
-    const { stdout: isoTreeOut } = await execFileAsync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: isoWs.path });
-    const nativeTree = nativeTreeOut.trim();
-    const isoTree = isoTreeOut.trim();
-
-    // Tree-equivalence is the load-bearing assertion: same upstream + same feature commits +
-    // same merge strategy → same merged-tree-content. SHA equivalence confirms structural identity.
-    expect(nativeTree).toBe(isoTree);
-
-    // Both should be merge-commits (2 parents)
-    const { stdout: nativeParents } = await execFileAsync('git', ['rev-list', '--parents', '-n1', 'HEAD'], { cwd: nativeWs.path });
-    const { stdout: isoParents } = await execFileAsync('git', ['rev-list', '--parents', '-n1', 'HEAD'], { cwd: isoWs.path });
-    const nativeParentCount = nativeParents.trim().split(/\s+/).length - 1;
-    const isoParentCount = isoParents.trim().split(/\s+/).length - 1;
-    expect(nativeParentCount).toBe(2);
-    expect(isoParentCount).toBe(2);
-  }, 30_000);
-
-  it("'ff' merge: NativeEng + IsoEng both fast-forward to feature-tip (HEAD-SHA equivalence)", async () => {
-    const { nativeWs, isoWs, nativeEng, isoEng } = await setupParallelWorkspaces(bareDir, cloneUrl);
-
-    // Capture feature-tip SHA before merging (identical across both workspaces by setup)
-    const { stdout: nativeFeatureTip } = await execFileAsync('git', ['rev-parse', 'feature'], { cwd: nativeWs.path });
-    const { stdout: isoFeatureTip } = await execFileAsync('git', ['rev-parse', 'feature'], { cwd: isoWs.path });
-    expect(nativeFeatureTip.trim()).toBe(isoFeatureTip.trim());
-
-    // FF merge in both engines
-    await nativeEng.merge(nativeWs, 'feature', { strategy: 'ff' });
-    await isoEng.merge(isoWs, 'feature', { strategy: 'ff' });
-
-    // Post-merge HEAD = feature-tip in both
-    const { stdout: nativeHead } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: nativeWs.path });
-    const { stdout: isoHead } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: isoWs.path });
-    expect(nativeHead.trim()).toBe(nativeFeatureTip.trim());
-    expect(isoHead.trim()).toBe(isoFeatureTip.trim());
-    expect(nativeHead.trim()).toBe(isoHead.trim());
-  }, 30_000);
-});
+// §3 IsoEng vs NativeEng merge-parity DELETED in W7-new — IsomorphicGitEngine removed; NativeGitEngine
+// is the sole canonical implementation. No second-engine to compare against.

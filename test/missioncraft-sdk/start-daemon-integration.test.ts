@@ -1,12 +1,8 @@
 // W4.4 slice (iv) closing — daemon-tick advance + start() spawn-failure rollback integration tests.
 //
-// SUBSTRATE-CURRENCY GAP carried forward from W4.3 slice (iv): isomorphic-git HTTP-only transport
-// prevents real-engine clone over file://. start()'s Step 4 (gitEngine.clone) fails before reaching
-// Step 6 daemon-spawn. Integration tests for full start() happy-path (clone + spawn + tick) require
-// HTTP-server fixture (deferred to W6 per `feedback_substrate_extension_wire_flow_integration_test.md`).
-//
 // Tests below validate daemon-tick advance via direct mc.daemonTickAdvance() invocation (validates
-// spot-fix `670b6c5` _engineMutate routing) + daemon-IPC primitives end-to-end.
+// spot-fix `670b6c5` _engineMutate routing) + daemon-IPC primitives end-to-end. Full real-engine
+// start() happy-path lives in w6-real-engine-start.test.ts (HTTP-fixture clone).
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -78,7 +74,7 @@ describe('W4.4 slice (iv) — start() substrate-limit documentation', () => {
     //   Step 1: validate pre-state ✓ (testable)
     //   Step 2: acquire mission-lock + per-repo locks ✓ (testable)
     //   Step 3: storage.allocate workspace ✓ (testable)
-    //   Step 4: gitEngine.clone ✗ — isomorphic-git HTTP-only transport fails on file://
+    //   Step 4: gitEngine.clone ✓ (validated via HTTP-fixture in w6-real-engine-start.test.ts)
     //   Step 5: _engineMutate 'configured' → 'started' ✓ (testable in isolation)
     //   Step 6: spawnDaemonWatcher ✓ (slice i tests cover; needs lockfile setup)
     //   Step 7: (W4.4 territory) daemon-tick advance ✓ (this test file covers via daemonTickAdvance)

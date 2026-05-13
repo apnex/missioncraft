@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
   LocalFilesystemStorage,
-  IsomorphicGitEngine,
+  NativeGitEngine,
   instantiateProvider,
   listProviderNames,
   ConfigValidationError,
@@ -65,14 +65,14 @@ describe('LocalFilesystemStorage — W2 smoke-tests', () => {
   });
 });
 
-describe('IsomorphicGitEngine — W2 smoke-tests', () => {
-  it('exposes static providerName per v1.5 fold MEDIUM-R4.2', () => {
-    expect(IsomorphicGitEngine.providerName).toBe('isomorphic-git');
+describe('NativeGitEngine — smoke-tests', () => {
+  it('exposes static providerName', () => {
+    expect(NativeGitEngine.providerName).toBe('native-git');
   });
 
-  it('init + commit + log roundtrip via commitToRef bypass-INDEX (§AA)', async () => {
-    const engine = new IsomorphicGitEngine();
-    const repoDir = await mkdtemp(join(tmpdir(), 'mc-iso-test-'));
+  it('init + commitToRef + log roundtrip via bypass-INDEX semantic', async () => {
+    const engine = new NativeGitEngine();
+    const repoDir = await mkdtemp(join(tmpdir(), 'mc-native-test-'));
     try {
       const workspace: WorkspaceHandle = {
         missionId: 'msn-test',
@@ -82,13 +82,11 @@ describe('IsomorphicGitEngine — W2 smoke-tests', () => {
       const identity = { name: 'CI Runner', email: 'ci@apnex.example' };
       await engine.init(workspace, { fs: undefined, identity });
       await writeFile(join(repoDir, 'hello.txt'), 'world');
-      // commitToRef bypass-INDEX semantic (v0.3 §AA)
       const sha = await engine.commitToRef(workspace, 'refs/heads/wip/test', {
         message: 'initial wip',
         author: identity,
       });
       expect(sha).toMatch(/^[a-f0-9]{40}$/);
-      // Log against the wip ref
       const log = await engine.log(workspace, { ref: 'refs/heads/wip/test', maxCount: 1 });
       expect(log).toHaveLength(1);
       expect(log[0].sha).toBe(sha);
@@ -104,7 +102,7 @@ describe('PROVIDER_REGISTRY — W2 smoke-tests', () => {
     expect(listProviderNames('identity')).toContain('local-git-config');
     expect(listProviderNames('approval')).toContain('trust-all');
     expect(listProviderNames('storage')).toContain('local-filesystem');
-    expect(listProviderNames('gitEngine')).toContain('isomorphic-git');
+    expect(listProviderNames('gitEngine')).toContain('native-git');
     expect(listProviderNames('remote')).toEqual(expect.arrayContaining(['pure-git', 'gh-cli']));
   });
 

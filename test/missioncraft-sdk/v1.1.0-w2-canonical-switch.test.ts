@@ -1,20 +1,19 @@
-// v1.1.0 W2 — mission-78 canonical-switch (gitEngineProviderName default → 'native-git').
+// v1.1.0 W2 — canonical-switch (gitEngineProviderName default → 'native-git').
 //
-// Per task-406: flip mission YAML default `gitEngineProviderName` from `'isomorphic-git'` to
-// `'native-git'`. NativeGitEngine becomes the canonical default per Path D2 architectural decision.
+// Per Path D2 architectural decision: NativeGitEngine is the canonical default and only
+// registered gitEngine provider (mission-78 W7-new dropped IsomorphicGitEngine entirely).
 //
 // Coverage targets:
 //
 // §1 Default-injection contract — `new Missioncraft()` (no explicit gitEngine config) yields a
 //    NativeGitEngine instance; `gitEngineProviderName` on a created mission resolves to
-//    `'native-git'` (the canonical default post-W2).
+//    `'native-git'`.
 //
-// §2 Explicit-override contract — callers passing `config.gitEngine` instance OR mission YAML
-//    with `gitEngine.provider: 'isomorphic-git'` continue to work unchanged (transparent
-//    backward-compat through W3; W4 removes IsoEng entirely).
+// §2 Explicit-override contract — callers passing `config.gitEngine` instance (NativeGitEngine
+//    only post-W7-new) continue to work as identity-injection.
 //
-// §3 End-to-end transparency — mission-create + start with default 'native-git' produces same
-//    observable behavior as pre-W2 (per W1 slice (iv) §3 IsoEng/NativeEng merge-parity verification).
+// §3 End-to-end transparency — mission-create + start through default 'native-git' produces a
+//    populated workspace + the recorded provider-name persists across lifecycle transitions.
 //    Multi-word commit messages per `feedback_test_assertion_too_permissive_regex.md`; SPECIFIC
 //    assertions on the resulting publishStatus / lifecycleState (not regex-disjoint).
 
@@ -26,7 +25,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { Missioncraft, NativeGitEngine, IsomorphicGitEngine } from '@apnex/missioncraft';
+import { Missioncraft, NativeGitEngine } from '@apnex/missioncraft';
 import { createGitHttpFixture, type GitHttpFixture } from '../fixtures/git-http-fixture.js';
 
 const execFileAsync = promisify(execFile);
@@ -45,32 +44,23 @@ afterEach(async () => {
 // §1 Default-injection contract
 // ════════════════════════════════════════════════════════════════════════════════════════
 
-describe('v1.1.0 W2 §1 — default-injection: gitEngine defaults to NativeGitEngine post-canonical-switch', () => {
+describe('v1.1.0 W2 §1 — default-injection: gitEngine defaults to NativeGitEngine', () => {
   it('new Missioncraft() (no explicit gitEngine config) instantiates a NativeGitEngine', () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
     expect(mc.gitEngine).toBeInstanceOf(NativeGitEngine);
-    expect(mc.gitEngine).not.toBeInstanceOf(IsomorphicGitEngine);
   });
 
   it('the canonical default providerName is "native-git"', () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
-    // Static class member — verifies the wired class is NativeGitEngine, not IsoEng
     expect((mc.gitEngine.constructor as typeof NativeGitEngine).providerName).toBe('native-git');
   });
 });
 
 // ════════════════════════════════════════════════════════════════════════════════════════
-// §2 Explicit-override contract — backward-compat through W3
+// §2 Explicit-override contract — caller-injected instance
 // ════════════════════════════════════════════════════════════════════════════════════════
 
-describe('v1.1.0 W2 §2 — explicit-override: callers can still inject IsoEng via config (W3-bridge)', () => {
-  it('config.gitEngine = new IsomorphicGitEngine() overrides the canonical default', () => {
-    const isoEng = new IsomorphicGitEngine();
-    const mc = new Missioncraft({ workspaceRoot: tempRoot, gitEngine: isoEng });
-    expect(mc.gitEngine).toBeInstanceOf(IsomorphicGitEngine);
-    expect(mc.gitEngine).toBe(isoEng);
-  });
-
+describe('v1.1.0 W2 §2 — explicit-override: caller-injected NativeGitEngine instance', () => {
   it('config.gitEngine = new NativeGitEngine() (explicit) is accepted (idempotent with default)', () => {
     const nativeEng = new NativeGitEngine();
     const mc = new Missioncraft({ workspaceRoot: tempRoot, gitEngine: nativeEng });
@@ -121,8 +111,7 @@ describe('v1.1.0 W2 §3 — end-to-end: mission lifecycle transparent through de
     const handle = await mc.create('mission', { repo: bareRepoUrl });
     const beforeStart = await mc.get('mission', handle.id);
 
-    // Specific assertion (per feedback_test_assertion_too_permissive_regex.md): assert exact
-    // value, not a regex covering both 'isomorphic-git' and 'native-git'
+    // Specific assertion (per feedback_test_assertion_too_permissive_regex.md): assert exact value
     expect(beforeStart.gitEngineProviderName).toBe('native-git');
     expect(beforeStart.lifecycleState).toBe('configured');
 
@@ -133,17 +122,9 @@ describe('v1.1.0 W2 §3 — end-to-end: mission lifecycle transparent through de
     expect(afterStart.lifecycleState).toBe('started');
     expect(afterStart.gitEngineProviderName).toBe('native-git');     // unchanged across lifecycle
 
-    // Workspace populated via NativeGitEngine.clone (the canonical-switch transparency target)
+    // Workspace populated via NativeGitEngine.clone
     const workspaces = await mc.storage.list(handle.id);
     expect(workspaces.length).toBe(1);
     expect(existsSync(join(workspaces[0].path, 'README.md'))).toBe(true);
   }, 30_000);
-
-  it('explicit IsomorphicGitEngine override produces gitEngineProviderName="isomorphic-git" (W3-bridge)', async () => {
-    // Override-path: existing callers using `gitEngine: new IsomorphicGitEngine()` still work
-    const mc = new Missioncraft({ workspaceRoot: tempRoot, gitEngine: new IsomorphicGitEngine() });
-    const handle = await mc.create('mission', { repo: bareRepoUrl });
-    const created = await mc.get('mission', handle.id);
-    expect(created.gitEngineProviderName).toBe('isomorphic-git');
-  });
 });

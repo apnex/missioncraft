@@ -1,7 +1,7 @@
 // W6 slice (v) — bundle-ops substrate-extension per Director (Y) directive.
 //
 // Tests cover:
-//   1. IsomorphicGitEngine.createBundle / restoreBundle native-git shell-out primitives
+//   1. NativeGitEngine.createBundle / restoreBundle primitives
 //   2. snapshot.ts module helpers (snapshotRepoDir + findLatestBundle + listMissionBundles)
 //   3. SDK Missioncraft.snapshotWipBranches conditional + per-repo orchestration
 //   4. SDK Missioncraft.restoreFromSnapshot recovery primitive
@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { Missioncraft, IsomorphicGitEngine } from '@apnex/missioncraft';
+import { Missioncraft, NativeGitEngine } from '@apnex/missioncraft';
 import {
   defaultSnapshotRoot,
   snapshotRepoDir,
@@ -76,7 +76,7 @@ describe('W6 slice (v) — snapshot.ts module helpers', () => {
   });
 });
 
-describe('W6 slice (v) — IsomorphicGitEngine.createBundle / restoreBundle native-git shell-out', () => {
+describe('W6 slice (v) — NativeGitEngine.createBundle / restoreBundle primitives', () => {
   it('createBundle produces a git bundle file containing the named ref + history', async () => {
     const wsPath = join(tempRoot, 'ws');
     await mkdir(wsPath, { recursive: true });
@@ -89,7 +89,7 @@ describe('W6 slice (v) — IsomorphicGitEngine.createBundle / restoreBundle nati
     await execFileAsync('git', ['branch', '-M', 'main'], { cwd: wsPath });
 
     const bundlePath = join(tempRoot, 'snap.bundle');
-    const engine = new IsomorphicGitEngine();
+    const engine = new NativeGitEngine();
     const handle = { missionId: 'msn-foo', repoUrl: 'file:///x', path: wsPath };
     const result = await engine.createBundle(handle, bundlePath, 'main');
 
@@ -113,7 +113,7 @@ describe('W6 slice (v) — IsomorphicGitEngine.createBundle / restoreBundle nati
     const { stdout: srcSha } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: srcPath });
 
     const bundlePath = join(tempRoot, 'restore.bundle');
-    const engine = new IsomorphicGitEngine();
+    const engine = new NativeGitEngine();
     const srcHandle = { missionId: 'msn-foo', repoUrl: 'file:///x', path: srcPath };
     await engine.createBundle(srcHandle, bundlePath, 'wip-branch');
 

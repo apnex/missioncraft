@@ -1,7 +1,4 @@
-// v1.1.0 W1 slice (i) — mission-78 NativeGitEngine canonical build (Path D2 substrate-replacement).
-//
-// Architect-disposition (α) 2026-05-12T02:14Z: file at `defaults/native-git-engine.ts` parallel-sibling
-// to existing IsomorphicGitEngine. PROVIDER_REGISTRY entry `'native-git'` lands W1 slice (iv).
+// v1.1.0 W1 slice (i) — NativeGitEngine canonical build (Path D2 substrate-replacement).
 //
 // Slice (i) coverage:
 // - `gitExec` helper — argv-only discipline; surfaces git stderr (not Node's argv-joined display

@@ -32,7 +32,6 @@
   },
   "dependencies": {
     "chokidar": "^4.0.0",
-    "isomorphic-git": "^1.27.0",
     "yaml": "^2.6.0",
     "zod": "^4.0.0"
   },

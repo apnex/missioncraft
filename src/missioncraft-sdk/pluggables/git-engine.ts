@@ -1,15 +1,13 @@
 // GitEngine pluggable interface (Design v4.8 §2.1.4 — v0.2 fold per §C.1 comprehensive API)
-// Default implementation (mission-78 W2 Path D2): NativeGitEngine (shells to native `git` CLI;
-// argv-only via execFile; hard-depends on the `git` binary on PATH).
-// Alternate (W3-bridge until mission-78 W4 removal): IsomorphicGitEngine (pure-TS via the
-// isomorphic-git library; no native bindings; portable). Pre-v1.1.0 default.
+// Canonical implementation (Path D2): NativeGitEngine (shells to native `git` CLI; argv-only
+// via execFile; hard-depends on the `git` binary on PATH).
 
 import type { AgentIdentity } from './identity.js';
 import type { WorkspaceHandle } from './storage.js';
 import type { RemoteProvider } from './remote.js';
 
 export interface GitOptions {
-  readonly fs: unknown; // filesystem abstraction (IsomorphicGit-compatible)
+  readonly fs: unknown; // filesystem abstraction (carried as opaque type for SDK-internal use)
   readonly identity: AgentIdentity;
   readonly remote?: RemoteProvider;
 }
@@ -21,12 +19,11 @@ export interface CommitOptions {
   readonly autoStage?: boolean; // v0.2 fold — explicit stage-everything-tracked vs caller-controlled
 }
 
-// v0.6 fold per §AAAAA — IsomorphicGit only supports ff/no-ff per official docs;
-// v1.x can add squash/rebase via major-bump if substrate evolves OR via shell-out fold.
+// v1.x can add squash/rebase via major-bump if substrate evolves.
 export type MergeStrategy = 'ff' | 'no-ff';
 
 export interface PushOptions {
-  readonly branch?: string;        // source ref (local) — passed as `ref` to isomorphic-git
+  readonly branch?: string;        // source ref (local)
   readonly remote?: string;        // v0.2 fold per §C.1 — explicit remote (default 'origin')
   readonly url?: string;           // v4.0 fold per W5b — direct URL push (overrides `remote`); coord-remote refspec push without persisting remote config
   readonly remoteRef?: string;     // v4.0 fold per W5b MEDIUM-R6.1 — destination ref on remote (refspec push when source !== destination)

@@ -1,17 +1,15 @@
-// v1.1.0 W2-extension Fix #3 — mission-78 commitToRef parent-linkage anchored to HEAD.
+// v1.1.0 W2-extension Fix #3 — commitToRef parent-linkage anchored to HEAD.
 //
-// Architect-side scenario-02 dogfood (thread-543) surfaced a SHARED-engine substrate-defect:
-// `commitToRef` produced ORPHAN wip-commits when the target ref didn't exist on first invocation.
-// Subsequent `git merge --squash` against the wip-branch failed with "refusing to merge unrelated
-// histories" — so `msn complete` couldn't ship the PR.
+// Architect-side scenario-02 dogfood (thread-543) surfaced a substrate-defect: `commitToRef`
+// produced ORPHAN wip-commits when the target ref didn't exist on first invocation. Subsequent
+// `git merge --squash` against the wip-branch failed with "refusing to merge unrelated histories"
+// — so `msn complete` couldn't ship the PR.
 //
-// Defect was SYMMETRIC in both NativeGitEngine + IsomorphicGitEngine commitToRef (both engines
-// fell through to "no parents" on initial-ref-miss). Fix #3 anchors the wip-branch to HEAD
-// (mission/<id>) so the resulting commit chain is FF-equivalent to base-branch.
+// Fix #3 anchors the wip-branch to HEAD (mission/<id>) so the resulting commit chain is
+// FF-equivalent to base-branch.
 //
-// Coverage:
+// Coverage (W7-new: §2 IsoEng-parity removed alongside IsomorphicGitEngine deletion):
 //   §1 NativeGitEngine.commitToRef — parent linkage to HEAD on initial wip-ref creation
-//   §2 IsomorphicGitEngine.commitToRef — same behavior (parity verification)
 //   §3 End-to-end through squashCommit — wip-branch built via commitToRef can be squash-merged
 //      back to base-branch (the bug-reproduction path; load-bearing for `msn complete` flow)
 //   §4 Truly-empty-repo edge case — no HEAD; orphan-root acceptable (post-init pre-first-commit)
@@ -24,7 +22,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { NativeGitEngine, IsomorphicGitEngine } from '@apnex/missioncraft';
+import { NativeGitEngine } from '@apnex/missioncraft';
 import type { GitEngine } from '../../src/missioncraft-sdk/pluggables/git-engine.js';
 import type { WorkspaceHandle } from '../../src/missioncraft-sdk/pluggables/storage.js';
 import type { AgentIdentity } from '../../src/missioncraft-sdk/pluggables/identity.js';
@@ -103,29 +101,7 @@ describe('v1.1.0 W2-ext §1 — NativeGitEngine.commitToRef parent-linkage to HE
   });
 });
 
-// ════════════════════════════════════════════════════════════════════════════════════════
-// §2 IsomorphicGitEngine.commitToRef — parent-linkage parity
-// ════════════════════════════════════════════════════════════════════════════════════════
-
-describe('v1.1.0 W2-ext §2 — IsomorphicGitEngine.commitToRef parent-linkage parity', () => {
-  it('first commitToRef on non-existent ref produces commit whose parent IS the current HEAD (IsoEng parity)', async () => {
-    const dir = join(tempRoot, 'repo');
-    await seedRepo(dir, 2);
-    const ws = makeWorkspace(dir);
-    const engine = new IsomorphicGitEngine();
-    await engine.init(ws, { fs: undefined, identity: IDENTITY });
-
-    const headBefore = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: dir })).stdout.trim();
-
-    await writeFile(join(dir, 'wip-content.txt'), 'wip\n', 'utf8');
-    const wipSha = await engine.commitToRef(ws, 'refs/heads/wip/m-test', { message: 'initial wip-snapshot' });
-
-    expect(wipSha).toMatch(/^[0-9a-f]{40}$/);
-    const { stdout: parentList } = await execFileAsync('git', ['rev-list', '--parents', '-n1', wipSha], { cwd: dir });
-    const parents = parentList.trim().split(/\s+/).slice(1);
-    expect(parents).toEqual([headBefore]);
-  });
-});
+// §2 IsomorphicGitEngine.commitToRef parity DELETED in W7-new — IsoEng removed; NativeEng is sole engine.
 
 // ════════════════════════════════════════════════════════════════════════════════════════
 // §3 End-to-end via squashCommit — daemon-style commitToRef chain on mission-branch can be
@@ -136,7 +112,6 @@ describe('v1.1.0 W2-ext §2 — IsomorphicGitEngine.commitToRef parent-linkage p
 describe('v1.1.0 W2-ext §3 — squashCommit against commitToRef-built mission-branch succeeds (W3-new single-branch + Fix #4 + Fix #8 combined)', () => {
   for (const [engineName, engineFactory] of [
     ['NativeGitEngine', () => new NativeGitEngine()],
-    ['IsomorphicGitEngine', () => new IsomorphicGitEngine()],
   ] as const) {
     it(`${engineName}: daemon commitToRef-chain on mission-branch + squashCommit publishes single commit on mission-branch with UNTRACKED FILES IN WORKING TREE (architecturally correct under v5.0 single-branch)`, async () => {
       const dir = join(tempRoot, `repo-${engineName}`);

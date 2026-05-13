@@ -142,11 +142,6 @@ export class Missioncraft {
       (config.workspaceRoot ?? join(homedir(), '.missioncraft')).replace(/^~(?=$|\/|\\)/, homedir()),
     );
     this.storage = config.storage ?? instantiateProvider('storage', 'local-filesystem', { workspaceRoot: this.workspaceRoot });
-    // mission-78 W2 (Path D2): canonical default flipped from 'isomorphic-git' to 'native-git'.
-    // Existing mission YAMLs with `gitEngine.provider: 'isomorphic-git'` continue to resolve via
-    // PROVIDER_REGISTRY until W4 (which removes IsomorphicGitEngine entirely + drops the
-    // isomorphic-git npm dep). Callers passing an explicit `config.gitEngine` instance are
-    // unaffected by the default flip.
     this.gitEngine = config.gitEngine ?? instantiateProvider('gitEngine', 'native-git');
     this.remote = config.remote;                       // optional; pure-git mode if undefined
     this.principal = config.principal;

@@ -1,8 +1,7 @@
-// Native GitEngine implementation (Path D2 — mission-78 W1; Director-ratified 2026-05-12).
+// Native GitEngine implementation (Path D2 — Director-ratified 2026-05-12).
 //
 // Hard-depends on the `git` CLI binary as substrate (per substrate-detect / `requireSubstrate('git')`).
-// Replaces IsomorphicGitEngine as the canonical engine in mission-78 W2 (default-flip);
-// IsomorphicGitEngine is removed entirely in W4.
+// Canonical engine; only registered gitEngine provider.
 //
 // **Argv-only discipline (Path D2 core principle)**:
 // - ALL git invocations go through `gitExec(workspace, ...args)` which uses `execFile('git', args, ...)`.
@@ -10,16 +9,11 @@
 // - On error, `gitExec` surfaces git's actual stderr (not Node's argv-joined display string)
 //   per `feedback_node_execfile_error_formatter_visual_misleads_diagnosis.md`.
 //
-// Slice (i) — `gitExec` helper + 6 foundational ops: clone / branch / checkout / log / status / revparse
-// Slice (ii) — write-ops + lifecycle + remote-management:
-//   init / getCurrentBranch / tag / stage / commit / commitToRef / deleteBranch
-//   fetch / push / pull / addRemote / removeRemote / listRemotes
-// Slice (iii) — THIS commit — advanced ops:
-//   merge (ff / no-ff strategy) / squashCommit / createBundle / restoreBundle
-//   The latter 3 are Native-canonical (not capability-gated) — IsoEng's impl already
-//   shells out to native git per §2.6.2 v0.4 §AAA bundle-ops native-shell-out + §BBBBBB squash-shell-out;
-//   semantics match exactly between IsoEng (shell-out) and NativeGitEngine (native).
-// Slice (iv) — PROVIDER_REGISTRY entry `'native-git'` + integration test suite (wave-close).
+// Operation surface:
+//   foundational: clone / branch / checkout / log / status / revparse
+//   write-ops:    init / getCurrentBranch / tag / stage / commit / commitToRef / deleteBranch
+//                 fetch / push / pull / addRemote / removeRemote / listRemotes
+//   advanced:     merge (ff / no-ff strategy) / squashCommit / createBundle / restoreBundle
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -52,11 +46,9 @@ const optionsByWorkspace = new WeakMap<WorkspaceHandle, NativeOptionsInternal>()
  * Resolve identity for commit-firing-time. Tries the per-workspace WeakMap first; on miss,
  * falls back to reading the workspace's local git config (`user.name`/`user.email`) which the
  * SDK lifecycle reliably populates via `git config` writes during workspace setup OR which
- * inherits from the operator's `~/.gitconfig` global. This mirrors IsomorphicGitEngine's
- * implicit reliance on git config for shell-out ops (squashCommit/createBundle/restoreBundle)
- * and ensures W2 canonical-switch is transparent for SDK internal call-sites that thread fresh
- * WorkspaceHandle objects from `storage.list()` (different object identity from the handle
- * passed to `clone()`).
+ * inherits from the operator's `~/.gitconfig` global. This handles SDK internal call-sites that
+ * thread fresh WorkspaceHandle objects from `storage.list()` (different object identity from the
+ * handle passed to `clone()`).
  *
  * Throws UnsupportedOperationError only when BOTH WeakMap AND git config lookups fail.
  */
@@ -247,8 +239,7 @@ export class NativeGitEngine implements GitEngine {
       // Seed temp index from the target ref's existing tree if it exists; else fall back to HEAD
       // so the wip-branch is FF-anchored to base-branch (load-bearing for §2.6.2 squash-merge
       // downstream — orphan-root wip-commits cause `git merge --squash` to fail with
-      // "refusing to merge unrelated histories"). mission-78 W2-extension Fix #3: dogfood
-      // surfaced via thread-543 — defect symmetric in both NativeEng + IsoEng commitToRef.
+      // "refusing to merge unrelated histories"). W2-extension Fix #3 surfaced via thread-543.
       let parentSha: string | undefined;
       try {
         const { stdout } = await gitExec(workspace, ['rev-parse', ref]);
@@ -316,14 +307,11 @@ export class NativeGitEngine implements GitEngine {
     branchName: string,
     options: { force?: boolean } = {},
   ): Promise<void> {
-    void options;       // contract-uniform with IsomorphicGitEngine; force is implicit at the ref level
+    void options;       // force is implicit at the ref level
     // Use `git update-ref -d refs/heads/<name>` (low-level ref-removal) instead of `git branch -d/-D`
-    // to MATCH IsomorphicGitEngine's `git.deleteBranch` semantic exactly: checkout-state-agnostic.
-    // `git branch -D` refuses to delete the currently-checked-out branch; isomorphic-git's
-    // deleteBranch unlinks the ref unconditionally. For substrate-transparency at the W2
-    // canonical-switch (mission-78), the engines must agree. Caller (e.g., abandon-flow) handles
-    // workspace teardown immediately after, so the orphan-HEAD that update-ref leaves behind is
-    // not a footgun in the SDK lifecycle.
+    // for checkout-state-agnostic semantic: `git branch -D` refuses to delete the currently-checked-out
+    // branch; update-ref unlinks the ref unconditionally. Caller (e.g., abandon-flow) handles workspace
+    // teardown immediately after, so the orphan-HEAD that update-ref leaves behind is not a footgun.
     const ref = branchName.startsWith('refs/') ? branchName : `refs/heads/${branchName}`;
     await gitExec(workspace, ['update-ref', '-d', ref]);
   }
@@ -347,7 +335,7 @@ export class NativeGitEngine implements GitEngine {
     if (options.tags) args.push('--tags');
     // git push positional grammar: `push [<remote>] [<refspec>]` — the FIRST positional is always
     // the remote (or URL). When caller specifies a branch but no remote/url, default remote to
-    // 'origin' so the branch arg lands in the refspec slot (parallel to isomorphic-git internal default).
+    // 'origin' so the branch arg lands in the refspec slot.
     const target = options.url ?? options.remote ?? (options.branch !== undefined ? 'origin' : undefined);
     if (target !== undefined) args.push(target);
     if (options.branch !== undefined) {
@@ -380,7 +368,7 @@ export class NativeGitEngine implements GitEngine {
     sourceBranch: string,
     options: { strategy?: MergeStrategy } = {},
   ): Promise<void> {
-    // Strategy mapping (parallel to IsomorphicGitEngine §BBBBBB micro-fold):
+    // Strategy mapping:
     //   'ff'    → require-fast-forward (fail otherwise) → --ff-only
     //   'no-ff' → always create merge-commit (default)  → --no-ff
     const strategy = options.strategy ?? 'no-ff';
@@ -417,8 +405,7 @@ export class NativeGitEngine implements GitEngine {
    * push(headRef) uses the freshly-updated ref directly; PR head=headRef base=baseRef shows the
    * single-squash diff.
    *
-   * Note: in IsomorphicGitEngine this is `squashCommit?` (capability-gated optional, native shell-out).
-   * NativeGitEngine implements unconditionally — git CLI is a hard dep per Path D2.
+   * Implemented unconditionally — git CLI is a hard dep per Path D2.
    */
   async squashCommit(
     workspace: WorkspaceHandle,
@@ -456,8 +443,7 @@ export class NativeGitEngine implements GitEngine {
   /**
    * Bundle-create (W6 slice (v) Director (Y); §2.6.2 v0.4 §AAA snapshot mechanism for disk-failure recovery).
    *
-   * Native git CLI is the canonical impl (parallel to IsoEng's native shell-out per architect (p)
-   * disposition); creates `git bundle` archive at `bundlePath` containing `ref` + ancestors.
+   * Creates a `git bundle` archive at `bundlePath` containing `ref` + ancestors.
    * Returns the bundle file path on success.
    */
   async createBundle(workspace: WorkspaceHandle, bundlePath: string, ref: string): Promise<string> {
@@ -472,7 +458,7 @@ export class NativeGitEngine implements GitEngine {
    * Bundle-restore (W6 slice (v) Director (Y); §2.6.2 v0.4 §AAA snapshot mechanism).
    *
    * Calls `git bundle unbundle` to extract objects + refs into the workspace's git-dir, then
-   * `git update-ref` to set the named ref (parallel to IsoEng's native shell-out impl).
+   * `git update-ref` to set the named ref.
    */
   async restoreBundle(workspace: WorkspaceHandle, bundlePath: string, ref: string): Promise<void> {
     // `git bundle unbundle` output: "<sha> <ref>\n..." (one or more lines)
@@ -510,7 +496,7 @@ export class NativeGitEngine implements GitEngine {
       const headResult = await gitExec(workspace, ['rev-parse', 'HEAD']);
       head = headResult.stdout.trim();
     } catch {
-      // unborn branch (no commits yet) — leave head as empty string per IsomorphicGitEngine convention
+      // unborn branch (no commits yet) — leave head as empty string
     }
 
     // Porcelain v1 lines: `XY <path>` where X = staged, Y = unstaged. `??` = untracked.

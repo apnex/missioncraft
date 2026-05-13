@@ -1,15 +1,9 @@
 // W4.3 slice (iv) — real-engine integration tests for complete() + abandon() flows.
 //
-// Substrate-reality note (slice iv discovery): isomorphic-git only supports HTTP transport
-// (NOT file://). Architect's "tmpfs-staged bare repo" optimization assumes file:// clone+push
-// works which it doesn't. Pragmatic disposition (architect-surfaced):
-// - tests that exercise abandon-flow (deleteBranch is pure-local) work end-to-end
-// - tests that exercise complete-flow stop at push-failure (isomorphic-git can't push to file://);
-//   we test up-to-push behavior + verify partial-failure publishStatus persistence
-// - real-engine clone (start() happy-path) deferred to W6 with HTTP-server fixture
-//
-// All tests use REAL LocalFilesystemStorage + REAL IsomorphicGitEngine defaults (no mocks).
-// Workspace is pre-initialized via gitEngine.init (start()/clone is the gap; not these flows).
+// All tests use REAL LocalFilesystemStorage + REAL NativeGitEngine defaults (no mocks). The
+// complete-flow tests use file:// URLs pointing at non-existent bare repos; push fails on those,
+// and we verify partial-failure publishStatus persistence. Real-engine clone via HTTP-fixture is
+// exercised by w6-real-engine-start.test.ts.
 
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile, readFile, mkdir, readdir } from 'node:fs/promises';
@@ -210,8 +204,8 @@ describe('W4.3 slice (iv) — complete() real-engine integration (push-failure p
     await advanceLifecycle(tempRoot, handle.id, 'in-progress');
     await seedMissionLockfile(tempRoot, handle.id);
 
-    // complete() will: persist publishMessage → squash succeeds (local) → push fails
-    // (isomorphic-git has no file:// transport). publishLoop's catch records 'failed' and rethrows.
+    // complete() will: persist publishMessage → squash succeeds (local) → push fails (no bare repo
+    // at the file:// URL). publishLoop's catch records 'failed' and rethrows.
     // v1.0.7 bug-73 calibration: pre-fix assertion was `toMatch(/^(failed|squashed|pushed)$/)`,
     // which was green for BOTH the (then-silent) handle-find-failure 'failed' AND the push-failure
     // 'failed'. Tightened to specific `toBe('failed')` so the test no longer accepts the
@@ -268,17 +262,11 @@ describe('W4.3 slice (iv) — complete() real-engine integration (push-failure p
   });
 });
 
-describe('W4.3 slice (iv) — substrate gap surfaced', () => {
-  it('NOTE: real-engine clone over file:// not supported by isomorphic-git; deferred to W6 with HTTP-server fixture', () => {
-    // This test is intentionally a documentation marker, not a behavioral assertion.
-    //
-    // isomorphic-git uses HTTP/HTTPS transport (`isomorphic-git/http/node`) for clone + push.
-    // It does NOT support `file://` URLs. Architect's "tmpfs-staged bare repo" optimization
-    // assumed file:// works which it doesn't.
-    //
-    // Pragmatic slice (iv) disposition: tests above use pre-allocated workspaces (substrate-bypass
-    // for clone-step only) to exercise the COMPLETE downstream wire-flow (publish + abandon) with
-    // real LocalFilesystemStorage + IsomorphicGitEngine.
+describe('W4.3 slice (iv) — historical substrate marker', () => {
+  it('NOTE: real-engine clone integration via HTTP-server fixture lives in w6-real-engine-start.test.ts', () => {
+    // Tests above use pre-allocated workspaces (substrate-bypass for clone-step only) to exercise
+    // the COMPLETE downstream wire-flow (publish + abandon) with real LocalFilesystemStorage +
+    // NativeGitEngine.
     //
     // Full real-engine clone integration test deferred to W6 with HTTP-server fixture
     // (e.g., spawn local `git http-backend` daemon OR `node-git-server` package OR

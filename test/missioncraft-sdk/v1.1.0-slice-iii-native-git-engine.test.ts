@@ -1,14 +1,9 @@
-// v1.1.0 W1 slice (iii) — mission-78 NativeGitEngine advanced ops:
+// v1.1.0 W1 slice (iii) — NativeGitEngine advanced ops:
 //   merge (ff / no-ff strategy) / squashCommit / createBundle / restoreBundle
 //
-// Architect-spec note: the latter 3 (squashCommit / createBundle / restoreBundle) are
-// Native-canonical (NOT capability-gated) — IsoEng's impl already shells out to native git per
-// §2.6.2 v0.4 §AAA bundle-ops native-shell-out + §BBBBBB squash-shell-out; semantics MATCH
-// EXACTLY between IsoEng (shell-out) and NativeGitEngine (native).
-//
-// W2 canonical-switch verification target (per architect): squash-merge semantic. Tests below
-// verify squashed-commit produces a single new commit on baseRef with the messageclient-supplied,
-// no merge-commit, parent linkage = baseRef tip pre-squash.
+// squashCommit + createBundle + restoreBundle are Native-canonical (NOT capability-gated).
+// Tests verify squashed-commit produces a single new commit on baseRef with the caller-supplied
+// message, no merge-commit, parent linkage = baseRef tip pre-squash.
 //
 // Multi-word commit messages exercised per `feedback_test_assertion_too_permissive_regex.md`.
 
@@ -276,12 +271,8 @@ describe('v1.1.0 W1 slice (iii) — NativeGitEngine.createBundle + restoreBundle
   });
 });
 
-describe('v1.1.0 W1 slice (iii) — squash-semantic parity with IsomorphicGitEngine (W2 canonical-switch)', () => {
-  it('Native squash-merge produces same commit-tree as Isomorphic squash-merge for identical input', async () => {
-    // Setup two identical repos with same feature branch; squash via Native + raw native git;
-    // verify both produce equivalent trees (IsomorphicGitEngine's impl already shells out to native
-    // git per §2.1.4 v0.6 fold, so identity is structurally guaranteed — this test pins the
-    // verification publicly for W2 canonical-switch confidence).
+describe('v1.1.0 W1 slice (iii) — squash-semantic correctness', () => {
+  it('Native squash-merge produces a single commit with a tree containing the feature changes', async () => {
     const dir = join(tempRoot, 'repo');
     await seedRepo(dir);
     const ws = makeWorkspace(dir);

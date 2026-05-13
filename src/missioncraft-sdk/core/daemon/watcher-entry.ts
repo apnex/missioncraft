@@ -77,12 +77,9 @@ async function main(): Promise<void> {
     // Daemon-tick advance is best-effort; failure doesn't crash daemon
   }
 
-  // Mode-dispatch: detect reader-mode at boot. mission-78 W4-new slice (v) (Design v5.0 §2 row 4):
-  // PRIMARY detection is `config.mission.readOnly === true` (v5.0 reader-mission: BRANCH-TRACKER
-  // OR PERSISTENT-TRACKER). Pre-v5.0 v4.x detection via participant-role-lookup is RETAINED for
-  // back-compat with v4.x missions through W4-new + W7-new (IsoEng removal). Both paths converge
-  // on Loop B dispatch; v5.0 path uses new readerLoopBV5Tick (direct fetch+reset from source-
-  // remote), v4.x path uses legacy readerLoopBTick (coord-mirror semantics).
+  // Mode-dispatch: detect reader-mode at boot per Design v5.0 §2 row 4: `config.mission.readOnly`
+  // === true marks a v5.0 reader-mission (BRANCH-TRACKER OR PERSISTENT-TRACKER). Both flavors
+  // dispatch to readerLoopBV5Tick (direct fetch+reset from source-remote).
   // Fix #10 (architect-dogfood-surfaced v1.2.0 BLOCKER): detection extracted into
   // detectDaemonMode helper using canonical missionConfigPath layout (was hardcoded incorrect
   // `<workspaceRoot>/config/<id>.yaml` missing `missions/` subdir).

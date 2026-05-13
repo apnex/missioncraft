@@ -5,8 +5,7 @@
 // node-git-server@1.0.0 HTTP-server fixture.
 //
 // Per task-401 deliverable: "real-engine start() HTTP-server fixture" — covers Step 4
-// gitEngine.clone path that was substrate-bypassed in W4.3 slice (iv) + W4.4 slice (iv) tests
-// (isomorphic-git supports HTTP transport but not file:// URLs).
+// gitEngine.clone path that was substrate-bypassed in W4.3 slice (iv) + W4.4 slice (iv) tests.
 
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';

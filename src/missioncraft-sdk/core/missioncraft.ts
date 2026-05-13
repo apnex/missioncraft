@@ -1506,25 +1506,38 @@ export class Missioncraft {
 
 
   /**
-   * Daemon-tick lifecycle advance: `'started' → 'in-progress'` (Design v4.9 §2.4.1 line 1505).
+   * Daemon-tick lifecycle advance:
+   *   writer-mission: `'started' → 'in-progress'` (Design v4.9 §2.4.1 line 1505)
+   *   reader-mission: `'started' → 'reading'` (Design v5.0 §2 row 4 reader-flavor)
    *
    * Invoked by daemon-watcher's first-tick to fire the daemon-driven advance per state-machine
    * table ("operator does work" = daemon-tick = THIS code-path). Routes through `_engineMutate`
    * to preserve validate→apply→atomic-write abstraction discipline.
    *
    * Idempotent: returns silently if lifecycle is not 'started' (already advanced OR not yet there).
+   *
+   * mission-79 slice (i) bug-82 root-cause fix: pre-fix wrote 'in-progress' for BOTH writer + reader
+   * missions; reader-mission YAMLs then failed reader-schema role-vs-lifecycle validation per
+   * `feedback_apply_directional_diagnostic_to_own_spec_authorship.md` reader-class state-leak
+   * pattern. Fix role-branches on `config.mission.readOnly` so reader-missions land in reader-
+   * class state ('reading') per Design v5.0 §2 row 4 + READER_STATES schema-tuple.
    */
   async daemonTickAdvance(missionId: string): Promise<void> {
     try {
       await this._engineMutate(
         missionId,
-        (config) => ({ ...config, mission: { ...config.mission, lifecycleState: 'in-progress' } }),
+        (config) => {
+          const targetState: MissionStatePhase =
+            config.mission.readOnly === true ? 'reading' : 'in-progress';
+          return { ...config, mission: { ...config.mission, lifecycleState: targetState } };
+        },
         {
           validate: (config) =>
             config.mission.lifecycleState === 'started'
               ? null
               : `daemon-tick advance skipped: lifecycle '${config.mission.lifecycleState}' (only 'started' triggers advance)`,
           sourceLabel: `Missioncraft.daemonTickAdvance('${missionId}')`,
+          role: 'auto',
         },
       );
     } catch {

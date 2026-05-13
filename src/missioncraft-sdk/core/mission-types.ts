@@ -22,8 +22,7 @@ export type MissionStatePhase =
   // Reader-side (v4.0 NEW per idea-265 multi-participant + HIGH-R2.3 — additive enum extension)
   | 'joined'              // transient transition state during reader-side `msn join` (atomically written at Step 3.5 per v4.5 fold MEDIUM-R6.3)
   | 'reading'             // active reader-side mission; per-principal workspace allocated; coord-remote sync running
-  | 'readonly-completed'  // terminal reader-side; writer terminated (refs/tags/missioncraft/<id>/terminated detected); reader transitioned to read-only-archive mode
-  | 'leaving';            // transient transition state during reader-side `msn leave`
+  | 'readonly-completed'; // terminal reader-side; writer terminated → reader transitioned to read-only-archive mode
 
 export interface MissionHandle {
   readonly id: string;          // canonical msn-<8-char-hash>

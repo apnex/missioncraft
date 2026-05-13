@@ -204,7 +204,7 @@ async function main(): Promise<void> {
           // substrate per §2.6.2 v0.4 §AAA). Capability-gated; best-effort; per-repo failure
           // non-aborting. Bundles land at <snapshotRoot>/<missionId>/<repoName>/<sha>.bundle.
           try {
-            await mcSdk.snapshotWipBranches(missionId);
+            await mcSdk.snapshotMissionBranches(missionId);
           } catch {
             // Snapshot failure non-aborting; recovery-from-disk-failure may degrade but
             // mission-branch local-state preserved + push-to-coord-remote already succeeded.

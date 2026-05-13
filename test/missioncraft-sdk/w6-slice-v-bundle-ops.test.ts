@@ -3,7 +3,7 @@
 // Tests cover:
 //   1. NativeGitEngine.createBundle / restoreBundle primitives
 //   2. snapshot.ts module helpers (snapshotRepoDir + findLatestBundle + listMissionBundles)
-//   3. SDK Missioncraft.snapshotWipBranches conditional + per-repo orchestration
+//   3. SDK Missioncraft.snapshotMissionBranches conditional + per-repo orchestration
 //   4. SDK Missioncraft.restoreFromSnapshot recovery primitive
 //   5. End-to-end disk-failure recovery: rm -rf workspaceRoot → restoreFromSnapshot reconstructs
 
@@ -136,8 +136,8 @@ describe('W6 slice (v) — NativeGitEngine.createBundle / restoreBundle primitiv
   });
 });
 
-describe('W6 slice (v) — Missioncraft.snapshotWipBranches SDK orchestration', () => {
-  it('snapshotWipBranches creates per-repo bundle at <snapshotRoot>/<missionId>/<repoName>/<sha>.bundle', async () => {
+describe('W6 slice (v) — Missioncraft.snapshotMissionBranches SDK orchestration', () => {
+  it('snapshotMissionBranches creates per-repo bundle at <snapshotRoot>/<missionId>/<repoName>/<sha>.bundle', async () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
     const handle = await mc.create('mission', { repo: 'file:///tmp/w6-v-1' });
     const ws = await mc.storage.allocate(handle.id, 'file:///tmp/w6-v-1');
@@ -153,7 +153,7 @@ describe('W6 slice (v) — Missioncraft.snapshotWipBranches SDK orchestration', 
       autoStage: true,
     });
 
-    const count = await mc.snapshotWipBranches(handle.id);
+    const count = await mc.snapshotMissionBranches(handle.id);
     expect(count).toBe(1);
 
     // Verify bundle landed at sibling-snapshot location
@@ -164,7 +164,7 @@ describe('W6 slice (v) — Missioncraft.snapshotWipBranches SDK orchestration', 
     expect(bundles[0].path).toMatch(/\.bundle$/);
   });
 
-  it('snapshotWipBranches idempotent on already-snapshotted SHA (no duplicate bundle)', async () => {
+  it('snapshotMissionBranches idempotent on already-snapshotted SHA (no duplicate bundle)', async () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
     const handle = await mc.create('mission', { repo: 'file:///tmp/w6-v-2' });
     const ws = await mc.storage.allocate(handle.id, 'file:///tmp/w6-v-2');
@@ -178,8 +178,8 @@ describe('W6 slice (v) — Missioncraft.snapshotWipBranches SDK orchestration', 
       autoStage: true,
     });
 
-    const count1 = await mc.snapshotWipBranches(handle.id);
-    const count2 = await mc.snapshotWipBranches(handle.id);
+    const count1 = await mc.snapshotMissionBranches(handle.id);
+    const count2 = await mc.snapshotMissionBranches(handle.id);
     expect(count1).toBe(1);
     expect(count2).toBe(1);     // idempotent (same SHA → existing bundle)
 
@@ -187,12 +187,12 @@ describe('W6 slice (v) — Missioncraft.snapshotWipBranches SDK orchestration', 
     expect(bundles.length).toBe(1);
   });
 
-  it('snapshotWipBranches returns 0 when wip-ref does not exist (no commit yet)', async () => {
+  it('snapshotMissionBranches returns 0 when wip-ref does not exist (no commit yet)', async () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
     const handle = await mc.create('mission', { repo: 'file:///tmp/w6-v-3' });
     await mc.storage.allocate(handle.id, 'file:///tmp/w6-v-3');
     // No git init / no wip commit; revparse fails per repo → skip
-    const count = await mc.snapshotWipBranches(handle.id);
+    const count = await mc.snapshotMissionBranches(handle.id);
     expect(count).toBe(0);
   });
 });
@@ -213,7 +213,7 @@ describe('W6 slice (v) — disk-failure recovery via Missioncraft.restoreFromSna
       autoStage: true,
     });
     const { stdout: preSha } = await execFileAsync('git', ['rev-parse', `refs/heads/mission/${handle.id}`], { cwd: ws.path });
-    await mc.snapshotWipBranches(handle.id);
+    await mc.snapshotMissionBranches(handle.id);
 
     // Phase 2: simulate disk-failure (rm -rf workspaceRoot's missions/<id>/ tree)
     // Snapshot lives at sibling .missioncraft-snapshots/ which is OUT-OF-BAND.

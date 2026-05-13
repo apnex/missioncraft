@@ -38,7 +38,7 @@ const WRITER_STATES = [
   'completed',
   'abandoned',
 ] as const;
-const READER_STATES = ['joined', 'reading', 'readonly-completed', 'leaving'] as const;
+const READER_STATES = ['joined', 'reading', 'readonly-completed'] as const;
 const ALL_STATES = [...WRITER_STATES, ...READER_STATES] as const;
 
 export const MissionStatePhaseSchema = z.enum(ALL_STATES);

@@ -1179,15 +1179,16 @@ export class Missioncraft {
    * Called best-effort post daemon-commit-to-mission-branch; preserves disk-failure recovery substrate.
    * Bundle path: `<snapshotRoot>/<missionId>/<repoName>/<sha>.bundle`.
    *
-   * Method retains its W6-era name (`snapshotWipBranches`) for API backward-compat through v1.x;
-   * under v5.0 single-branch architecture the snapshotted ref is `refs/heads/mission/<id>` (not
-   * `refs/heads/wip/<id>` as in pre-v5.0). Future rename to `snapshotMissionBranches` at W8-new
-   * closing-audit OR via standalone idea-filing post-v1.2.0 ship.
+   * Method renamed from `snapshotWipBranches` → `snapshotMissionBranches` at v1.2.0 W8-new
+   * slice (ii) memory + discipline-fold reconciliation batch per architect §2 Component D.2.
+   * Under v5.0 single-branch architecture the snapshotted ref is `refs/heads/mission/<id>` (NOT
+   * `refs/heads/wip/<id>` as in pre-v5.0); name now matches semantic. No backward-compat shim
+   * per `feedback_apnex_repos_direct_commit_to_main.md` v5.0 no-backward-compat ratification.
    *
    * Conditional gating: returns 0 IF gitEngine doesn't implement createBundle (capability-gated
    * per F13). Per-repo failure non-aborting; returns count of successful bundle-creates.
    */
-  async snapshotWipBranches(missionId: string): Promise<number> {
+  async snapshotMissionBranches(missionId: string): Promise<number> {
     if (typeof this.gitEngine.createBundle !== 'function') return 0;     // capability-gated
     const path = this.missionConfigPath(missionId);
     if (!existsSync(path)) return 0;
@@ -2177,6 +2178,20 @@ export class Missioncraft {
       attachScopeRepos = scopeConfig.repos.map((r) => ({ ...r }));
     }
 
+    // bug-80 W8-new slice (ii) Component E.iv: capture OLD mission name BEFORE _engineMutate writes
+    // new config; needed for .names/<old>.yaml symlink unlink on rename mutation.
+    let oldMissionName: string | undefined;
+    if (mutation.kind === 'rename') {
+      const path = this.missionConfigPath(id);
+      if (existsSync(path)) {
+        try {
+          const oldContent = await readFile(path, 'utf8');
+          const oldConfig = parseMissionConfig(oldContent, path, 'auto');
+          oldMissionName = oldConfig.mission.name;
+        } catch { /* best-effort; symlink-refresh non-blocking */ }
+      }
+    }
+
     const updated = await this._engineMutate(
       id,
       (config) => {
@@ -2198,9 +2213,27 @@ export class Missioncraft {
       },
     );
 
-    // mission-78 W5-new slice (ii): propagateConfigToCoordRemote DELETED (coord-remote primitive
-    // removed per Design v5.0 §10.2). Config-mutation propagation no longer applicable in v5.0
-    // standalone-capable architecture; future Hub-coupling (idea-291) lands its own mechanism.
+    // bug-80 fix: refresh .names/<slug>.yaml symlink on rename mutation (parallel to scope rename
+    // handling at applyScopeMutation). Pre-fix: rename updated YAML but NOT symlink → slug-resolution
+    // with NEW name failed; workaround required canonical msn-<8hex> id. Surgical fix per W7-new
+    // architect-bug-filing thread-552 round 4.
+    if (mutation.kind === 'rename') {
+      const namesDir = this.missionNamesDir();
+      await mkdir(namesDir, { recursive: true });
+      if (oldMissionName) {
+        try { await unlink(join(namesDir, `${oldMissionName}.yaml`)); } catch { /* idempotent */ }
+      }
+      const symlinkPath = join(namesDir, `${mutation.newName}.yaml`);
+      try {
+        await symlink(`../${id}.yaml`, symlinkPath);
+      } catch (err: unknown) {
+        const e = err as NodeJS.ErrnoException;
+        if (e.code === 'EEXIST') {
+          throw new MissionStateError(`mission name '${mutation.newName}' already taken`);
+        }
+        throw err;
+      }
+    }
 
     return this.missionConfigToState(updated, this.principal);
   }

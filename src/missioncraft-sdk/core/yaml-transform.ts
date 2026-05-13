@@ -117,7 +117,7 @@ export function camelToKebabObject(value: unknown): unknown {
  *
  * Throws ConfigValidationError on parse-fail OR schema-validation-fail (with original zod issues as cause).
  */
-const READER_LIFECYCLE_STATES = new Set(['joined', 'reading', 'readonly-completed', 'leaving']);
+const READER_LIFECYCLE_STATES = new Set(['joined', 'reading', 'readonly-completed']);
 
 export function parseMissionConfig(
   yamlString: string,

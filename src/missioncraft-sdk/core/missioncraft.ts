@@ -743,8 +743,14 @@ export class Missioncraft {
    */
   async pushWithRetry(
     handle: WorkspaceHandle,
-    branchOrOptions: string | { branch: string; url?: string; remote?: string; remoteRef?: string },
+    branchOrOptions: string | { branch: string; url?: string; remote?: string; remoteRef?: string; force?: boolean },
   ): Promise<void> {
+    // mission-78 W5-new Fix #12.b (architect-dogfood-surfaced): `force?: boolean` added to options-
+    // type. Used by complete()'s squash-publish push (Fix #12) when push-cadence has pre-pushed
+    // daemon-chain to upstream. NativeGitEngine.push already handles options.force → '--force' arg;
+    // type-narrowing was the only blocker. tsc-strict-build error at missioncraft.ts:714 cleared.
+    // vitest+esbuild masked this (502/502 green) → calibration #76 candidate: build-gate
+    // `npm run build` MUST be clean as ship-verify alongside `npm test`.
     const opts = typeof branchOrOptions === 'string' ? { branch: branchOrOptions } : branchOrOptions;
     const backoffsMs = [100, 400, 1600];
     let lastErr: unknown;

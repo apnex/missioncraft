@@ -1741,6 +1741,19 @@ export class Missioncraft {
   }
 
   private async createMission(opts: ResourceMap['mission']['createOpts'] = {}): Promise<MissionHandle> {
+    // mission-78 W6-new slice (iv) (Design v5.0 §10.6 perfection-grade revision (d)): SDK-side
+    // slug-validation guard per (c) audit+SDK-defense disposition. Defense-in-depth at SDK layer
+    // so non-CLI consumers (Hub-MCP via idea-291 future + direct API users) get the same
+    // parser-level validation as CLI parse-time check. CLI parser ALSO validates at parse-time
+    // for early-error operator-DX; SDK validation is the back-stop.
+    if (opts.name !== undefined) {
+      const { validateSlugAtSdk } = await import('./slug-validation.js');
+      const err = validateSlugAtSdk(opts.name);
+      if (err) {
+        throw new ConfigValidationError(`mc.create('mission'): slug-format: ${err}`);
+      }
+    }
+
     const id = generateMissionId();
     const now = new Date();
 
@@ -1849,6 +1862,15 @@ export class Missioncraft {
   }
 
   private async createScope(opts: ResourceMap['scope']['createOpts'] = {}): Promise<ScopeHandle> {
+    // mission-78 W6-new slice (iv): SDK-side slug-validation guard for scope (sister to mission)
+    if (opts.name !== undefined) {
+      const { validateSlugAtSdk } = await import('./slug-validation.js');
+      const err = validateSlugAtSdk(opts.name);
+      if (err) {
+        throw new ConfigValidationError(`mc.create('scope'): slug-format: ${err}`);
+      }
+    }
+
     const id = generateScopeId();
     const now = new Date();
     const repos = opts.repo

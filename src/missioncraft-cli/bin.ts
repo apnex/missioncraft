@@ -181,15 +181,38 @@ function renderFsmHint(verb: string, currentState: string, idOrName: string | un
   return '';
 }
 
+/**
+ * mission-78 W6-new slice (i): CLI dispatcher restructure into THREE-class taxonomy per Design
+ * v5.0 §10.6 hybrid grammar.
+ *
+ * **Three verb-classes** (operative for slice (ii) parser changes + slice (vi) HELP_TEXT):
+ *
+ * (1) **GLOBAL VERBS** (verb-first; no mission target):
+ *     `msn list` / `msn config` / `msn scope <sub>` / `msn shell-init` / `msn tree` / `msn version`
+ *     Always verb-first. Operate on collections OR substrate-state without mission context.
+ *
+ * (2) **CREATION VERBS** (verb-first; return mission-id):
+ *     `msn create [--start] [args]` / `msn join [--start] <writer-id>` / `msn watch [--start] --repo --branch`
+ *     Always verb-first. Produce new mission entity. Slice (iii) adds `--start` flag opting into
+ *     immediate daemon-spawn post-creation (Hub-integration-friendly).
+ *
+ * (3) **MISSION-TARGETED VERBS** (id-first under W6-new; currently verb-first under v1.x):
+ *     `msn <id> start` / `complete` / `abandon` / `show` / `workspace` / `cd` / `update`
+ *     Operate on existing mission-id (positional[0]). Under W6-new slice (ii), parser detects
+ *     id-first form: `msn <id> show` (NEW) supersedes `msn show <id>` (v1.x). v1.x verb-first
+ *     form is REMOVED entirely at slice (v) per no-backward-compat ratification.
+ *
+ * **DROPPED at W6-new slice (v)**: `msn apply` (overlap with create -f), `msn <id> tick`
+ * (unimplemented), `msn <id> resume` (merged into idempotent start).
+ *
+ * Slice (i) (this scaffolding) keeps verb-first parser semantics; restructures dispatch into the
+ * three classes for clarity + extracts `dispatchMissionTargeted` helper (was invokeRuntimeDeferred).
+ * Slice (ii) adds id-first parser detection + wires `parsed.missionRef`. show + update MOVED from
+ * main dispatch to dispatchMissionTargeted (they're mission-targeted per W6-new taxonomy).
+ */
 async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputFormat): Promise<void> {
-  // mission-78 W4-new slice (v.b) housekeeping (architect observation thread-546 round 7):
-  // dispatch-switch invariant — CREATION VERBS (create, watch, join) live in main dispatch;
-  // RUNTIME-DEFERRED VERBS (start, complete, abandon, etc.) live in invokeRuntimeDeferred and
-  // operate on existing mission ids. W6-new hybrid grammar formalizes this distinction with
-  // id-first vs verb-first placement; until then, sister-verb placement enforces it manually
-  // (slice-(ii) `watch` + slice-(iii) `join` both required main-dispatch placement; misplacement
-  // surfaces as build-error since `format` is not in scope in invokeRuntimeDeferred).
   switch (parsed.verb) {
+    // ─── (2) CREATION VERBS — verb-first; return mission-id ───
     case 'create': {
       // v1.0.5 bug-67 item 4: validate --repo URL via `new URL(...)` parse
       if (parsed.flags.has('--repo')) {
@@ -210,6 +233,33 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
       console.log(format === 'text' ? handle.name ? `${handle.id}\t${handle.name}` : handle.id : formatValue(handle, format));
       return;
     }
+    // (2) `msn watch` — PERSISTENT-TRACKER reader-mission via repo+branch
+    case 'watch': {
+      const repo = String(parsed.flags.get('--repo') ?? '');
+      const branch = String(parsed.flags.get('--branch') ?? '');
+      validateRepoUrl(repo);
+      const handle = await mc.create('mission', {
+        ...(parsed.flags.has('--name') && { name: String(parsed.flags.get('--name')) }),
+        repo,
+        readOnly: true,
+        sourceRemote: repo,
+        sourceBranch: branch,
+      });
+      console.log(format === 'text' ? handle.name ? `${handle.id}\t${handle.name}` : handle.id : formatValue(handle, format));
+      return;
+    }
+    // (2) `msn join <writer-mission-id>` — BRANCH-TRACKER reader-mission
+    case 'join': {
+      const handle = await mc.create('mission', {
+        ...(parsed.flags.has('--name') && { name: String(parsed.flags.get('--name')) }),
+        readOnly: true,
+        sourceMissionId: parsed.positionals[0],
+      });
+      console.log(format === 'text' ? handle.name ? `${handle.id}\t${handle.name}` : handle.id : formatValue(handle, format));
+      return;
+    }
+
+    // ─── (1) GLOBAL VERBS — verb-first; no mission target ───
     case 'list': {
       // 0-positional → list missions; 1-positional → drill-down repos within mission
       if (parsed.positionals.length === 0) {
@@ -243,20 +293,9 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
       }
       return;
     }
-    case 'show': {
-      const id = parsed.positionals[0];
-      const state = await mc.get('mission', id);
-      console.log(formatValue(state, format));
-      return;
-    }
-    case 'update': {
-      // mutation built from sub-action + remaining positionals
-      const id = parsed.positionals[0];
-      const mutation = buildMissionMutation(parsed);
-      const state = await mc.update('mission', id, mutation);
-      console.log(formatValue(state, format));
-      return;
-    }
+    // mission-78 W6-new slice (i): `show` + `update` MOVED to dispatchMissionTargeted (W6-new
+    // mission-targeted taxonomy — both consume positional[0]=missionId; slice (ii) parser
+    // changes will accept id-first form `msn <id> show` + `msn <id> update <sub>`).
     case 'config': {
       const key = parsed.positionals[0];
       // v1.0.5 bug-67 item 4: validate config key against known registry
@@ -275,44 +314,14 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
       await dispatchScope(mc, parsed, format);
       return;
     }
-    // mission-78 W4-new (Design v5.0 §2 row 4): PERSISTENT-TRACKER reader-mission via `msn watch`.
-    // Creates a reader-mission with readOnly: true + sourceRemote + sourceBranch; repos[0] points
-    // at the same URL so `msn start` clones it. No Loop B daemon plumbing yet (lands at slice v).
-    case 'watch': {
-      const repo = String(parsed.flags.get('--repo') ?? '');
-      const branch = String(parsed.flags.get('--branch') ?? '');
-      validateRepoUrl(repo);
-      const handle = await mc.create('mission', {
-        ...(parsed.flags.has('--name') && { name: String(parsed.flags.get('--name')) }),
-        repo,
-        readOnly: true,
-        sourceRemote: repo,
-        sourceBranch: branch,
-      });
-      console.log(format === 'text' ? handle.name ? `${handle.id}\t${handle.name}` : handle.id : formatValue(handle, format));
-      return;
-    }
-    // mission-78 W4-new slice (iii) (Design v5.0 §2 row 4): BRANCH-TRACKER reader-mission via
-    // `msn join <writer-mission-id>`. Creates reader-mission with readOnly: true +
-    // sourceMissionId; inherits writer-mission's repos[] (scope-inheritance per task-408 §6
-    // component-change 6). REPURPOSED from v4.x multi-participant join shared-mission semantic.
-    // SDK mc.join(id, coordRemote, principal?) API method retained for v4.x test compat;
-    // cleanup deferred to slice (vi) or W8-new.
-    case 'join': {
-      // Writer-mission positional (accepts id OR name; SDK createMission resolves name→id via
-      // resolveMissionRef internally; schema validates resolved msn-<8hex> form).
-      const handle = await mc.create('mission', {
-        ...(parsed.flags.has('--name') && { name: String(parsed.flags.get('--name')) }),
-        readOnly: true,
-        sourceMissionId: parsed.positionals[0],
-      });
-      console.log(format === 'text' ? handle.name ? `${handle.id}\t${handle.name}` : handle.id : formatValue(handle, format));
-      return;
-    }
-    // ─── Runtime-deferred (W4/W5) — verbs that the SDK throws "not yet implemented" ───
-    // mission-78 W4-new slice (iii): 'join' MOVED to main dispatch (creation-verb sister to
-    // 'watch'; BRANCH-TRACKER reader-mission). v4.x mc.join(id, coordRemote, principal) SDK
-    // method retained (vestigial; cleanup at slice (vi) or W8-new) but no longer reached via CLI.
+
+    // ─── (3) MISSION-TARGETED VERBS — id-first under W6-new (slice ii parser-changes);
+    //         currently verb-first under v1.x (positional[0] = mission-id) ───
+    // Per W6-new slice (v): `apply` + `tick` + `leave` will be DROPPED; `resume` (was unimplemented)
+    // merged into idempotent `start`. show + update MOVED here from main dispatch (W6-new
+    // taxonomy: both consume positional[0]=missionId; mission-targeted by definition).
+    case 'show':
+    case 'update':
     case 'start':
     case 'apply':
     case 'complete':
@@ -321,7 +330,7 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
     case 'workspace':
     case 'cd':
     case 'leave':
-      await invokeRuntimeDeferred(mc, parsed);
+      await dispatchMissionTargeted(mc, parsed, format);
       return;
     case 'shell-init': {
       // v1.0.3 idea-269: emit shell-function blob for bash/zsh/fish. Operator runs
@@ -578,10 +587,37 @@ function readDaemonPid(workspaceRoot: string, missionId: string): number | undef
   } catch { return undefined; }
 }
 
-async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): Promise<void> {
-  // These verbs throw MissionStateError("not yet implemented; W4/W5") at SDK level;
-  // the dispatch let-throws and main() catches.
+/**
+ * mission-78 W6-new slice (i): mission-targeted verb dispatcher (renamed from invokeRuntimeDeferred).
+ *
+ * Handles class (3) verbs per Design v5.0 §10.6 hybrid grammar: operate on existing mission-id.
+ * Currently consumes `parsed.positionals[0]` as mission-id (verb-first form preserved through
+ * slice (i)). Slice (ii) parser-changes will surface `parsed.missionRef` for id-first form;
+ * this dispatcher will adapt to read from either source.
+ *
+ * Verb coverage:
+ * - W6-new keepers: `start` / `complete` / `abandon` / `show` / `workspace` / `cd` / `update`
+ * - DROPPED at slice (v): `apply` (overlap with `create -f`), `tick` (unimplemented), `leave` (v4.x)
+ * - W6-new `resume` (was unimplemented) merged into idempotent `start`
+ *
+ * `format` arg added to signature (was missing from invokeRuntimeDeferred) — show + update need it.
+ */
+async function dispatchMissionTargeted(mc: Missioncraft, parsed: ParsedCommand, format: OutputFormat): Promise<void> {
   switch (parsed.verb) {
+    case 'show': {
+      const id = parsed.positionals[0];
+      const state = await mc.get('mission', id);
+      console.log(formatValue(state, format));
+      return;
+    }
+    case 'update': {
+      // mutation built from sub-action + remaining positionals
+      const id = parsed.positionals[0];
+      const mutation = buildMissionMutation(parsed);
+      const state = await mc.update('mission', id, mutation);
+      console.log(formatValue(state, format));
+      return;
+    }
     case 'start': {
       const progressSink = makeProgressSink(parsed);                       // v1.0.5 idea-273
       let handle;
@@ -660,7 +696,7 @@ async function invokeRuntimeDeferred(mc: Missioncraft, parsed: ParsedCommand): P
       await mc.leave(parsed.positionals[0], parsed.flags.has('--purge-workspace') ? { purgeWorkspace: true } : undefined);
       return;
     default:
-      throw new ConfigValidationError(`internal: invokeRuntimeDeferred missing case for '${parsed.verb}'`);
+      throw new ConfigValidationError(`internal: dispatchMissionTargeted missing case for '${parsed.verb}'`);
   }
 }
 

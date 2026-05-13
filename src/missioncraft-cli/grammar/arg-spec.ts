@@ -262,6 +262,13 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
     seeAlso: ['cd', 'shell-init', 'show'],
   },
   // ─── Update sub-action namespace ───
+  //
+  // **Hybrid grammar permits BOTH `msn update <id|slug> <sub>` (verb-first) AND `msn <id> update
+  // <sub>` (id-first) forms through v1.2.0 ship** (W7-new slice (v) architect-confirmed PRESERVE;
+  // structurally-required for slug-resolution-via-verb-first invariant from (γ) parser disposition
+  // — see parser.ts:360 docblock for full rationale). W8-new closing-audit HELP_TEXT reconciliation
+  // will surface both forms in operator-facing examples; current `examples` below use slug-first
+  // verb-first form as the canonical operator-DX shape for sub-action invocations.
   update: {
     required: 2,                 // <id|name> <sub-action>; sub-action validates remaining args via subActions map
     optional: 0,

@@ -360,11 +360,21 @@ export function parse(argv: readonly string[]): ParsedCommand {
   // mission-78 W6-new slice (v.b) (Design v5.0 §10.6 + no-backward-compat ratification):
   // verb-first form for mission-targeted verbs is REMOVED entirely. These verbs require id-first
   // form (`msn <msn-id> <verb>`) per Design v5.0 §10.6 hybrid grammar three-class taxonomy.
-  // `update` allowed verb-first under sub-action shape `msn update <id> <sub>`; W6-new id-first
-  // form `msn <id> update <sub>` works via missionRef-prepend (slice ii); both forms permitted
-  // through W6-new (legacy verb-first form for update remains operator-DX-friendly during migration).
-  // Operator-DX-clear error directs to id-first form. Slug access via id-lookup pattern (operator
-  // runs `msn list` to find id; then types `msn <id> <verb>`).
+  //
+  // **`update` exception PRESERVED through v1.2.0 ship** (W7-new slice (v) architect-confirmed
+  // PRESERVE disposition; thread-552 §C): `update` permits BOTH `msn update <id|slug> <sub>` AND
+  // `msn <id> update <sub>` forms. Structurally-required (NOT backward-compat exception): under
+  // (γ) parser shape from W6-new slice (ii), only canonical `msn-<8hex>` ids trigger id-first
+  // form; slugs fall through to verb-first. Removing update verb-first would force operators
+  // to look up canonical id for slug-named missions just to invoke sub-actions → significant
+  // operator-DX regression. Sub-action grammar fits verb-first naturally per Design v5.0 §10.6
+  // hybrid grammar tolerance for sub-action structures. (Calibration #73 directional-vs-mechanism
+  // diagnostic: MECHANISM choice within stable substrate-target-state; preserving the slug-
+  // resolution-via-verb-first invariant from (γ) parser disposition.)
+  //
+  // Operator-DX-clear error directs to id-first form for the other 5 mission-targeted verbs.
+  // Slug access via id-lookup pattern (operator runs `msn list` to find id; then types
+  // `msn <id> <verb>`).
   //
   // **Coord-form exception** (workspace/cd): `msn workspace <id>:<repo>` legacy form preserved
   // because coord-form embeds the mission-id; redundant to require id-first prefix. Detected

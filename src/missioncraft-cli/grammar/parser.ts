@@ -35,8 +35,35 @@ export interface ParsedCommand {
   readonly globalFlags: ReadonlyMap<string, string | boolean>;
   /** Substrate-coordinate (Rule 7) when first positional contains ':'. */
   readonly coordinate?: SubstrateCoordinate;
+  /**
+   * mission-78 W6-new slice (ii) (Design v5.0 §10.6 hybrid grammar): id-first form.
+   * Set when argv[0] matches the canonical msn-<8hex> pattern → the FIRST positional is taken
+   * as the mission-id reference; the SECOND positional becomes the verb. Mission-targeted-verb
+   * dispatchers prefer `missionRef` over `positionals[0]` when set.
+   *
+   * Per (γ) disposition thread-550 round 2: parser-level pattern-detection only (no slug-lookup
+   * at parse-time; dispatcher resolves slug → id via `mc.resolveMissionRef` AFTER parse).
+   * Slug-detection NOT performed here: mission-name forms still go through verb-first parsing
+   * (e.g., `msn show alpha-mission` works; `msn alpha-mission show` does NOT). Slug-validation
+   * guard at slice (iv) rejects name-collisions with verb-set at create-time.
+   */
+  readonly missionRef?: string;
   /** Sub-namespace path (e.g., ['scope', 'update', 'repo-add']) for diagnostics. */
   readonly subNamespacePath: readonly string[];
+}
+
+/**
+ * mission-78 W6-new slice (ii): canonical mission-id pattern matcher.
+ *
+ * Matches the auto-id namespace `msn-<8-hex-chars>` (validated at SDK level + schema-v2 regex
+ * `^msn-[a-f0-9]{8}$`). Returns true for id-first form detection; false for verb-first.
+ *
+ * Excludes: mission-name slugs (operator-assigned DNS-style names). Per (γ) disposition,
+ * slugs still use verb-first form; if id-first dispatching of slugs is desired in future,
+ * extend this matcher OR move slug-lookup to parse-time.
+ */
+function isMissionId(s: string): boolean {
+  return /^msn-[a-f0-9]{8}$/.test(s);
 }
 
 /**
@@ -294,7 +321,25 @@ export function parse(argv: readonly string[]): ParsedCommand {
     };
   }
 
-  const verb = argv[0];
+  // mission-78 W6-new slice (ii) (Design v5.0 §10.6 hybrid grammar): id-first form detection.
+  // If argv[0] matches canonical msn-<8hex> pattern → shift: argv[0] becomes missionRef;
+  // argv[1] becomes the verb. Slugs (operator-assigned names) NOT detected here (still use
+  // verb-first form per γ disposition); slug-validation guard at slice (iv) prevents future
+  // collisions. Special case: bare `msn <id>` (length 1) defaults to `show` verb for operator-
+  // DX-convenience (quick mission-state inspection without explicit `show` verb).
+  let missionRefOverride: string | undefined;
+  let effectiveArgv: readonly string[] = argv;
+  if (isMissionId(argv[0])) {
+    missionRefOverride = argv[0];
+    if (argv.length === 1) {
+      // bare `msn msn-<id>` → defaults to `show` verb
+      effectiveArgv = ['show'];
+    } else {
+      effectiveArgv = argv.slice(1);                       // shift: argv[1+] becomes verb-and-rest
+    }
+  }
+
+  const verb = effectiveArgv[0];
   // ─── Rule 1: reserved-verbs ───
   if (!(RESERVED_VERBS as readonly string[]).includes(verb)) {
     throw new ConfigValidationError(
@@ -319,7 +364,16 @@ export function parse(argv: readonly string[]): ParsedCommand {
   }
 
   const acceptableFlags = flagNameSet(verbSpec);
-  const { positionals: rawPositionals, flags, globalFlags } = tokenize(argv.slice(1), acceptableFlags);
+  // Under id-first form: tokenize the shifted argv (effectiveArgv.slice(1)) so the missionRef
+  // isn't redundantly consumed as a positional. The missionRef will be PREPENDED to positionals
+  // post-tokenize so existing per-verb dispatch logic (which reads positionals[0] as mission-id)
+  // continues working unchanged. missionRef field is set for slice (iv) slug-validation +
+  // future-state transparency.
+  const tokenizeArgv = effectiveArgv.slice(1);
+  const { positionals: tokenizedPositionals, flags, globalFlags } = tokenize(tokenizeArgv, acceptableFlags);
+  const rawPositionals: string[] = missionRefOverride !== undefined
+    ? [missionRefOverride, ...tokenizedPositionals]
+    : tokenizedPositionals;
 
   // ─── Rule 2: sub-action dispatch for update/scope/config namespaces ───
   // Track sub-action-keyword indexes (for filtering from reported positionals);
@@ -439,6 +493,7 @@ export function parse(argv: readonly string[]): ParsedCommand {
     flags,
     globalFlags,
     coordinate,
+    ...(missionRefOverride !== undefined && { missionRef: missionRefOverride }),
     subNamespacePath,
   };
 }

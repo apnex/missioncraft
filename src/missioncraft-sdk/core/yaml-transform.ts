@@ -135,13 +135,28 @@ export function parseMissionConfig(
   }
   const camelCased = kebabToCamelObject(raw);
 
-  // 'auto' role: peek at lifecycleState to dispatch role-aware schema; used at cross-partition
-  // transition moments (e.g. join Step 3.5 where pre-state is 'configured' (writer) but idempotent
-  // retry pre-state is 'joined' (reader)).
+  // 'auto' role: peek readOnly field FIRST + lifecycleState as fallback to dispatch role-aware
+  // schema. Used at cross-partition transition moments (e.g. join Step 3.5 where pre-state is
+  // 'configured' (writer) but idempotent retry pre-state is 'joined' (reader)).
+  //
+  // mission-78 W8-new slice (viii.a) CI-fix (Director-direct (a) FIX IT verdict; thread-553 round
+  // 5 §2 architect hypothesis "non-flake-shape; deterministic-error-class mismatch"): readOnly
+  // field is the canonical reader-mission marker per W4-new schema-v2; immutable across lifecycle.
+  // Lifecycle-state-only peek failed during reader-mission's transient 'started' window (Step 5
+  // of mc.start writes 'started' for BOTH writer AND reader; Step 7 daemon-tick advances writer→
+  // 'in-progress' OR reader→'reading' asynchronously). During the 'started' window, lifecycle-only
+  // peek mis-resolved reader-mission YAML to writer-role → writer-schema rejected the readOnly:true
+  // + sourceMissionId combo. Companion fix in mission-config-schema.ts adds 'started' to
+  // READER_STATES schema-tuple (transient-shared-across-roles).
   let resolvedRole: 'writer' | 'reader' | undefined;
   if (roleOverride === 'auto') {
-    const observed = (camelCased as { mission?: { lifecycleState?: string } })?.mission?.lifecycleState;
-    resolvedRole = observed && READER_LIFECYCLE_STATES.has(observed) ? 'reader' : 'writer';
+    const peeked = camelCased as { mission?: { lifecycleState?: string; readOnly?: boolean } };
+    if (peeked?.mission?.readOnly === true) {
+      resolvedRole = 'reader';
+    } else {
+      const observed = peeked?.mission?.lifecycleState;
+      resolvedRole = observed && READER_LIFECYCLE_STATES.has(observed) ? 'reader' : 'writer';
+    }
   } else if (roleOverride !== undefined) {
     resolvedRole = roleOverride;
   }

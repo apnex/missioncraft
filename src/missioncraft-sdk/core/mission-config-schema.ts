@@ -38,7 +38,15 @@ const WRITER_STATES = [
   'completed',
   'abandoned',
 ] as const;
-const READER_STATES = ['joined', 'reading', 'readonly-completed'] as const;
+// mission-78 W8-new slice (viii.a) CI-fix: 'started' + 'abandoned' added to READER_STATES.
+// 'started' is the transient-shared-across-roles state per mc.start Step 5 (daemon-tick Step 7
+// advances writer→'in-progress' OR reader→'reading'). 'abandoned' is the universal terminal-
+// state used by readerAutoAbandon for auto-close cascade (per Design v5.0 §2 row 4 BRANCH-TRACKER
+// auto-close mechanics). Without these in READER_STATES, reader-mission YAML during the transient
+// 'started' window OR post-auto-close 'abandoned' state failed reader-schema role-vs-lifecycle
+// validation at line 253-258 → ConfigValidationError leaked from reader-side parse-context.
+// Companion fix in yaml-transform.ts auto-mode peeks readOnly field first (canonical reader marker).
+const READER_STATES = ['joined', 'reading', 'readonly-completed', 'started', 'abandoned'] as const;
 const ALL_STATES = [...WRITER_STATES, ...READER_STATES] as const;
 
 export const MissionStatePhaseSchema = z.enum(ALL_STATES);

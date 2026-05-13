@@ -132,12 +132,15 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
       { name: '--name', takesValue: true, description: 'Optional human-friendly slug' },
       { name: '--repo', takesValue: true, repeatable: true, description: 'Repo URL (repeatable)' },
       { name: '--scope', takesValue: true, description: 'Scope-id or name to inline' },
+      // mission-78 W6-new slice (iii) (Design v5.0 §10.6): immediate daemon-spawn post-create
+      { name: '--start', takesValue: false, description: 'Spawn daemon immediately post-create (sequential mc.create + mc.start)' },
     ],
     shortDesc: 'Scaffold a new mission config',
-    longDesc: 'Generates an msn-<8-char-hash> id and writes the mission YAML to the workspace-root. With --repo flag(s) the mission starts in lifecycle "configured" (ready for `msn start`); without --repo it starts in "created".',
+    longDesc: 'Generates an msn-<8-char-hash> id and writes the mission YAML to the workspace-root. With --repo flag(s) the mission starts in lifecycle "configured" (ready for `msn start`); without --repo it starts in "created". `--start` flag opts into immediate daemon-spawn post-creation (Hub-integration-friendly).',
     examples: [
       { cmd: 'msn create', comment: 'minimal mission; no repos; lifecycle=created' },
       { cmd: 'msn create --name alpha --repo https://github.com/x/y.git', comment: 'named single-repo mission; ready for msn start' },
+      { cmd: 'msn create --repo https://github.com/x/y.git --start', comment: 'create + immediate-spawn (W6-new --start flag)' },
       { cmd: 'msn create --repo https://github.com/x/a.git --repo https://github.com/x/b.git', comment: 'multi-repo mission' },
     ],
     seeAlso: ['start', 'list', 'show'],
@@ -368,6 +371,8 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
     optional: 0,
     flags: [
       { name: '--name', takesValue: true, description: 'Optional human-friendly slug for the reader-mission' },
+      // mission-78 W6-new slice (iii): immediate daemon-spawn post-join
+      { name: '--start', takesValue: false, description: 'Spawn reader-daemon immediately post-create (sequential mc.create + mc.start)' },
     ],
     shortDesc: 'Create a BRANCH-TRACKER reader-mission tied to a writer-mission (mission-78 W4-new)',
     longDesc: 'mission-78 W4-new repurpose (Design v5.0 §2 row 4): creates an independent reader-mission with readOnly: true + sourceMissionId pointing at the writer-mission. Inherits writer-mission\'s repos[] (scope-inheritance). Reader-daemon Loop B (slice v) will fetch writer\'s mission-branch updates + auto-close when writer terminates (fetch-not-found OR branch-tip stale). v1.x slice (iii) is creation-plumbing only; auto-close logic lands at slice (v). Distinct from `msn watch` (PERSISTENT-TRACKER; long-lived remote+branch).',
@@ -401,6 +406,8 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
       { name: '--repo', takesValue: true, required: true, description: 'Remote URL to watch (REQUIRED)' },
       { name: '--branch', takesValue: true, required: true, description: 'Branch ref to track (REQUIRED)' },
       { name: '--name', takesValue: true, description: 'Optional human-friendly slug for the reader-mission' },
+      // mission-78 W6-new slice (iii): immediate daemon-spawn post-watch
+      { name: '--start', takesValue: false, description: 'Spawn reader-daemon immediately post-create (sequential mc.create + mc.start)' },
     ],
     shortDesc: 'Create a PERSISTENT-TRACKER reader-mission (long-lived branch like main)',
     longDesc: 'mission-78 W4-new (Design v5.0 §2 row 4): creates an independent reader-mission that tracks <remote>:<branch> via reader-daemon Loop B (lands at W4-new slice v). Long-lived; operator-explicit-abandon terminal only (no auto-close). Distinct from `msn join` (BRANCH-TRACKER; coupled to writer-mission lifetime). Mission-config schema-v2 with readOnly: true + sourceRemote + sourceBranch.',

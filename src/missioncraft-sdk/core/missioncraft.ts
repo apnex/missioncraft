@@ -263,7 +263,10 @@ export class Missioncraft {
    *   7. (W4.4 territory) `started → in-progress` advance fired by daemon-tick (NOT start())
    *   8. Release locks
    */
-  async start(input: string | { config: MissionConfig }, opts?: { onProgress?: ProgressCallback }): Promise<MissionHandle> {
+  async start(
+    input: string | { config: MissionConfig },
+    opts?: { onProgress?: ProgressCallback; idempotent?: boolean },
+  ): Promise<MissionHandle> {
     if (typeof input !== 'string') {
       throw new ConfigValidationError(
         'Missioncraft.start: config-input form (apply()-equivalent) not yet implemented; pass mission-id string for W4.3',
@@ -285,6 +288,22 @@ export class Missioncraft {
     const isReaderStart = initialConfig.mission.readOnly === true;
     // Reader-mission accepts lifecycle 'joined'; writer-mission requires 'configured' (W4-new v.b).
     const validPreStates: readonly MissionStatePhase[] = isReaderStart ? ['joined'] : ['configured'];
+    // mission-78 W6-new slice (iii): idempotent-start semantic per architect-disposition thread-550
+    // round 4. When opts.idempotent === true and lifecycleState already in {'started', 'in-progress'},
+    // return existing handle gracefully (no-op; daemon-already-running case). Terminal lifecycles
+    // (completed/abandoned) still throw with operator-DX-clear error. Used by:
+    // - `msn <id> start` (CLI always passes idempotent: true; spawn-if-not-running semantic per
+    //   Design v5.0 §10.6 — replaces dedicated `msn start <id>` verb-first form)
+    // - `msn create/join/watch --start` flag (CLI sequential mc.create + mc.start composition)
+    if (
+      opts?.idempotent === true &&
+      (initialConfig.mission.lifecycleState === 'started' ||
+        initialConfig.mission.lifecycleState === 'in-progress')
+    ) {
+      return initialConfig.mission.name === undefined
+        ? { id: missionId }
+        : { id: missionId, name: initialConfig.mission.name };
+    }
     if (!validPreStates.includes(initialConfig.mission.lifecycleState)) {
       throw new MissionStateError(
         `Missioncraft.start: requires lifecycle ${validPreStates.map((s) => `'${s}'`).join(' or ')} (current: '${initialConfig.mission.lifecycleState}')`,

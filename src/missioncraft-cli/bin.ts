@@ -213,6 +213,11 @@ function renderFsmHint(verb: string, currentState: string, idOrName: string | un
 async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputFormat): Promise<void> {
   switch (parsed.verb) {
     // ─── (2) CREATION VERBS — verb-first; return mission-id ───
+    // mission-78 W6-new slice (iii) (Design v5.0 §10.6): all three creation-verbs accept
+    // optional `--start` flag for sequential-spawn-post-create per architect-disposition (a).
+    // Composition: mc.create(...) → mc.start(handle.id, { idempotent: true }) when flag set.
+    // idempotent: true gracefully no-ops if mission lifecycle is already 'started'/'in-progress'
+    // (race against concurrent CLI invocations) per architect-disposition idempotent-flag.
     case 'create': {
       // v1.0.5 bug-67 item 4: validate --repo URL via `new URL(...)` parse
       if (parsed.flags.has('--repo')) {
@@ -230,6 +235,9 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
         ...(parsed.flags.has('--repo') && { repo: String(parsed.flags.get('--repo')) }),
         ...(parsed.flags.has('--scope') && { scope: String(parsed.flags.get('--scope')) }),
       });
+      if (parsed.flags.has('--start')) {
+        await mc.start(handle.id, { idempotent: true });
+      }
       console.log(format === 'text' ? handle.name ? `${handle.id}\t${handle.name}` : handle.id : formatValue(handle, format));
       return;
     }
@@ -245,6 +253,9 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
         sourceRemote: repo,
         sourceBranch: branch,
       });
+      if (parsed.flags.has('--start')) {
+        await mc.start(handle.id, { idempotent: true });
+      }
       console.log(format === 'text' ? handle.name ? `${handle.id}\t${handle.name}` : handle.id : formatValue(handle, format));
       return;
     }
@@ -255,6 +266,9 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
         readOnly: true,
         sourceMissionId: parsed.positionals[0],
       });
+      if (parsed.flags.has('--start')) {
+        await mc.start(handle.id, { idempotent: true });
+      }
       console.log(format === 'text' ? handle.name ? `${handle.id}\t${handle.name}` : handle.id : formatValue(handle, format));
       return;
     }
@@ -624,7 +638,12 @@ async function dispatchMissionTargeted(mc: Missioncraft, parsed: ParsedCommand, 
       if (parsed.flags.has('-f')) {
         handle = await mc.start({ config: { missionConfigSchemaVersion: 2, mission: { id: 'placeholder', lifecycleState: 'created', createdAt: new Date() }, repos: [] } }, { onProgress: progressSink });
       } else {
-        handle = await mc.start(parsed.positionals[0], { onProgress: progressSink });
+        // mission-78 W6-new slice (iii) (Design v5.0 §10.6): idempotent-spawn-if-not-running.
+        // CLI always passes `idempotent: true` for `msn <id> start` (and `msn start <id>` legacy
+        // verb-first) — graceful no-op when daemon already running. Per architect-disposition
+        // thread-550 round 4: idempotent-flag at SDK level avoids race between concurrent CLI
+        // invocations + replaces the dropped `msn <id> resume` verb (merged into idempotent start).
+        handle = await mc.start(parsed.positionals[0], { onProgress: progressSink, idempotent: true });
       }
       // bug-64 item 6 (v1.0.3 slice iv): emit success-confirmation line on stdout
       const nameSuffix = handle.name ? ` ('${handle.name}')` : '';

@@ -1,8 +1,29 @@
 # Scenario 01 — Read-Only Single-Repo Mission Workflow
 
-**Demonstrates:** `create` → `start` (HTTPS clone) → `workspace` path-switching → `abandon`, against a real public repo. **Read-only boundary**: no `complete` (no remote-side writes); `coordinationRemote` unset.
+**Demonstrates:** `create` → `start` (HTTPS clone) → `<id> workspace` path-switching → `<id> abandon`, against a real public repo. **Read-only boundary**: no `complete` (no remote-side writes); single-participant writer with `pushCadence` defaulting to `on-complete-only` → no push activity during `start..abandon` window.
 
-**Status:** RE-RATIFIED — outputs captured against `@apnex/missioncraft@1.0.5` 2026-05-11T05:00Z UTC (Node v24.12.0). Ratification history: v1.0.2 (original) → v1.0.4 (CLI-UX cluster) → v1.0.5 (current; scope-namespace completion + operator-state layout consolidation + error-message cleanup + progress callback).
+**Status:** RE-RATIFIED at v1.2.0 (mission-78 W8-new slice (iii) Component C surgical update). Ratification history: v1.0.2 (original) → v1.0.4 (CLI-UX cluster) → v1.0.5 → v1.2.0 (current; v5.0 substrate-design simplification: Path D2 native-git + Flow B canonical + single-branch + hybrid CLI grammar + reader-flavors).
+
+---
+
+## §0 v1.2.0 substrate-update — what's different from v1.0.x
+
+**Path D2 native-git substrate** (mission-78 W1+W2): NativeGitEngine canonical + sole; IsomorphicGitEngine REMOVED entirely (W7-new). Hard-depend on `git` + `gh` CLI binaries; `msn version` shows substrate detection output.
+
+**Hybrid CLI grammar three-class taxonomy** (mission-78 W6-new per Design v5.0 §10.6):
+- **Class 1 GLOBAL VERBS** (verb-first; no mission target): `list` / `version` / `help` / `config` / `scope` / `tree` / `shell-init`
+- **Class 2 CREATION VERBS** (verb-first; optional `--start` flag): `create` / `join` / `watch`
+- **Class 3 MISSION-TARGETED VERBS** (id-first canonical: `msn <id> <verb>`): `show` / `start` / `complete` / `abandon` / `workspace` / `cd` / `update <sub>` (PRESERVED verb-first form per W7-new slice v structurally-required slug-resolution invariant)
+
+This scenario's commands all use the v1.2.0 id-first form. The pre-v1.2.0 verb-first form (`msn show <id>`, `msn start <id>`, etc.) is REMOVED and produces an operator-DX-clear error directing to id-first form with msn-list hint.
+
+**v4.x verbs DROPPED**: `apply` (overlap with `msn create -f`); `tick` (was unimplemented); `leave` (v4.x multi-participant)
+
+**Bare-id default-to-show** (mission-78 W6-new operator-DX enrichment): `msn <mission-id>` (no verb) defaults to `msn <mission-id> show` for operator-DX-friendly mission inspection.
+
+**Coord-remote primitive REMOVED** (mission-78 W5-new slice ii per Design v5.0 §10.2): `coordinationRemote` field deleted from mission schema; symmetric `pushCadence` (writer) + `pullCadence` (reader) cadence-config replaces v4.x coord-mirror semantics.
+
+**Scenarios 03/04/05/06 forward-pointers** (post-v1.2.0 candidates): only Scenarios 01 + 02 ship at v1.2.0; multi-repo + multi-participant + abandon-with-retain + disk-failure-recovery walkthroughs are post-v1.2.0 documentation roadmap.
 
 ---
 
@@ -12,7 +33,7 @@ This is the simplest meaningful missioncraft workflow:
 - 1 mission, 1 repo, 1 writer-participant
 - HTTPS clone from a public repo (no auth needed for `start`; `complete` would need write-access and is out-of-scope here)
 - Default pluggable providers (no operator-config customization)
-- Local-only daemon-watcher (no `coordinationRemote`; daemon's `pushWipToCoordRemote` no-ops per single-participant gating)
+- Local-only daemon-watcher (single-participant writer; `pushCadence` defaults to `'on-complete-only'` so no upstream push activity during `start..abandon` window)
 - Clean teardown via `abandon` (no `--retain`; no `--purge-config`)
 
 **This scenario does NOT cover:**
@@ -35,8 +56,8 @@ npm install -g @apnex/missioncraft
 Verify:
 ```bash
 which msn       # resolves to global bin
-msn --version   # prints 1.0.5 (current latest)
-msn version     # 'version' verb works as alias for --version (v1.0.4)
+msn --version   # prints 1.2.0 (current latest)
+msn version     # 'version' verb works as alias for --version (v1.0.4); also shows substrate detection (git + gh CLI versions) per W0 slice ii
 ```
 
 **Optional: enable `msn cd`** (NEW in v1.0.3; shell-function wrapper for direct cd into workspace):
@@ -78,18 +99,18 @@ msn --version
 
 Expected:
 ```
-missioncraft 1.0.5
+missioncraft 1.2.0
 ```
 
 ```bash
 msn --help    # full global help with verb-list
-msn help      # NEW in v1.0.3: 'help' verb (alias for --help)
-msn           # NEW in v1.0.3: bare msn falls through to help
-msn version   # NEW in v1.0.4: 'version' verb (alias for --version)
-msn tree      # NEW in v1.0.4: tree-style visualization of full verb hierarchy
+msn help      # 'help' verb (alias for --help)
+msn           # bare msn falls through to help
+msn version   # 'version' verb (alias for --version) + shows git/gh substrate detection (Path D2)
+msn tree      # tree-style visualization of full verb hierarchy
 ```
 
-Expected: grammar dispatch + verb-list including `create / list / show / start / apply / update / complete / abandon / tick / workspace / cd / shell-init / scope / config / join / leave / help / version / tree`.
+Expected: grammar dispatch + verb-list including `create / list / show / start / update / complete / abandon / workspace / cd / shell-init / scope / config / join / watch / help / version / tree`. Note: `apply` + `tick` + `leave` DROPPED at v1.2.0 (mission-78 W6-new + W7-new); `watch` ADDED at W4-new (PERSISTENT-TRACKER reader-mission verb).
 
 **Edge-case bootstrap verifications** (v1.0.4 polish):
 
@@ -123,7 +144,8 @@ msn-18b4348f	test-readonly
 ### Step 3 — Show mission (pre-start)
 
 ```bash
-msn show <mission-id>
+msn <mission-id> show       # v1.2.0 id-first form (W6-new canonical)
+msn <mission-id>            # equivalent: bare-id defaults to show (W6-new operator-DX enrichment)
 ```
 
 Expected: JSON with:
@@ -131,7 +153,7 @@ Expected: JSON with:
 - `name: "test-readonly"`
 - `repos` array with 1 entry (name + url + base)
 - `lifecycleState: "configured"`
-- 4 pluggable provider-names at defaults: `identityProviderName: "local-git-config"` + `approvalProviderName: "trust-all"` + `storageProviderName: "local-filesystem"` + `gitEngineProviderName: "native-git"` (mission-78 W2 Path D2; was `"isomorphic-git"` pre-v1.1.0)
+- 4 pluggable provider-names at defaults: `identityProviderName: "local-git-config"` + `approvalProviderName: "trust-all"` + `storageProviderName: "local-filesystem"` + `gitEngineProviderName: "native-git"` (mission-78 W2 Path D2 canonical; sole gitEngine at v1.2.0 since W7-new IsoEng removal)
 
 Output:
 ```json
@@ -156,9 +178,9 @@ Output:
 }
 ```
 
-**Name-alias resolution** (v1.0.3 bug-64 item 5):
+**Name-alias resolution** (v1.0.3 bug-64 item 5; reinforced by v1.2.0 W7-new slice (v) update verb-first PRESERVE for slug-resolution-via-verb-first invariant):
 ```bash
-msn show test-readonly                        # equivalent to: msn show msn-18b4348f
+msn test-readonly show                        # equivalent to: msn msn-18b4348f show
 ```
 
 ### Step 4 — List missions
@@ -178,15 +200,17 @@ msn-18b4348f  test-readonly  configured  1
 ### Step 5 — Start mission (substantive)
 
 ```bash
-msn start <mission-id>
+msn <mission-id> start                # v1.2.0 id-first form
+# OR via --start flag at create-time (W6-new slice iii sequential composition):
+# msn create --name test-readonly --repo https://github.com/apnex/missioncraft.git --start
 ```
 
 Performs the 7-step `configured → started` transition:
-1. Validate pre-state (lifecycle `configured` + ≥1 repo)
+1. Validate pre-state (lifecycle `configured` + ≥1 repo); idempotent on already-`started`/`in-progress` per W6-new slice iii
 2. Acquire mission-lock + per-repo locks
 3. Allocate workspace per repo via `LocalFilesystemStorage`
-4. Clone via `IsomorphicGitEngine` (HTTPS to `github.com/apnex/missioncraft.git`)
-5. Spawn daemon-watcher (writer-mode; no coord-remote → no push activity)
+4. Clone via `NativeGitEngine` (HTTPS to `github.com/apnex/missioncraft.git`; native git CLI per Path D2)
+5. Spawn daemon-watcher (writer-mode; v5.0 Flow B canonical: chokidar Loop A fs-watch + commit-on-debounce direct to `mission/<id>` branch + `pushCadence` config gates upstream push activity)
 6. Atomic-write lifecycle `'started'` via `_engineMutate` (the transient transition state per Design §2.4.1)
 7. Release transition-pseudolock
 
@@ -243,28 +267,28 @@ daemon-pid=561796
 
 **Note**: Pre-v1.0.2 (v1.0.1 + earlier), the lockfile was unlinked by `start()` Step 8 release-pseudolock — daemon-IPC channel was lost and operator-CLI commands couldn't read the daemon-pid. Fixed in v1.0.2 slice (i)+(i.5) via `daemonSpawned` flag + vestigial-acquire-removal in abandon/complete.
 
-### Step 8 — Test `msn workspace` path-switching (4 forms)
+### Step 8 — Test `msn workspace` path-switching (4 forms; v1.2.0 id-first canonical + coord-form exception preserved)
 
 ```bash
-# Form 1: plain-id (single-repo auto-pick)
-msn workspace <mission-id>
+# Form 1: plain-id (id-first form; single-repo auto-pick) — W6-new canonical
+msn <mission-id> workspace
 ```
 
 Expected: prints `~/.missioncraft/missions/<mission-id>/missioncraft` to stdout.
 
 ```bash
-# Form 2: explicit repo-name
-msn workspace <mission-id> missioncraft
+# Form 2: explicit repo-name (id-first form)
+msn <mission-id> workspace missioncraft
 ```
 
 Expected: same path as form 1.
 
 ```bash
-# Form 3: coord-form <id>:<repo> (Rule N parser; substrate-coordinate addressing)
+# Form 3: coord-form <id>:<repo> (Rule 7 substrate-coordinate; PRESERVED legacy verb-first form)
 msn workspace <mission-id>:missioncraft
 ```
 
-Expected: same path as forms 1/2.
+Expected: same path as forms 1/2. Coord-form exception: `<id>:<repo>` embeds the mission-id so id-first prefix is redundant; verb-first form preserved per parser.ts hybrid grammar carve-out.
 
 ```bash
 # Form 4: coord-form with path-suffix
@@ -275,7 +299,7 @@ Expected: path joined with `/src` → `~/.missioncraft/missions/<mission-id>/mis
 
 ```bash
 # Shell-eval pattern (canonical operator-UX)
-cd $(msn workspace <mission-id>) && pwd && ls | head -5
+cd $(msn <mission-id> workspace) && pwd && ls | head -5
 ```
 
 Expected: `cd` succeeds; `pwd` matches workspace path; `ls` shows clone contents.
@@ -305,20 +329,22 @@ README.md
 
 **Note**: Pre-v1.0.2 (v1.0.1), `msn workspace <id>` happy-path returned zero stdout. Fixed in v1.0.2 slice (iii) at `bin.ts:326` (CLI dispatch handler `console.log(path)`).
 
-### Step 9 — Read-only boundary verification
+### Step 9 — Read-only boundary verification (v1.2.0 update)
 
-Verify daemon does NOT push to remote (single-participant; `coordinationRemote` unset → `pushWipToCoordRemote` conditional-gates to no-op per W5b slice ii):
+Verify daemon does NOT push to remote (single-participant writer; `pushCadence` defaults to `'on-complete-only'` so no push activity during `start..abandon` window):
 
 ```bash
-# Watch a wip-cadence window (~10s should be sufficient given default debounce + heartbeat)
+# Watch a debounce-cadence window (~10s should be sufficient given default debounce + heartbeat)
 sleep 10
-# Verify no remote-side activity by checking the mission's wip-branch was NOT pushed
-# (remote ls-remote should NOT show refs/heads/<repoName>/wip/<missionId>)
+# Verify no remote-side activity by checking the mission/<id> branch was NOT pushed
+# (remote ls-remote should NOT show refs/heads/mission/<missionId>)
+# Note: v5.0 single-branch architecture commits direct to mission/<id>; pre-v5.0 wip/<id> sidecar
+# was DROPPED at W3-new
 MISSION_ID=<mission-id>
-git ls-remote https://github.com/apnex/missioncraft.git 2>&1 | grep "wip/$MISSION_ID" || echo "✓ no remote wip-branch (read-only boundary preserved)"
+git ls-remote https://github.com/apnex/missioncraft.git 2>&1 | grep "mission/$MISSION_ID" || echo "✓ no remote mission-branch (read-only boundary preserved)"
 ```
 
-Expected: no remote wip-branch ref; read-only boundary preserved.
+Expected: no remote mission-branch ref; read-only boundary preserved.
 
 Output:
 ```
@@ -328,7 +354,7 @@ Output:
 ### Step 10 — Abandon mission
 
 ```bash
-msn abandon <mission-id> "readonly scenario teardown"
+msn <mission-id> abandon "readonly scenario teardown"     # v1.2.0 id-first form
 ```
 
 Performs the 7-step abandon-flow:
@@ -354,7 +380,7 @@ abandoned mission msn-18b4348f ('test-readonly'); workspace removed; daemon stop
 ### Step 11 — Show mission (post-abandon)
 
 ```bash
-msn show <mission-id>
+msn <mission-id> show          # v1.2.0 id-first form
 ```
 
 Expected: JSON shows:
@@ -420,7 +446,7 @@ ls: cannot access '/home/apnex/.missioncraft/missions/msn-18b4348f/': No such fi
 ### Step 13 — Resolve `msn workspace` post-abandon (error path)
 
 ```bash
-msn workspace <mission-id> 2>&1
+msn <mission-id> workspace 2>&1     # v1.2.0 id-first form
 echo "(exit=$?)"
 ```
 
@@ -477,21 +503,23 @@ Removes all mission configs + remaining workspaces + lockfiles.
 
 ## §7 Companion scenarios (forward-pointers)
 
-- **02-readwrite-single-repo.md** — full `complete` flow with push + PR-open against owned repo; covers `--retain` + `--purge-config` abandon-flag variants as sub-sections
-- **03-multi-repo-mission.md** — single mission spanning 2+ repos; covers Rule N coord-form patterns (substrate-coordinate addressing) for multi-repo workspace-switching
-- **04-multi-participant-writer-reader.md** — `msn join` + reader-daemon Loop B + cross-host coordination via `--coord-remote`; covers disk-failure recovery (bundle-ops restore from snapshotRoot; `rm -rf workspaceRoot` recovery) as durability-mode sub-section
+- **02-readwrite-single-repo.md** — full `complete` flow with squash + force-push (Fix #12) against owned repo; covers `--retain` + `--purge-config` abandon-flag variants as sub-sections
+- **03-multi-repo-mission.md** (v1.2.x candidate; not shipped at v1.2.0) — single mission spanning 2+ repos; covers coord-form patterns for multi-repo workspace-switching
+- **04-multi-participant-writer-reader.md** (v1.2.x candidate; SUBSTANTIAL REWRITE pending — v5.0 architecture supersedes v4.x multi-participant model) — `msn join <writer-mission-id>` BRANCH-TRACKER + `msn watch --repo --branch` PERSISTENT-TRACKER reader-mission flavors per Design v5.0 §2 row 4; reader-daemon Loop B v5.0 (direct fetch+reset from source-remote); auto-close cascade on writer-terminated; covers disk-failure recovery (bundle-ops restore from snapshotRoot via `mc.snapshotMissionBranches` + `mc.restoreFromSnapshot`) as durability-mode sub-section
 
 ---
 
 ## §8 Execution log
 
-**Status:** RE-RATIFIED against v1.0.5
+**Status:** RE-RATIFIED at v1.2.0 (mission-78 W8-new slice (iii) Component C surgical update; commands updated to W6-new id-first form; `msn version` substrate-detect output verified; coord-remote refs replaced with `pushCadence` semantics per Design v5.0 §10.2; v4.x verbs apply/tick/leave noted as DROPPED; reader-mission flavors `msn join` BRANCH-TRACKER + `msn watch` PERSISTENT-TRACKER cross-referenced for forward scenario 04). FULL EXECUTION RE-RATIFICATION pending pre-publish wire-flow rehearsal (W8-new slice (vii)).
 **Original ratification:** 2026-05-10T23:25Z UTC against `@apnex/missioncraft@1.0.2` (mission-id `msn-99c369ee`)
 **v1.0.4 re-ratification:** 2026-05-11T03:35Z UTC (mission-id `msn-527bec0e`)
 **v1.0.5 re-ratification:** 2026-05-11T05:00Z UTC against `@apnex/missioncraft@1.0.5` (Node v24.12.0; nvm-managed; user-prefix global install)
+**v1.2.0 surgical update:** 2026-05-13 (mission-78 W8-new slice (iii); doc-edits only — execution-time re-ratification at slice (vii) pre-publish wire-flow rehearsal)
 **Executor:** architect-side (lily; agent-40903c59) via fresh `npm install -g @apnex/missioncraft@latest`
 **Mission-ID used in v1.0.5 capture:** `msn-18b4348f` (ephemeral; abandoned at end)
-**Outcome:** 13 of 13 steps PASS — full operator-canonical workflow verified end-to-end against v1.0.5
+**Outcome at v1.0.5:** 13 of 13 steps PASS — full operator-canonical workflow verified end-to-end
+**Outcome at v1.2.0:** PENDING execution at slice (vii) wire-flow rehearsal
 
 **Cumulative pre-v1.0.4 fixes** (discovered + shipped via this scenario test cycle):
 - v1.0.0: `msn` bin-shim silent-failure via shebang+symlink (`isMainModule` guard) → v1.0.1 (`87bf370`)

@@ -94,7 +94,7 @@ describe('v1.2.0 W6-new slice (iii) — idempotent mc.start', () => {
     const configPath = join(tempRoot, 'config', 'missions', `${writer.id}.yaml`);
     const { readFile } = await import('node:fs/promises');
     const content = await readFile(configPath, 'utf8');
-    await writeFile(configPath, content.replace(/lifecycle-state: \w+/, 'lifecycle-state: completed'), 'utf8');
+    await writeFile(configPath, content.replace(/lifecycle-state: [\w-]+/, 'lifecycle-state: completed'), 'utf8');
 
     // mc.start with idempotent: true on 'completed' → still throws (idempotent only covers
     // 'started'/'in-progress'; terminal states are operator-DX-explicit-error)

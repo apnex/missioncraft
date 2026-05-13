@@ -33,7 +33,7 @@ afterEach(async () => {
 async function advanceLifecycle(workspaceRoot: string, missionId: string, lifecycleState: string): Promise<void> {
   const path = join(workspaceRoot, 'config', 'missions', `${missionId}.yaml`);
   const content = await readFile(path, 'utf8');
-  const updated = content.replace(/lifecycle-state: \w+/, `lifecycle-state: ${lifecycleState}`);
+  const updated = content.replace(/lifecycle-state: [\w-]+/, `lifecycle-state: ${lifecycleState}`);
   await writeFile(path, updated, 'utf8');
 }
 

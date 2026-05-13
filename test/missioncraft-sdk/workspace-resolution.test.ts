@@ -118,7 +118,7 @@ describe('W5c slice (ii) — Missioncraft.workspace() runtime-resolution', () =>
     // Substrate-bypass: seed lifecycle directly via YAML edit (start over file:// would clone-fail)
     const path = join(tempRoot, 'config', 'missions', `${handle.id}.yaml`);
     const content = await readFile(path, 'utf8');
-    await writeFile(path, content.replace(/lifecycle-state: \w+/, 'lifecycle-state: abandoned'), 'utf8');
+    await writeFile(path, content.replace(/lifecycle-state: [\w-]+/, 'lifecycle-state: abandoned'), 'utf8');
 
     await expect(mc.workspace(handle.id)).rejects.toThrow(
       /workspace destroyed; mission '.+' in terminal state 'abandoned'/,
@@ -132,7 +132,7 @@ describe('W5c slice (ii) — Missioncraft.workspace() runtime-resolution', () =>
     await mc.storage.allocate(handle.id, repoUrl);
     const path = join(tempRoot, 'config', 'missions', `${handle.id}.yaml`);
     const content = await readFile(path, 'utf8');
-    await writeFile(path, content.replace(/lifecycle-state: \w+/, 'lifecycle-state: completed'), 'utf8');
+    await writeFile(path, content.replace(/lifecycle-state: [\w-]+/, 'lifecycle-state: completed'), 'utf8');
 
     await expect(mc.workspace(handle.id)).rejects.toThrow(
       /workspace destroyed; mission '.+' in terminal state 'completed'/,

@@ -132,7 +132,7 @@ describe('v1.2.0 W4-new slice (v.b) — BRANCH-TRACKER auto-close mechanics (dua
     const writerPath = join(tempRoot, 'config', 'missions', `${writer.id}.yaml`);
     const { readFile, writeFile } = await import('node:fs/promises');
     const writerContent = await readFile(writerPath, 'utf8');
-    await writeFile(writerPath, writerContent.replace(/lifecycle-state: \w+/, 'lifecycle-state: completed'), 'utf8');
+    await writeFile(writerPath, writerContent.replace(/lifecycle-state: [\w-]+/, 'lifecycle-state: completed'), 'utf8');
 
     await expect(mc.readerLoopBV5Tick(reader.id)).rejects.toBeInstanceOf(ReaderAutoCloseError);
     await expect(mc.readerLoopBV5Tick(reader.id)).rejects.toThrow(/is terminal \(completed\)/);
@@ -146,7 +146,7 @@ describe('v1.2.0 W4-new slice (v.b) — BRANCH-TRACKER auto-close mechanics (dua
     const writerPath = join(tempRoot, 'config', 'missions', `${writer.id}.yaml`);
     const { readFile, writeFile } = await import('node:fs/promises');
     const writerContent = await readFile(writerPath, 'utf8');
-    await writeFile(writerPath, writerContent.replace(/lifecycle-state: \w+/, 'lifecycle-state: abandoned'), 'utf8');
+    await writeFile(writerPath, writerContent.replace(/lifecycle-state: [\w-]+/, 'lifecycle-state: abandoned'), 'utf8');
 
     await expect(mc.readerLoopBV5Tick(reader.id)).rejects.toThrow(/is terminal \(abandoned\)/);
   });

@@ -262,7 +262,7 @@ describe('v1.2.0 W5-new slice (v) — Auto-close cascade via pull-cadence detect
     const writerPath = join(tempRoot, 'config', 'missions', `${writer.id}.yaml`);
     const { readFile } = await import('node:fs/promises');
     const writerContent = await readFile(writerPath, 'utf8');
-    await writeFile(writerPath, writerContent.replace(/lifecycle-state: \w+/, 'lifecycle-state: completed'), 'utf8');
+    await writeFile(writerPath, writerContent.replace(/lifecycle-state: [\w-]+/, 'lifecycle-state: completed'), 'utf8');
 
     // Reader's pull-cadence-tick now detects terminal writer-state → ReaderAutoCloseError
     let thrown: unknown;

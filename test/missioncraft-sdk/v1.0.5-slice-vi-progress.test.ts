@@ -40,7 +40,7 @@ async function seedMissionLockfile(workspaceRoot: string, missionId: string): Pr
 async function advanceLifecycle(workspaceRoot: string, missionId: string, state: string): Promise<void> {
   const path = join(workspaceRoot, 'config', 'missions', `${missionId}.yaml`);
   const content = await readFile(path, 'utf8');
-  await writeFile(path, content.replace(/lifecycle-state: \w+/, `lifecycle-state: ${state}`), 'utf8');
+  await writeFile(path, content.replace(/lifecycle-state: [\w-]+/, `lifecycle-state: ${state}`), 'utf8');
 }
 
 describe('v1.0.5 slice (vi) — idea-273 ProgressCallback fires at SDK phase boundaries', () => {

@@ -5,10 +5,9 @@
 //   - Writer-mode (default; principal absent OR principal == owning-writer): chokidar Loop A
 //     fs-watch on per-repo workspaces; debounce → wip-commit + push-to-coord-remote +
 //     config-mutation-propagation via mtime-watch.
-//   - Reader-mode (principal present + matches reader participant): Loop B setInterval timer-poll
-//     wrapping `git fetch --tags coord-remote` via cached `.coord-mirror/` git-dir; ref-detection
-//     fans out to cascade-terminated / cascade-config-update / applyReaderRefUpdate per W5c
-//     MEDIUM-R8.1.
+//   - Reader-mode (config.mission.readOnly === true): Loop B setInterval timer-poll wrapping
+//     `git fetch` of source-remote via readerLoopBV5Tick (direct fetch+reset); ref-detection
+//     fans out to cascade-terminated / auto-close per Design v5.0 §2 row 4.
 
 import { join } from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';

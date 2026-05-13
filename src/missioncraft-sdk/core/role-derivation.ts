@@ -48,15 +48,5 @@ export function deriveOwningPrincipalRole(
   return owningPrincipal === currentPrincipal ? 'writer' : 'reader';
 }
 
-/**
- * Canonicalize a coordinationRemote git-URL per Design v4.8 §2.10.4 wire-format normalization.
- * Strips trailing slash; lowercases scheme; preserves path-case (case-sensitive on remote).
- */
-export function canonicalizeCoordinationRemote(url: string): string {
-  let canonical = url.trim();
-  // Strip trailing slash (single)
-  if (canonical.endsWith('/')) canonical = canonical.slice(0, -1);
-  // Lowercase scheme (https / git / ssh / file are case-insensitive per RFC 3986)
-  canonical = canonical.replace(/^(\w+):\/\//, (_, scheme: string) => `${scheme.toLowerCase()}://`);
-  return canonical;
-}
+// canonicalizeCoordinationRemote helper DELETED at v1.2.0 W7-new slice (iv) — coordinationRemote
+// field was DELETED at W5-new slice (ii) per Design v5.0 §10.2; helper had no production callers.

@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   deriveOwningPrincipalRole,
-  canonicalizeCoordinationRemote,
 } from '../../src/missioncraft-sdk/core/role-derivation.js';
 
 describe('W5 slice (i) — deriveOwningPrincipalRole per HIGH-R1.2 partition-spec', () => {
@@ -58,27 +57,5 @@ describe('W5 slice (i) — deriveOwningPrincipalRole per HIGH-R1.2 partition-spe
   });
 });
 
-describe('W5 slice (i) — canonicalizeCoordinationRemote', () => {
-  it('strips trailing slash', () => {
-    expect(canonicalizeCoordinationRemote('https://example.com/repo/')).toBe('https://example.com/repo');
-  });
-
-  it('lowercases scheme (RFC 3986 scheme is case-insensitive)', () => {
-    expect(canonicalizeCoordinationRemote('HTTPS://example.com/repo')).toBe('https://example.com/repo');
-    expect(canonicalizeCoordinationRemote('Git://host/repo.git')).toBe('git://host/repo.git');
-    expect(canonicalizeCoordinationRemote('SSH://user@host/repo.git')).toBe('ssh://user@host/repo.git');
-  });
-
-  it('preserves path-case (path is case-sensitive on remote)', () => {
-    expect(canonicalizeCoordinationRemote('https://Example.com/UpperPath')).toBe('https://Example.com/UpperPath');
-  });
-
-  it('trims whitespace', () => {
-    expect(canonicalizeCoordinationRemote('  https://example.com/repo  ')).toBe('https://example.com/repo');
-  });
-
-  it('idempotent on already-canonical URL', () => {
-    const canonical = 'https://example.com/repo';
-    expect(canonicalizeCoordinationRemote(canonical)).toBe(canonical);
-  });
-});
+// canonicalizeCoordinationRemote describe-block DELETED at W7-new slice (iv) — helper deleted
+// (no production callers post-W5-new coordinationRemote field deletion).

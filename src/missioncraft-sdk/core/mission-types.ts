@@ -205,7 +205,6 @@ export interface MissionConfig {
  * - set-hub-id: ANY state including terminal (informational-only at v1)
  * - set-scope: pre-start only
  * - add-participant / remove-participant: created/configured/started/in-progress; ERROR on terminal
- * - set-coordination-remote: created/configured ONLY (post-start change orphans readers)
  * Reader-side: ALL mutations rejected (`MissionStateError("read-only participant; mutation rejected")`)
  */
 export type MissionMutation =
@@ -219,5 +218,4 @@ export type MissionMutation =
   | { kind: 'remove-tag'; key: string }
   // v4.0 NEW per idea-265 multi-participant + MEDIUM-R1.4 — participant-mutation via existing update<T> polymorphism
   | { kind: 'add-participant'; principal: string; role: 'writer' | 'reader' }
-  | { kind: 'remove-participant'; principal: string }
-  | { kind: 'set-coordination-remote'; remote: string };
+  | { kind: 'remove-participant'; principal: string };

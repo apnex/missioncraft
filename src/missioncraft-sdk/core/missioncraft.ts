@@ -2355,13 +2355,6 @@ export class Missioncraft {
         };
         break;
       }
-      case 'set-coordination-remote':
-        // mission-78 W5-new slice (ii): coordinationRemote field DELETED per Design v5.0 §10.2.
-        // Mutation-kind retained on MissionMutation type for v4.x test-fixture back-compat
-        // through W7-new (architect-disposition); this case-arm is a no-op (v.x mutation has no
-        // effect since the field doesn't exist on schema-v2).
-        void mutation;
-        break;
       default: {
         const _exhaustive: never = mutation;
         void _exhaustive;

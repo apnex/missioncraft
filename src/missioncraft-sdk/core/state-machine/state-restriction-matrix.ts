@@ -28,7 +28,6 @@ const TERMINAL: readonly MissionStatePhase[] = ['completed', 'abandoned'];
  * - set-hub-id: ✓ ANY state including terminal (informational-only at v1)
  * - set-scope: ✓ pre-start ONLY (post-start scope.repos already snapshotted per §2.4.2)
  * - add-participant / remove-participant (v4.0 NEW): ✓ created/configured/started/in-progress; ✗ terminal
- * - set-coordination-remote (v4.0 NEW): ✓ pre-start ONLY (post-start orphans readers)
  *
  * Reader-side states reject ALL mutations (read-only participant per HIGH-R2.3).
  */
@@ -76,12 +75,6 @@ export function validateMutationAllowed(
       // created/configured/started/in-progress; ERROR on terminal
       if (TERMINAL.includes(currentState)) {
         return `mutation '${mutation.kind}' rejected on terminal state '${currentState}'`;
-      }
-      return null;
-    case 'set-coordination-remote':
-      // pre-start ONLY (post-start change orphans readers per §2.4.1 v4.x)
-      if (!PRE_START.includes(currentState)) {
-        return `mutation 'set-coordination-remote' rejected on '${currentState}' (pre-start only; post-start change would orphan readers)`;
       }
       return null;
     default: {

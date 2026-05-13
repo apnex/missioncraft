@@ -83,13 +83,6 @@ describe('State-restriction matrix — W4.1 smoke-tests', () => {
     expect(validateMutationAllowed(m, 'completed')).toMatch(/terminal state/);
   });
 
-  it('set-coordination-remote (v4.0): pre-start only (post-start orphans readers)', () => {
-    const m = mut('set-coordination-remote', { remote: 'file:///x.git' });
-    expect(validateMutationAllowed(m, 'configured')).toBeNull();
-    expect(validateMutationAllowed(m, 'started')).toMatch(/pre-start only/);
-    expect(validateMutationAllowed(m, 'in-progress')).toMatch(/pre-start only/);
-  });
-
   it('reader-side state rejects ALL mutations (read-only participant per HIGH-R2.3)', () => {
     const mutations: MissionMutation['kind'][] = ['add-repo', 'remove-repo', 'rename', 'set-tag', 'set-hub-id', 'add-participant'];
     for (const kind of mutations) {

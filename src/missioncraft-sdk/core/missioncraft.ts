@@ -1522,20 +1522,11 @@ export class Missioncraft {
   }
 
   // ─── Multi-participant verbs (W5b slice (i) — runtime impl) ───
-
-  /**
-   * v4.x mc.join SDK method — STUB-THROW at v1.2.0 W5-new slice (ii) per Design v5.0 §10.2
-   * coord-remote drop. Method-signature retained per architect-disposition (thread-548 §B):
-   * "v4.x carry-forward surface cleanup" deferred to W7-new alongside IsoEng-removal. v5.0
-   * reader-mission creation flows are `msn join <writer-mission-id>` (BRANCH-TRACKER) +
-   * `msn watch --repo --branch` (PERSISTENT-TRACKER); both go through `mc.create('mission', ...)`
-   * with `readOnly: true` + reader-flavor fields per slice (ii)/(iii) of W4-new.
-   */
-  async join(_idOrName: string, _coordRemote: string, _principal?: string): Promise<MissionState> {
-    throw new UnsupportedOperationError(
-      "Missioncraft.join (v4.x multi-participant) is removed at v1.2.0. Use mc.create('mission', { readOnly: true, sourceMissionId: <writer-id> }) for BRANCH-TRACKER reader OR { readOnly: true, sourceRemote, sourceBranch } for PERSISTENT-TRACKER reader (Design v5.0 §2 row 4).",
-    );
-  }
+  //
+  // v4.x mc.join SDK method was DELETED at v1.2.0 W7-new slice (ii). v5.0 reader-mission creation
+  // flows are `msn join <writer-mission-id>` (BRANCH-TRACKER) + `msn watch --repo --branch`
+  // (PERSISTENT-TRACKER); both go through `mc.create('mission', ...)` with `readOnly: true` +
+  // reader-flavor fields per W4-new.
 
   /**
    * Reader-side disengagement (Design v4.9 §2.4.1.v4 leave-flow; lifecycle 'reading' → 'leaving').

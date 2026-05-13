@@ -100,10 +100,9 @@ describe('v1.0.3 slice (iii) — name-alias resolution audit per bug-64 item 5',
     expect(path).toContain(tempRoot);
   });
 
-  // mission-78 W5-new slice (ii): mc.join is stub-throw per Design v5.0 §10.2 coord-remote drop.
-  // Name-resolution coverage for v5.0 reader-mission creation is via mc.create('mission',
-  // {readOnly: true, sourceMissionId}) per W4-new slice (iii) `v1.2.0-w4-new-msn-join.test.ts`
-  // (specifically `resolves writer-mission by NAME (not just id)` test case).
+  // mc.join SDK was DELETED at W7-new slice (ii). Name-resolution coverage for v5.0 reader-mission
+  // creation is via mc.create('mission', {readOnly: true, sourceMissionId}) per W4-new slice (iii)
+  // `v1.2.0-w4-new-msn-join.test.ts` (specifically `resolves writer-mission by NAME (not just id)`).
 
   it('mc.leave(<name>) resolves name → id (substrate-bypass via lifecycle requirement)', async () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });

@@ -348,8 +348,7 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
     // DROPPED entirely (apply: overlap with `create -f`; tick: was unimplemented + documentation-
     // lie; W5-new pushCadence/pullCadence subsume the cadence-tick semantic). `resume` already
     // merged into idempotent start at slice (iii). `leave` PRESERVED at this slice (v4.x carry-
-    // forward; deferred to W7-new "v4.x carry-forward surface cleanup" batch alongside mc.join
-    // SDK method retention).
+    // forward; deferred to W7-new "v4.x carry-forward surface cleanup" batch).
     case 'show':
     case 'update':
     case 'start':

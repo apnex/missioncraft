@@ -110,12 +110,11 @@ const baseMissionConfigShape = z.object({
     createdAt: z.coerce.date(),
     tags: z.record(z.string(), z.string()).optional(),
     // v4.0 NEW per idea-265 multi-participant.
-    // mission-78 W5-new slice (ii): coordinationRemote DELETED per Design v5.0 §12 no-backward-
+    // coordinationRemote DELETED at v1.2.0 W5-new slice (ii) per Design v5.0 §12 no-backward-
     // compat + §10.2 symmetric push/pull cadence. Reader-mission now fetches from sourceRemote
     // (PERSISTENT-TRACKER) OR writer.repos[].url with mission/<id> branch (BRANCH-TRACKER) per
-    // v5.0 architecture; coord-remote primitive removed. participants[] retained for v4.x
-    // multi-participant schema-v2 (test fixtures + v4.x mc.join SDK method retained through
-    // W7-new per architect-disposition thread-548 §B).
+    // v5.0 architecture. participants[] retained for v4.x multi-participant schema-v2 test
+    // fixtures (mc.join SDK method DELETED at W7-new slice (ii)).
     participants: z.array(MissionParticipantSchema).optional(),
     // ─── mission-78 W4-new (Design v5.0 §2 row 4): reader-mission fields ───
     // readOnly: true identifies a reader-mission (BRANCH-TRACKER via msn join OR

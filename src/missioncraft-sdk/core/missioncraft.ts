@@ -1372,14 +1372,30 @@ export class Missioncraft {
       // `refs/heads/mission/<writer-id>` (v5.0 single-branch architecture).
       // mission-78 W4-new slice (v.b) auto-close: writer mission-config missing OR terminal →
       // ReaderAutoCloseError (failure-mode 2 + writer-local-terminal detection).
+      //
+      // W8-new slice (viii.a) CI-fix (Director-direct (a) FIX IT verdict; architect hypothesis at
+      // thread-553 round 5 §2 — "non-flake-shape; deterministic-error-class mismatch"): writer-
+      // config parseMissionConfig failures (schema-validation OR YAML-parse) ALSO cascade to
+      // ReaderAutoCloseError. Pre-fix: brittle parseMissionConfig dependency leaked
+      // ConfigValidationError from the writer-config-read path; reader-tick contract is
+      // "writer-side state is opaque externalism — any unreadability is auto-close-signal." Fix:
+      // wrap writer-side read+parse in try/catch + convert any failure (file-missing already
+      // pre-checked; this handles parse-fail OR partial-read OR fs-race) to ReaderAutoCloseError.
       const writerPath = this.missionConfigPath(config.mission.sourceMissionId);
       if (!existsSync(writerPath)) {
         throw new ReaderAutoCloseError(
           `BRANCH-TRACKER reader '${missionId}' auto-close: writer-mission '${config.mission.sourceMissionId}' config-file missing`,
         );
       }
-      const writerContent = await readFile(writerPath, 'utf8');
-      const writerConfig = parseMissionConfig(writerContent, writerPath, 'auto');
+      let writerConfig: MissionConfig;
+      try {
+        const writerContent = await readFile(writerPath, 'utf8');
+        writerConfig = parseMissionConfig(writerContent, writerPath, 'auto');
+      } catch (err) {
+        throw new ReaderAutoCloseError(
+          `BRANCH-TRACKER reader '${missionId}' auto-close: writer-mission '${config.mission.sourceMissionId}' config unreadable (${err instanceof Error ? err.message : 'unknown'})`,
+        );
+      }
       const writerLifecycle = writerConfig.mission.lifecycleState;
       if (writerLifecycle === 'completed' || writerLifecycle === 'abandoned') {
         throw new ReaderAutoCloseError(

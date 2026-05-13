@@ -145,9 +145,11 @@ describe('W6 slice (i) — real-engine start() happy-path (W4.4-deferred carry-o
     const result = await mc.abandon(handle.id, 'sd2-regression-test');
     expect(result.lifecycleState).toBe('abandoned');
 
-    // Post-abandon: daemon is dead. Poll briefly for async shutdown completion.
+    // Post-abandon: daemon is dead. Poll for async shutdown completion (CI runners slower than
+    // local; 30s window covers SIGTERM-handler shutdown + 60s SIGKILL-fallback within 90s test
+    // timeout per W8-new slice (viii.a) CI-fix Director-direct (a) FIX IT verdict timing-tolerance).
     let daemonAlive = true;
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 300; i++) {
       try {
         process.kill(daemonPid, 0);
         await new Promise((r) => setTimeout(r, 100));

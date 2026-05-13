@@ -44,7 +44,7 @@ describe('CLI bin-shim symlink-bootstrap regression', () => {
     });
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
-    expect(result.stdout).toMatch(/missioncraft 1\.0\.\d+ — sovereign mission-orchestration substrate/);
+    expect(result.stdout).toMatch(/missioncraft 1\.\d+\.\d+ — sovereign mission-orchestration substrate/);
     expect(result.stdout).toMatch(/Usage: msn <verb>/);
   });
 
@@ -54,7 +54,7 @@ describe('CLI bin-shim symlink-bootstrap regression', () => {
       timeout: 10000,
     });
     expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/^missioncraft 1\.0\.\d+/);
+    expect(result.stdout).toMatch(/^missioncraft 1\.\d+\.\d+/);
   });
 
   // bug-64 item 1 (v1.0.3): bare `msn` falls through to help (mirrors git/npm/docker)

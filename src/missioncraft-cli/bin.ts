@@ -383,11 +383,11 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
  * missing binaries surface as `NOT FOUND` instead of failing the version probe itself.
  *
  * Text-format example:
- *   missioncraft 1.0.8
+ *   missioncraft 1.2.0
  *   ├── git    2.43.0
  *   └── gh     2.42.0
  *
- * JSON: `{"missioncraft":"1.0.8","git":"2.43.0","gh":"2.42.0"}` (null when missing).
+ * JSON: `{"missioncraft":"1.2.0","git":"2.43.0","gh":"2.42.0"}` (null when missing).
  */
 async function renderVersion(format: OutputFormat): Promise<string> {
   const detection = await detectSubstrate();

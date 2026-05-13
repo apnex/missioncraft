@@ -360,7 +360,6 @@ export function parse(argv: readonly string[]): ParsedCommand {
   // mission-78 W6-new slice (v.b) (Design v5.0 §10.6 + no-backward-compat ratification):
   // verb-first form for mission-targeted verbs is REMOVED entirely. These verbs require id-first
   // form (`msn <msn-id> <verb>`) per Design v5.0 §10.6 hybrid grammar three-class taxonomy.
-  // `leave` PRESERVED at this slice (v4.x carry-forward; deferred to W7-new slice (iii) cleanup).
   // `update` allowed verb-first under sub-action shape `msn update <id> <sub>`; W6-new id-first
   // form `msn <id> update <sub>` works via missionRef-prepend (slice ii); both forms permitted
   // through W6-new (legacy verb-first form for update remains operator-DX-friendly during migration).

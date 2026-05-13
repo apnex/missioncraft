@@ -251,11 +251,5 @@ describe('v1.2.0 W6-new slice (vii) — update verb-first PRESERVED (W6-new slic
   });
 });
 
-describe('v1.2.0 W6-new slice (vii) — leave verb-first PRESERVED (v4.x carry-forward through W7-new)', () => {
-  it('msn leave <id> — verb-first form PRESERVED at W6-new (deferred to W7-new)', () => {
-    const parsed = parse(['leave', 'msn-12345678']);
-    expect(parsed.verb).toBe('leave');
-    expect(parsed.missionRef).toBeUndefined();
-    expect(parsed.positionals).toEqual(['msn-12345678']);
-  });
-});
+// `leave` verb-first PRESERVED describe block DELETED in W7-new slice (iii) — leave verb removed
+// entirely (CLI dispatch + arg-spec + RESERVED_VERBS + slug-validation set + mc.leave SDK).

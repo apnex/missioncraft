@@ -1,16 +1,10 @@
 // Missioncraft SDK class — primary contract surface (Design v4.8 §2.3.1).
 //
-// 16 methods total (v4.x consolidation per Refinement #7 + multi-participant additions per HIGH-R2.2):
+// Method surface:
 // - 5 universal verbs (create / get / list / update / delete) — k8s-shape parameterized by ResourceType
-// - 6 mission-specific verbs (start / apply / complete / abandon / tick / workspace)
-// - 2 multi-participant verbs (join / leave) — v4.0 NEW per HIGH-R2.2
+// - 5 mission-specific verbs (start / complete / abandon / workspace / daemonTickAdvance)
 // - 2 operator-config (configGet / configSet)
 // - 1 static (isPlatformSupported)
-//
-// W3 method-body discipline (per dispatch):
-//   - create / get / list / configGet / configSet / static / update-validation: IMPLEMENTED FULLY
-//   - start / apply / complete / abandon / tick / workspace: throw MissionStateError("not yet implemented; W4")
-//   - join / leave: throw MissionStateError("not yet implemented; W5")
 
 import { randomBytes } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
@@ -1521,88 +1515,10 @@ export class Missioncraft {
     }
   }
 
-  // ─── Multi-participant verbs (W5b slice (i) — runtime impl) ───
-  //
-  // v4.x mc.join SDK method was DELETED at v1.2.0 W7-new slice (ii). v5.0 reader-mission creation
-  // flows are `msn join <writer-mission-id>` (BRANCH-TRACKER) + `msn watch --repo --branch`
-  // (PERSISTENT-TRACKER); both go through `mc.create('mission', ...)` with `readOnly: true` +
-  // reader-flavor fields per W4-new.
-
-  /**
-   * Reader-side disengagement (Design v4.9 §2.4.1.v4 leave-flow; lifecycle 'reading' → 'leaving').
-   *
-   * W5b slice (i): atomic 'leaving' transition + optional workspace cleanup + config-purge on
-   * `--purge-workspace` (terminal-removed semantic per FSM `leave-complete`).
-   *
-   * Steps:
-   *   1. Validate inputs; resolve current-principal
-   *   2. Acquire mission-lock
-   *   3. Atomic-write 'leaving' via _engineMutate (idempotent on already 'leaving')
-   *   4. (--purge-workspace) chmod-up via setReaderWorkspaceWritable + storage.cleanup + unlink config
-   */
-  async leave(idOrName: string, opts?: { purgeWorkspace?: boolean }): Promise<void> {
-    if (!idOrName) {
-      throw new ConfigValidationError("Missioncraft.leave: mission-id is required");
-    }
-    const id = this.resolveMissionRef(idOrName);                           // v1.0.3 bug-64 item 5
-    const { resolveCurrentPrincipal } = await import('./principal-resolution.js');
-    const currentPrincipal = await resolveCurrentPrincipal({
-      constructorPrincipal: this.principal,
-      identity: this.identity,
-    });
-    void currentPrincipal;
-
-    const path = this.missionConfigPath(id);
-    if (!existsSync(path)) {
-      throw new MissionStateError(`Missioncraft.leave: mission '${id}' not found at '${path}'`);
-    }
-
-    // Pre-flight read with role='auto' so writer-state mission produces the read-only-participant
-    // rejection message rather than a parse-validation-fail (HIGH-R2.3 boundary preserved).
-    const preflightContent = await readFile(path, 'utf8');
-    const preflightConfig = parseMissionConfig(preflightContent, path, 'auto');
-    const preflightState = preflightConfig.mission.lifecycleState;
-    if (preflightState !== 'reading' && preflightState !== 'joined' && preflightState !== 'leaving') {
-      throw new MissionStateError(
-        `Missioncraft.leave: lifecycle '${preflightState}' not in [reading, joined, leaving] ` +
-          `(read-only participant per HIGH-R2.3)`,
-      );
-    }
-
-    const missionLock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
-    try {
-      // Step 3: atomic-write 'leaving' (per FSM 'reading' → 'leaving' via leave-begin event)
-      await this._engineMutate(
-        id,
-        (cfg) => ({ ...cfg, mission: { ...cfg.mission, lifecycleState: 'leaving' } }),
-        {
-          validate: (cfg) => {
-            const s = cfg.mission.lifecycleState;
-            if (s === 'leaving') return null;     // idempotent-retry
-            if (s === 'reading') return null;
-            if (s === 'joined') return null;      // recovery-path: leave from transient 'joined' allowed
-            return `leave rejected: lifecycle '${s}' not in [reading, joined, leaving] ` +
-              `(read-only participant per HIGH-R2.3)`;
-          },
-          sourceLabel: `Missioncraft.leave('${id}')`,
-          role: 'reader',
-        },
-      );
-
-      // Step 4: --purge-workspace cleanup (terminal-removed per FSM leave-complete)
-      if (opts?.purgeWorkspace) {
-        const { setReaderWorkspaceWritable } = await import('./reader-workspace-mode.js');
-        const handles = await this.storage.list(id);
-        for (const h of handles) {
-          try { await setReaderWorkspaceWritable(h.path); } catch { /* best-effort */ }
-        }
-        await this.storage.cleanup(id);
-        try { await unlink(path); } catch { /* idempotent */ }
-      }
-    } finally {
-      try { await this.storage.releaseLock(missionLock); } catch { /* idempotent */ }
-    }
-  }
+  // v4.x mc.join + mc.leave SDK methods were DELETED at v1.2.0 W7-new slices (ii) + (iii). v5.0
+  // reader-mission creation goes through `mc.create('mission', { readOnly: true, ... })` per
+  // W4-new; reader-mission disengagement is workspace-cleanup + config-unlink at the operator
+  // level (no SDK verb).
 
   // ─── Operator-config (key-value namespace) ───
 
@@ -1681,7 +1597,7 @@ export class Missioncraft {
    * Resolve a mission ref (id OR human-readable name) to its canonical id.
    *
    * v1.0.3 bug-64 item 5 fix: lifts CLI help-text's `<id|name>` promise into the SDK substrate
-   * so every method taking a mission ref (show/start/abandon/complete/workspace/update/tick/join/leave)
+   * so every method taking a mission ref (show/start/abandon/complete/workspace/update)
    * resolves uniformly. Pre-fix the `.names/<name>.yaml` symlink existed (written by createMission)
    * but no method ever READ it — leading to "mission not found: 'test-readonly'" despite the
    * symlink being in place.

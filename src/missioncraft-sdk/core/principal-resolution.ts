@@ -1,5 +1,6 @@
 // Current-principal resolution helper (Design v4.8 §2.3.1 v4.4 fold — 4-step precedence chain).
-// W5 slice (i) primitive — used by join()/leave() (slice ii) + per-principal config-path resolution.
+// Per-principal config-path resolution. (Originally consumed by mc.join + mc.leave; both deleted
+// at W7-new. Retained for future per-principal use cases.)
 //
 // Precedence (per Design §2.3.1 v4.4):
 //   1. Explicit `principal` arg (highest priority; per-call override)

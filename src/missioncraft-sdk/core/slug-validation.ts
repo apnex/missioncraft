@@ -4,10 +4,10 @@
 // the CLI parse-time check (`grammar/parser.ts:78` validateSlugFormat).
 //
 // Per (c) audit+SDK-defense disposition thread-550 round 6: rejects slugs that would collide
-// with the W6-new hybrid grammar verb-set + namespace-prefix + DNS-pattern rules. Engineer-
-// audit verified: CLI's RESERVED_VERBS already covers all W6-new verbs (create/list/show/start/
-// apply/update/complete/abandon/tick/scope/workspace/config/join/leave/watch/help/cd/shell-init/
-// version/tree); no extension needed for slice (iv) audit.
+// with the hybrid grammar verb-set + namespace-prefix + DNS-pattern rules. CLI's RESERVED_VERBS
+// covers all current verbs (create/list/show/start/update/complete/abandon/scope/workspace/
+// config/join/watch/help/cd/shell-init/version/tree); apply/tick (W6-new slice v) + leave
+// (W7-new slice iii) DROPPED.
 //
 // Reserved-name set is hardcoded here (cross-ref to CLI `arg-spec.ts:RESERVED_NAMES_PROTECTED`).
 // SDK + CLI maintain INDEPENDENT sets to avoid CLI→SDK reverse-dependency. If verb-set evolves,
@@ -26,13 +26,11 @@
  * - Config sub-verbs (get, set)
  */
 const RESERVED_NAMES_PROTECTED_SDK: ReadonlySet<string> = new Set([
-  // Top-level verbs (W6-new hybrid grammar; mirror RESERVED_VERBS in CLI arg-spec.ts)
-  // mission-78 W6-new slice (v): `apply` + `tick` DROPPED entirely (per Design v5.0 §10.6
-  // perfection-grade revisions). Removed from this set so future operator-name 'apply'/'tick'
-  // is accepted at slug-validation. RESERVED_VERBS in CLI arg-spec.ts also no longer includes
-  // these verbs (sync-discipline maintained per cross-ref comment).
+  // Top-level verbs (mirror RESERVED_VERBS in CLI arg-spec.ts).
+  // W6-new slice (v) DROPPED `apply` + `tick`; W7-new slice (iii) DROPPED `leave`.
+  // Sync-discipline maintained per cross-ref comment.
   'create', 'list', 'show', 'start', 'update', 'complete', 'abandon',
-  'scope', 'workspace', 'config', 'join', 'leave', 'watch', 'help',
+  'scope', 'workspace', 'config', 'join', 'watch', 'help',
   'cd', 'shell-init', 'version', 'tree', '--help', '--version',
   // Update sub-actions
   'repo-add', 'repo-remove', 'name', 'description', 'hub-id', 'scope-id',

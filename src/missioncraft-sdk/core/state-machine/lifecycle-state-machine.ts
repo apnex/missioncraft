@@ -17,9 +17,7 @@ export type LifecycleEvent =
   // Reader-side (v4.0 NEW per HIGH-R2.3)
   | 'join-begin'               // (new) → joined (transient; reader 7-step Step 3.5 atomic-write per v4.5 MEDIUM-R6.3)
   | 'join-complete'            // joined → reading (atomic at reader 7-step Step 7 state-yaml-persist)
-  | 'writer-terminated'        // reading → readonly-completed (cascade per HIGH-R2.3; refs/tags/missioncraft/<id>/terminated detection)
-  | 'leave-begin'              // reading → leaving (transient; reader-side disengage)
-  | 'leave-complete';          // leaving → terminal-removed
+  | 'writer-terminated';       // reading → readonly-completed (cascade per HIGH-R2.3; refs/tags/missioncraft/<id>/terminated detection)
 
 /**
  * Compute the next state given current + event. Returns null if transition is invalid.
@@ -58,12 +56,6 @@ export function nextState(
     case 'writer-terminated':
       if (current === 'reading') return 'readonly-completed';
       return null;
-    case 'leave-begin':
-      if (current === 'reading') return 'leaving';
-      return null;
-    case 'leave-complete':
-      if (current === 'leaving') return null;     // terminal-removed (no persistent state)
-      return null;
     default: {
       const _exhaustive: never = event;
       void _exhaustive;
@@ -85,5 +77,5 @@ export function isTerminal(state: MissionStatePhase): boolean {
  * Per Design v4.8 §2.4.1 — `started` (9-step writer-side) and `joined` (7-step reader-side) are transient.
  */
 export function isTransient(state: MissionStatePhase): boolean {
-  return state === 'started' || state === 'joined' || state === 'leaving';
+  return state === 'started' || state === 'joined';
 }

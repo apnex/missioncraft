@@ -2,26 +2,22 @@
 // Reference impl for Rule 6 post-dispatch arg-count validation.
 // Strict-1.0 commits this normalized table; any v1.x verb additions are additive.
 
-/** Top-level reserved verbs at v4.0 — Rule 1 (v4.0 fold per idea-265 multi-participant: adds `join` + `leave` reader-side verbs).
- * mission-78 W4-new (Design v5.0 §2 row 4): adds `watch` as PERSISTENT-TRACKER reader verb;
- * `join` semantic repurposed in W4-new slice (iii) (BRANCH-TRACKER reader; coupled lifetime). */
+/** Top-level reserved verbs — Rule 1.
+ * `join` is BRANCH-TRACKER reader (W4-new slice (iii)); `watch` is PERSISTENT-TRACKER reader
+ * (W4-new). `apply`/`tick` DROPPED at W6-new slice (v); `leave` DROPPED at W7-new slice (iii). */
 export const RESERVED_VERBS = [
   'create',
   'list',
   'show',
   'start',
-  // mission-78 W6-new slice (v): 'apply' DROPPED (overlap with `msn create -f`)
   'update',
   'complete',
   'abandon',
-  // mission-78 W6-new slice (v): 'tick' DROPPED (was unimplemented; documentation-lie risk;
-  // W5-new pushCadence/pullCadence subsumes the cadence-tick semantic at substrate-level)
   'scope',
   'workspace',
   'config',
-  'join',         // v4.0 NEW per HIGH-R2.2; mission-78 W4-new repurposes as BRANCH-TRACKER reader
-  'leave',        // v4.0 NEW per HIGH-R2.2; W7-new "v4.x carry-forward surface cleanup" deferral
-  'watch',        // mission-78 W4-new (Design v5.0 §2 row 4): PERSISTENT-TRACKER reader
+  'join',         // BRANCH-TRACKER reader (W4-new slice (iii))
+  'watch',        // PERSISTENT-TRACKER reader (W4-new)
   'help',         // v1.0.3 bug-64 item 8: primary help-verb; `--help` alias retained
   'cd',           // v1.0.3 idea-269: operator quick-jump via bash-fn wrapper (msn shell-init)
   'shell-init',   // v1.0.3 idea-269: emits shell-function blob for bash/zsh/fish
@@ -370,22 +366,7 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
       { cmd: 'msn join msn-deadbeef', comment: 'create reader-mission tracking writer msn-deadbeef' },
       { cmd: 'msn join alpha --name alpha-reader', comment: 'named reader by writer-mission name' },
     ],
-    seeAlso: ['watch', 'leave', 'workspace'],
-  },
-  leave: {
-    required: 1,                 // <id|name>
-    optional: 0,
-    flags: [
-      { name: '--purge-workspace', takesValue: false, description: 'Remove workspace (default: preserve for forensic-history)' },
-    ],
-    shortDesc: 'Leave a mission as a reader-participant',
-    longDesc: 'Reader-side disengagement: chmod-up workspace, optionally destroy it (--purge-workspace), unlink mission-config. Transitions lifecycle "reading" → "leaving" → terminal-removed.',
-    argLabels: [{ label: '<id|name>', description: 'Mission identifier or name' }],
-    examples: [
-      { cmd: 'msn leave alpha', comment: 'disengage; preserve workspace for inspection' },
-      { cmd: 'msn leave alpha --purge-workspace', comment: 'disengage + remove workspace' },
-    ],
-    seeAlso: ['join'],
+    seeAlso: ['watch', 'workspace'],
   },
   // ─── mission-78 W4-new (Design v5.0 §2 row 4) — PERSISTENT-TRACKER reader-mission verb ───
   watch: {
@@ -404,7 +385,7 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
       { cmd: 'msn watch --repo https://github.com/x/y.git --branch main', comment: 'persistently track upstream main' },
       { cmd: 'msn watch --repo ... --branch develop --name dev-watch', comment: 'named watcher mission' },
     ],
-    seeAlso: ['join', 'leave', 'start'],
+    seeAlso: ['join', 'start'],
   },
   // ─── Scope namespace ───
   scope: {

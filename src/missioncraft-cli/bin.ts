@@ -72,9 +72,6 @@ Mission update (verb-first preserved through W6-new for sub-action shape):
   msn update <id|name> tags-remove <key>
   (id-first form also works: \`msn <id> update <sub-action> [args]\`)
 
-Reader-mission auxiliary (v4.x carry-forward through W7-new):
-  msn leave <id|name> [--purge-workspace]      Reader-side disengagement
-
 Scope namespace:
   msn scope create [--name <slug>] [--description <text>] [--repo <url>...]
   msn scope list [--include-references] [--output json|yaml]
@@ -344,11 +341,8 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
 
     // ─── (3) MISSION-TARGETED VERBS — id-first under W6-new (slice ii parser-changes);
     //         currently verb-first under v1.x (positional[0] = mission-id) ───
-    // mission-78 W6-new slice (v) (Design v5.0 §10.6 perfection-grade revisions): `apply` + `tick`
-    // DROPPED entirely (apply: overlap with `create -f`; tick: was unimplemented + documentation-
-    // lie; W5-new pushCadence/pullCadence subsume the cadence-tick semantic). `resume` already
-    // merged into idempotent start at slice (iii). `leave` PRESERVED at this slice (v4.x carry-
-    // forward; deferred to W7-new "v4.x carry-forward surface cleanup" batch).
+    // mission-78 W6-new slice (v): `apply` + `tick` DROPPED entirely; W7-new slice (iii):
+    // `leave` DROPPED entirely (v4.x carry-forward cleanup).
     case 'show':
     case 'update':
     case 'start':
@@ -356,7 +350,6 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
     case 'abandon':
     case 'workspace':
     case 'cd':
-    case 'leave':
       await dispatchMissionTargeted(mc, parsed, format);
       return;
     case 'shell-init': {
@@ -624,7 +617,8 @@ function readDaemonPid(workspaceRoot: string, missionId: string): number | undef
  *
  * Verb coverage:
  * - W6-new keepers: `start` / `complete` / `abandon` / `show` / `workspace` / `cd` / `update`
- * - DROPPED at slice (v): `apply` (overlap with `create -f`), `tick` (unimplemented), `leave` (v4.x)
+ * - DROPPED at slice (v): `apply` (overlap with `create -f`), `tick` (unimplemented)
+ * - DROPPED at slice (iii) of W7-new: `leave` (v4.x carry-forward cleanup)
  * - W6-new `resume` (was unimplemented) merged into idempotent `start`
  *
  * `format` arg added to signature (was missing from invokeRuntimeDeferred) — show + update need it.
@@ -719,9 +713,6 @@ async function dispatchMissionTargeted(mc: Missioncraft, parsed: ParsedCommand, 
       );
       return;
     }
-    case 'leave':
-      await mc.leave(parsed.positionals[0], parsed.flags.has('--purge-workspace') ? { purgeWorkspace: true } : undefined);
-      return;
     default:
       throw new ConfigValidationError(`internal: dispatchMissionTargeted missing case for '${parsed.verb}'`);
   }

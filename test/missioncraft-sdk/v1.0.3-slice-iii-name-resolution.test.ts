@@ -100,20 +100,10 @@ describe('v1.0.3 slice (iii) — name-alias resolution audit per bug-64 item 5',
     expect(path).toContain(tempRoot);
   });
 
-  // mc.join SDK was DELETED at W7-new slice (ii). Name-resolution coverage for v5.0 reader-mission
-  // creation is via mc.create('mission', {readOnly: true, sourceMissionId}) per W4-new slice (iii)
-  // `v1.2.0-w4-new-msn-join.test.ts` (specifically `resolves writer-mission by NAME (not just id)`).
-
-  it('mc.leave(<name>) resolves name → id (substrate-bypass via lifecycle requirement)', async () => {
-    const mc = new Missioncraft({ workspaceRoot: tempRoot });
-    await mc.create('mission', { name: 'test-leave', repo: 'file:///tmp/test-repo' });
-
-    // leave() Step 1 requires lifecycle in [reading, joined, leaving]; configured fails — but
-    // the precondition-check is REACHED, proving name was resolved.
-    await expect(mc.leave('test-leave')).rejects.toThrow(
-      /lifecycle 'configured' not in \[reading, joined, leaving\]/,
-    );
-  });
+  // mc.join + mc.leave SDK methods were DELETED at W7-new slices (ii) + (iii). Name-resolution
+  // coverage for v5.0 reader-mission creation is via mc.create('mission', {readOnly: true,
+  // sourceMissionId}) per W4-new slice (iii) `v1.2.0-w4-new-msn-join.test.ts` (specifically
+  // `resolves writer-mission by NAME (not just id)` test case).
 
   it('non-existent name throws MissionStateError (v1.0.4 bug-66 item 8: concise; full diag via MSN_DEBUG)', async () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });

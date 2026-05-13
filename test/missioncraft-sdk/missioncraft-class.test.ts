@@ -262,17 +262,6 @@ describe('Missioncraft SDK class — W3 smoke-tests', () => {
       });
     });
 
-    it('leave() requires id (input-validation gate)', async () => {
-      const mc = new Missioncraft({ workspaceRoot: tempRoot });
-      await expect(mc.leave('')).rejects.toBeInstanceOf(ConfigValidationError);
-    });
-
-    it('leave() rejects non-existent mission with MissionStateError', async () => {
-      const mc = new Missioncraft({ workspaceRoot: tempRoot });
-      await expect(mc.leave('msn-deadbeef')).rejects.toMatchObject({
-        message: expect.stringMatching(/mission 'msn-deadbeef' not found/),
-      });
-    });
   });
 
   describe('configGet / configSet', () => {

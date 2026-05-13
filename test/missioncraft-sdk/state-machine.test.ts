@@ -26,11 +26,6 @@ describe('Lifecycle FSM — W4.1 smoke-tests', () => {
     expect(nextState('reading', 'writer-terminated')).toBe('readonly-completed');
   });
 
-  it('reader-side leave: reading → leaving → terminal-removed (null)', () => {
-    expect(nextState('reading', 'leave-begin')).toBe('leaving');
-    expect(nextState('leaving', 'leave-complete')).toBeNull();      // terminal-removed
-  });
-
   it('rejects illegal transitions (returns null)', () => {
     expect(nextState('completed', 'start-begin')).toBeNull();      // terminal can't start
     expect(nextState('created', 'complete-success')).toBeNull();    // can't skip configured/started
@@ -48,7 +43,6 @@ describe('Lifecycle FSM — W4.1 smoke-tests', () => {
   it('isTransient()', () => {
     expect(isTransient('started')).toBe(true);
     expect(isTransient('joined')).toBe(true);
-    expect(isTransient('leaving')).toBe(true);
     expect(isTransient('configured')).toBe(false);
     expect(isTransient('in-progress')).toBe(false);
   });

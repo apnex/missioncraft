@@ -290,7 +290,8 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
           { label: '<file|url>', description: 'Repo URL (or path to local YAML for advanced upsert)' },
         ],
         examples: [
-          { cmd: 'msn update alpha repo-add https://github.com/x/y.git', comment: 'add a repo to alpha' },
+          { cmd: 'msn update alpha repo-add https://github.com/x/y.git', comment: 'verb-first form (slug-named mission)' },
+          { cmd: 'msn msn-abc12345 update repo-add https://github.com/x/y.git', comment: 'id-first form (W6-new canonical for canonical-id missions)' },
           { cmd: 'msn update alpha repo-add https://github.com/x/y.git --name custom --base develop' },
         ],
       },
@@ -301,6 +302,10 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
           { label: '<id|name>', description: 'Mission identifier or name' },
           { label: '<repo-name>', description: 'Local repo slug to remove' },
         ],
+        examples: [
+          { cmd: 'msn update alpha repo-remove backend', comment: 'verb-first form (slug-named mission)' },
+          { cmd: 'msn msn-abc12345 update repo-remove backend', comment: 'id-first form' },
+        ],
       },
       name: {
         required: 2, optional: 0, flags: [],
@@ -309,6 +314,10 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
           { label: '<id|name>', description: 'Mission identifier or name' },
           { label: '<new-name>', description: 'New human-readable slug' },
         ],
+        examples: [
+          { cmd: 'msn update alpha name beta', comment: 'verb-first form: rename slug alpha → beta' },
+          { cmd: 'msn msn-abc12345 update name beta', comment: 'id-first form: assign slug beta to canonical-id mission' },
+        ],
       },
       description: {
         required: 2, optional: 0, flags: [],
@@ -316,6 +325,10 @@ export const VERB_SPECS: Record<string, VerbArgSpec> = {
         argLabels: [
           { label: '<id|name>', description: 'Mission identifier or name' },
           { label: '<text>', description: 'Description text (quote if multi-word)' },
+        ],
+        examples: [
+          { cmd: 'msn update alpha description "ship feature X"', comment: 'verb-first form (quote multi-word)' },
+          { cmd: 'msn msn-abc12345 update description "ship feature X"', comment: 'id-first form' },
         ],
       },
       'hub-id': {

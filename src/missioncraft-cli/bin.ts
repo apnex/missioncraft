@@ -749,11 +749,26 @@ async function dispatchMissionTargeted(mc: Missioncraft, parsed: ParsedCommand, 
       const opts: { purgeConfig?: boolean; retain?: boolean; onProgress?: typeof progressSink } = { onProgress: progressSink };
       if (parsed.flags.has('--purge-config')) opts.purgeConfig = true;
       if (parsed.flags.has('--retain')) opts.retain = true;
+      // mission-81 slice (i)/(iv): capture pre-state to tailor the success line. A 'created'
+      // mission (never started) has NO workspace and NO daemon — the standard "workspace
+      // removed; daemon stopped" suffix over-claims for the minimal-teardown path. Pre-read is
+      // best-effort: if the mission doesn't exist, mc.abandon surfaces the real error below.
+      let preState: string | undefined;
+      try {
+        preState = (await mc.get('mission', parsed.positionals[0])).lifecycleState;
+      } catch { /* mc.abandon will surface the authoritative not-found / FSM error */ }
       const result = await mc.abandon(parsed.positionals[0], parsed.positionals[1], opts);
       // bug-64 item 7 (v1.0.3 slice iv): emit success-confirmation line on stdout
       const nameSuffix = result.name ? ` ('${result.name}')` : '';
-      const wsSuffix = parsed.flags.has('--retain') ? '; workspace preserved (--retain)' : '; workspace removed';
-      console.log(colors.success(`abandoned mission ${result.id}${nameSuffix}${wsSuffix}; daemon stopped`));
+      if (preState === 'created') {
+        const cfgSuffix = parsed.flags.has('--purge-config') ? '; config removed (--purge-config)' : '';
+        console.log(colors.success(
+          `abandoned mission ${result.id}${nameSuffix} (was never started — no workspace or daemon)${cfgSuffix}`,
+        ));
+      } else {
+        const wsSuffix = parsed.flags.has('--retain') ? '; workspace preserved (--retain)' : '; workspace removed';
+        console.log(colors.success(`abandoned mission ${result.id}${nameSuffix}${wsSuffix}; daemon stopped`));
+      }
       return;
     }
     case 'workspace': {

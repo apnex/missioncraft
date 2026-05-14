@@ -4,6 +4,9 @@
 //         (operator-DX parity with `msn list`); --output json|yaml is the opt-in.
 // bug-87: `msn <id> help` / `msn <id> --help` dumped the full global help — should scope to
 //         the mission-targeted verb level (show/start/complete/abandon/workspace/cd/update).
+// abandon success-line: a `created`-state mission (never started) has no workspace and no
+//         daemon — the CLI success line must not over-claim "workspace removed; daemon stopped"
+//         (architect-scoped into slice (iii); shipped in the slice (iv) commit).
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -116,5 +119,29 @@ describe('mission-81 slice (iii) bug-87 — msn <id> help scopes to mission-targ
     expect(stdout).toMatch(/Realize a configured mission/);
     // NOT the mission-targeted-verb scoped help (bug-87's new surface)
     expect(stdout).not.toMatch(/Verbs operable on a specific mission:/);
+  });
+});
+
+describe('mission-81 — abandon success-line does not over-claim for created-state missions', () => {
+  it('`msn <id> abandon` on a never-started mission omits the workspace/daemon claims', () => {
+    const created = runCli('create', '--name', 'never-started-mission');
+    const id = created.stdout.trim().split('\t')[0];
+
+    const { stdout, status } = runCli(id, 'abandon', 'changed my mind');
+    expect(status).toBe(0);
+    // created-state success line: explicit "never started", NO workspace/daemon over-claim
+    expect(stdout).toMatch(/was never started — no workspace or daemon/);
+    expect(stdout).not.toMatch(/workspace removed/);
+    expect(stdout).not.toMatch(/daemon stopped/);
+  });
+
+  it('`msn <id> abandon --purge-config` on a never-started mission notes config removal', () => {
+    const created = runCli('create', '--name', 'purge-me-mission');
+    const id = created.stdout.trim().split('\t')[0];
+
+    const { stdout, status } = runCli(id, 'abandon', 'gone', '--purge-config');
+    expect(status).toBe(0);
+    expect(stdout).toMatch(/was never started/);
+    expect(stdout).toMatch(/config removed \(--purge-config\)/);
   });
 });

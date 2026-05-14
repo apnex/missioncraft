@@ -671,9 +671,15 @@ export class Missioncraft {
       // default to preserve is invisible to existing operator-paths.
       if (opts.purgeWorkspace) {
         // v1.0.6 bug-71-symmetry: cwd-rug-pull guard when destroying workspace.
+        // mission-81 slice (iv): realpath BOTH sides before the prefix-comparison. On macOS
+        // `process.cwd()` returns the canonical path (/private/var/...) while `join()` on the
+        // mkdtemp-derived workspaceRoot keeps the symlink form (/var/...) — a bare `startsWith`
+        // never matches, so the guard silently no-op'd (the 3-test macos-matrix flake set).
         const workspacePath = join(this.workspaceRoot, 'missions', id);
         try {
-          if (process.cwd().startsWith(workspacePath)) {
+          const realCwd = realpathSync(process.cwd());
+          const realWs = realpathSync(workspacePath);
+          if (realCwd.startsWith(realWs)) {
             process.chdir(join(this.workspaceRoot, 'missions'));
           }
         } catch { /* cwd-resolve failure non-aborting */ }
@@ -1107,9 +1113,14 @@ export class Missioncraft {
         // about to be destroyed, chdir up to the parent first — otherwise `rm -rf workspace/...`
         // pulls the cwd from under us and subsequent code (or operator's shell prompt) breaks.
         // --retain branch is exempt: workspace preserved → no rug-pull risk.
+        // mission-81 slice (iv): realpath BOTH sides — macOS `process.cwd()` is canonical
+        // (/private/var/...) but `join()` on the mkdtemp workspaceRoot keeps the symlink form
+        // (/var/...); a bare `startsWith` never matched on macOS (3-test macos-matrix flake set).
         const workspacePath = join(this.workspaceRoot, 'missions', id);
         try {
-          if (process.cwd().startsWith(workspacePath)) {
+          const realCwd = realpathSync(process.cwd());
+          const realWs = realpathSync(workspacePath);
+          if (realCwd.startsWith(realWs)) {
             process.chdir(join(this.workspaceRoot, 'missions'));
           }
         } catch { /* cwd-resolve failure non-aborting — proceed with cleanup */ }

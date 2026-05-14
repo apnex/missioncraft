@@ -36,18 +36,32 @@ function isAlive(pid: number): boolean {
  *
  * Cross-check that a pid corresponds to the process spawned at the recorded startTime.
  * Uses POSIX-portable `ps -p <pid> -o etimes=` (elapsed seconds since process start).
- * If the process started AFTER our recorded startTime, it's a different process (pid-reuse).
+ * If the process started meaningfully AFTER our recorded startTime, it's a different
+ * process (pid-reuse).
  *
- * Returns true if pid+startTime match the recorded daemon (safe to signal).
+ * mission-81 slice (iv) — directional skew check. The lockfile `startTime` is the daemon's
+ * own JS `Date.now()`, written AFTER Node boot + module-load + main() reaches the write —
+ * which on a loaded CI runner can lag the kernel-level process creation by many seconds.
+ * `ps etimes` reconstructs the *kernel* process-start. So for a legitimate daemon,
+ * `actualStartMs` (kernel) is at-or-before `expectedStartTimeMs` (JS) — `skewMs <= ~0` (plus
+ * up to ~1s of etimes second-rounding). A reused pid, by contrast, belongs to a process born
+ * AFTER the original daemon's recorded startTime → large positive `skewMs`. The previous
+ * symmetric `Math.abs(...) < 5000` false-negatived on macOS CI when Node-boot-lag exceeded 5s,
+ * making `terminateDaemon` bail before SIGTERM → orphaned daemon (3-test macos-matrix flake).
+ *
+ * Returns true if pid+startTime are consistent with the recorded daemon (safe to signal).
  */
+const PID_REUSE_SKEW_THRESHOLD_MS = 30_000;
 async function verifyPidStartTime(pid: number, expectedStartTimeMs: number): Promise<boolean> {
   try {
     const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'etimes=']);
     const elapsedSec = parseInt(stdout.trim(), 10);
     if (Number.isNaN(elapsedSec)) return false;
     const actualStartMs = Date.now() - elapsedSec * 1000;
-    // Allow 5s tolerance for clock-skew + ps-rounding
-    return Math.abs(actualStartMs - expectedStartTimeMs) < 5000;
+    // Directional: negative/small-positive skew = legit Node-boot-lag (any magnitude OK);
+    // large positive skew = process born after the recorded daemon = pid-reuse.
+    const skewMs = actualStartMs - expectedStartTimeMs;
+    return skewMs < PID_REUSE_SKEW_THRESHOLD_MS;
   } catch {
     return false;        // ps failed → process likely dead OR pid-reuse hazard
   }

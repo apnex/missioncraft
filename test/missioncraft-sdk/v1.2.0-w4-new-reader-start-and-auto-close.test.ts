@@ -108,6 +108,39 @@ describe('v1.2.0 W4-new slice (v.b) — reader-start flow accepts lifecycle join
     const state = await mc.get('mission', writer.id);
     expect(state.lifecycleState).toBe('started');
   }, 30_000);
+
+  // mission-80 slice (viii.a) — bug-83 SECOND-PASS: operator-side `mc.abandon(reader-id)` on a
+  // watch-reader at lifecycle 'reading'. Slice (i) bug-83 fix covered the FSM-preflight gate +
+  // entry-parse, but the abandon flow's DOWNSTREAM _engineMutate gates (Step 3 abandonMessage,
+  // Step 6 atomic-advance, recordAbandonProgress, recordAbandonRepoStatus) still rejected 'reading'
+  // AND the reader-workspace 0444/0555 chmod-down made storage.cleanup EACCES. Architect-dogfood
+  // S3 surfaced both.
+  //
+  // This test exercises the FULL operator-abandon flow against a reader-mission at 'reading' via
+  // mc.start (real reader-start: clone + checkout + chmod-down 0444/0555) + daemonTickAdvance
+  // ('started' → 'reading') + mc.abandon. NOTE: mc.start spawns a real daemon-watcher process;
+  // afterEach chmod-up + rm cleans the tree. The abandon flow's terminateDaemon SIGTERMs it.
+  it('PERSISTENT-TRACKER reader: operator mc.abandon() from lifecycle reading → terminal + workspace destroyed', async () => {
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const reader = await mc.create('mission', {
+      repo: bareRepoUrl,
+      readOnly: true,
+      sourceRemote: bareRepoUrl,
+      sourceBranch: 'main',
+    });
+    await mc.start(reader.id);
+    // Advance reader 'started' → 'reading' (daemon-tick role-branch; mission-79 slice (i) fix).
+    await mc.daemonTickAdvance(reader.id);
+    expect((await mc.get('mission', reader.id)).lifecycleState).toBe('reading');
+
+    // Operator-side abandon from 'reading' — must NOT throw on the downstream writer-only gates,
+    // and storage.cleanup must succeed despite the reader-workspace 0444/0555 chmod-down.
+    const result = await mc.abandon(reader.id, 'slice viii.a operator-abandon test');
+
+    expect(result.lifecycleState).toBe('abandoned');                              // SHAPE-1: terminal
+    expect(result.abandonMessage).toBe('slice viii.a operator-abandon test');      // SHAPE-2: message persisted
+    expect(await mc.storage.list(reader.id)).toHaveLength(0);                      // SHAPE-3: workspace destroyed
+  }, 60_000);
 });
 
 describe('v1.2.0 W4-new slice (v.b) — BRANCH-TRACKER auto-close mechanics (dual failure-modes)', () => {

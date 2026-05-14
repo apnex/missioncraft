@@ -971,17 +971,21 @@ export class Missioncraft {
       }
       await this.recordAbandonProgress(id, 'daemon-killed');
 
-      // Step 3: atomic-write abandonMessage (RMW; immutable post-write per v3.3); lifecycle STAYS 'in-progress'
+      // Step 3: atomic-write abandonMessage (RMW; immutable post-write per v3.3); lifecycle STAYS
+      // 'in-progress'/'started' (writer) OR 'reading' (reader) per slice (viii.a) bug-83 second-pass.
       if (initialConfig.mission.abandonMessage === undefined) {
         await this._engineMutate(
           id,
           (config) => ({ ...config, mission: { ...config.mission, abandonMessage: effectiveMessage } }),
           {
             validate: (config) =>
-              config.mission.lifecycleState === 'in-progress' || config.mission.lifecycleState === 'started'
+              config.mission.lifecycleState === 'in-progress'
+              || config.mission.lifecycleState === 'started'
+              || config.mission.lifecycleState === 'reading'
                 ? null
-                : `transition rejected: expected 'in-progress' or 'started' got '${config.mission.lifecycleState}'`,
+                : `transition rejected: expected 'in-progress', 'started', or 'reading' got '${config.mission.lifecycleState}'`,
             sourceLabel: `Missioncraft.abandon.persist-message('${id}')`,
+            role: 'auto',
           },
         );
       } else if (messageWasOverridden) {
@@ -1042,9 +1046,23 @@ export class Missioncraft {
             process.chdir(join(this.workspaceRoot, 'missions'));
           }
         } catch { /* cwd-resolve failure non-aborting — proceed with cleanup */ }
+        // Slice (viii.a) bug-83 second-pass: reader-mission workspaces are chmod'd 0444/0555
+        // (read-only) per setReaderWorkspaceMode at start.ts:381 (slice v.b strict-enforce).
+        // storage.cleanup's `rm -rf` then fails with EACCES on parent-dirs needing write access
+        // for unlink. Chmod-up via setReaderWorkspaceWritable before cleanup so destroy succeeds.
+        if (initialConfig.mission.readOnly === true) {
+          const { setReaderWorkspaceWritable } = await import('./reader-workspace-mode.js');
+          const handles = await this.storage.list(id);
+          for (const handle of handles) {
+            try { await setReaderWorkspaceWritable(handle.path); } catch { /* best-effort; cleanup may still partially succeed */ }
+          }
+        }
         await this.storage.cleanup(id);
       }
-      // Atomic-write lifecycle 'abandoned' + abandonProgress 'workspace-handled' under SAME lock-cycle
+      // Atomic-write lifecycle 'abandoned' + abandonProgress 'workspace-handled' under SAME lock-cycle.
+      // Slice (viii.a) bug-83 second-pass: reader-mission ('reading') also accepted; auto-mode parse
+      // routes reader-YAML through reader-schema validator so the role-tagged readOnly field doesn't
+      // trip writer-schema rejection.
       finalConfig = await this._engineMutate(
         id,
         (config) => ({
@@ -1057,10 +1075,13 @@ export class Missioncraft {
         }),
         {
           validate: (config) =>
-            config.mission.lifecycleState === 'in-progress' || config.mission.lifecycleState === 'started'
+            config.mission.lifecycleState === 'in-progress'
+            || config.mission.lifecycleState === 'started'
+            || config.mission.lifecycleState === 'reading'
               ? null
-              : `step6 atomic-advance rejected: lifecycle '${config.mission.lifecycleState}' not in [in-progress, started]`,
+              : `step6 atomic-advance rejected: lifecycle '${config.mission.lifecycleState}' not in [in-progress, started, reading]`,
           sourceLabel: `Missioncraft.abandon.step6-atomic('${id}')`,
+          role: 'auto',
         },
       );
     } finally {
@@ -1105,10 +1126,13 @@ export class Missioncraft {
       }),
       {
         validate: (config) =>
-          config.mission.lifecycleState === 'in-progress' || config.mission.lifecycleState === 'started'
+          config.mission.lifecycleState === 'in-progress'
+          || config.mission.lifecycleState === 'started'
+          || config.mission.lifecycleState === 'reading'
             ? null
-            : `abandonProgress update rejected: lifecycle '${config.mission.lifecycleState}' not in [in-progress, started]`,
+            : `abandonProgress update rejected: lifecycle '${config.mission.lifecycleState}' not in [in-progress, started, reading]`,
         sourceLabel: `Missioncraft.abandon.abandonProgress=${progress}('${missionId}')`,
+        role: 'auto',
       },
     );
   }
@@ -1130,10 +1154,13 @@ export class Missioncraft {
       }),
       {
         validate: (config) =>
-          config.mission.lifecycleState === 'in-progress' || config.mission.lifecycleState === 'started'
+          config.mission.lifecycleState === 'in-progress'
+          || config.mission.lifecycleState === 'started'
+          || config.mission.lifecycleState === 'reading'
             ? null
-            : `abandonRepoStatus update rejected: lifecycle '${config.mission.lifecycleState}' not in [in-progress, started]`,
+            : `abandonRepoStatus update rejected: lifecycle '${config.mission.lifecycleState}' not in [in-progress, started, reading]`,
         sourceLabel: `Missioncraft.abandon.abandonRepoStatus['${repoName}']('${missionId}')`,
+        role: 'auto',
       },
     );
   }

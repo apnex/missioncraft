@@ -94,7 +94,7 @@ describe('v1.2.0 W5-new Fix #12 — complete() force-push for post-push-cadence 
 
     // SHAPE-1: lifecycle advanced to 'completed' (proves pushWithRetry succeeded)
     expect(result.lifecycleState).toBe('completed');
-    expect(result.publishStatus?.['sandbox']).toBe('pr-opened');
+    expect(result.publishStatus?.['sandbox']).toBe('pushed-no-pr');     // bug-77: pure-git mode terminal-state
 
     // SHAPE-2: upstream mission/<id> tip is now the squashed commit (NOT the daemon-chain version)
     const upstreamTipPostComplete = (

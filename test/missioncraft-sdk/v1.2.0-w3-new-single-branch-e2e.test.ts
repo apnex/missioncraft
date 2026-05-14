@@ -130,7 +130,7 @@ describe('v1.2.0 W3-new — Flow B canonical end-to-end: daemon-commit → missi
     const publishMessage = 'W3-new Flow B canonical e2e test — daemon→mission→publish';
     const result = await mc.complete(handle.id, publishMessage);
     expect(result.lifecycleState).toBe('completed');
-    expect(result.publishStatus?.['sandbox']).toBe('pr-opened');
+    expect(result.publishStatus?.['sandbox']).toBe('pushed-no-pr');     // bug-77: pure-git mode (no RemoteProvider) terminal-state
 
     // ─── CONTENT assertions (necessary-but-not-sufficient per Fix #9 calibration) ───
 

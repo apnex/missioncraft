@@ -7,7 +7,7 @@
 // - 1 static (isPlatformSupported)
 
 import { randomBytes } from 'node:crypto';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { mkdir, readdir, readFile, writeFile, unlink, symlink } from 'node:fs/promises';
 import { homedir, platform } from 'node:os';
 import { basename, join, resolve } from 'node:path';
@@ -344,12 +344,34 @@ export class Missioncraft {
         emit({ phase: 'allocate-workspace', message: `allocating workspace for repo '${repo.name ?? repo.url}'` });
         const workspace = await this.storage.allocate(missionId, repo.url);
         workspaceHandles.push(workspace);
-        emit({ phase: 'clone', message: `cloning ${repo.url}` });
-        await this.gitEngine.clone(workspace, repo.url, {
-          fs: undefined,
-          identity,
-          ...(this.remote !== undefined && { remote: this.remote }),
-        });
+
+        // bug-78: pre-clone workspace-state detection. Prior start failure may have left
+        // partial workspace state (clone done but checkout failed, etc.); clone-into-non-empty
+        // dir would surface as raw git "destination path already exists and is not an empty
+        // directory" error. Three cases:
+        //   - empty / missing → clone normally
+        //   - non-empty + .git/HEAD present → idempotent retry; skip clone, proceed to checkout
+        //   - non-empty + no .git/HEAD → partial state; fail clean with operator-DX hint
+        let needsClone = true;
+        if (existsSync(workspace.path) && readdirSync(workspace.path).length > 0) {
+          if (existsSync(join(workspace.path, '.git', 'HEAD'))) {
+            needsClone = false;
+            emit({ phase: 'clone', message: `workspace at ${workspace.path} already cloned; skipping clone (idempotent retry)` });
+          } else {
+            throw new MissionStateError(
+              `Missioncraft.start: workspace at '${workspace.path}' exists but is not a clean clone (no .git/HEAD); ` +
+              `prior start may have failed mid-flow. Manually \`rm -rf '${workspace.path}'\` then retry.`,
+            );
+          }
+        }
+        if (needsClone) {
+          emit({ phase: 'clone', message: `cloning ${repo.url}` });
+          await this.gitEngine.clone(workspace, repo.url, {
+            fs: undefined,
+            identity,
+            ...(this.remote !== undefined && { remote: this.remote }),
+          });
+        }
         if (isReaderStart) {
           // Reader: checkout source-branch directly (no writer-branch creation; workspace is
           // read-only mirror of source). Post-checkout chmod-down to 0444/0555 per slice (v.b).
@@ -689,8 +711,8 @@ export class Missioncraft {
       const currentContent = await readFile(this.missionConfigPath(missionId), 'utf8');
       const currentConfig = parseMissionConfig(currentContent, this.missionConfigPath(missionId));
       const status = currentConfig.mission.publishStatus?.[repoName];
-      if (status === 'pr-opened') {
-        continue;        // idempotent retry — already published
+      if (status === 'pr-opened' || status === 'pushed-no-pr') {
+        continue;        // idempotent retry — both are terminal publish-loop states
       }
 
       const handles = await this.storage.list(missionId);
@@ -729,7 +751,11 @@ export class Missioncraft {
         await this.pushWithRetry(handle, { branch: headRef, force: true });
         await this.recordPublishStatus(missionId, repoName, 'pushed');
 
-        // Open PR via RemoteProvider (capability-gated; SKIP if not supported per F13)
+        // Open PR via RemoteProvider (capability-gated; SKIP if not supported per F13).
+        // bug-77: terminal publish-status reflects whether PR was actually opened — pure-git
+        // mode (no remote OR no PR-capability) lands at 'pushed-no-pr'; PR-mode lands at
+        // 'pr-opened'. `msn show` operator-DX no longer mis-reports 'pr-opened' on push-only
+        // missions. Both are terminal states for the publish loop (idempotent-retry skip above).
         if (this.remote && this.remote.capabilities.supportsPullRequests) {
           const pr = await this.remote.openPullRequest(repo.url, {
             head: headRef,
@@ -738,9 +764,10 @@ export class Missioncraft {
             body: `Automated mission-publish for ${missionId}`,
           });
           await this.recordPublishedPR(missionId, repoName, pr.url);
+          await this.recordPublishStatus(missionId, repoName, 'pr-opened');
+        } else {
+          await this.recordPublishStatus(missionId, repoName, 'pushed-no-pr');
         }
-        // Mark pr-opened regardless of capabilities (push-only mode also marks per spec line 1717)
-        await this.recordPublishStatus(missionId, repoName, 'pr-opened');
       } catch (err) {
         await this.recordPublishStatus(missionId, repoName, 'failed');
         throw err;        // Re-throw; partial-state preserved for idempotent retry
@@ -787,7 +814,7 @@ export class Missioncraft {
   private async recordPublishStatus(
     missionId: string,
     repoName: string,
-    status: 'pending' | 'squashed' | 'pushed' | 'pr-opened' | 'failed',
+    status: 'pending' | 'squashed' | 'pushed' | 'pushed-no-pr' | 'pr-opened' | 'failed',
   ): Promise<void> {
     await this._engineMutate(
       missionId,

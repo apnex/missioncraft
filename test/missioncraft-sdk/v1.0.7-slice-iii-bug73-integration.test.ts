@@ -11,7 +11,8 @@
 //
 // Uses node-git-server HTTP fixture (proven W6 pattern); no RemoteProvider configured so
 // complete()'s `if (this.remote && supportsPullRequests)` branch is skipped — publish-loop
-// pushes wip → marks 'pr-opened' status without opening PR.
+// pushes wip → marks 'pushed-no-pr' status (bug-77 fix: distinguishes pure-git mode from
+// PR-mode at status level so `msn show` doesn't mis-report 'pr-opened' on push-only missions).
 
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
@@ -146,7 +147,7 @@ describe('v1.0.7 slice (iii) — bug-73 full-lifecycle integration (scope-bound 
 
     expect(result.lifecycleState).toBe('completed');
     expect(result.publishMessage).toBe('integration-test publish');
-    expect(result.publishStatus?.['sandbox']).toBe('pr-opened');           // no RemoteProvider → marks pr-opened post-push
+    expect(result.publishStatus?.['sandbox']).toBe('pushed-no-pr');         // bug-77: no RemoteProvider → terminal pushed-no-pr (was: 'pr-opened')
   }, 60_000);
 
   it('scope-bound mission: scope create → mission --scope → start → daemon-tick → abandon-success', async () => {
@@ -185,6 +186,6 @@ describe('v1.0.7 slice (iii) — bug-73 full-lifecycle integration (scope-bound 
     const result = await mc.complete(mission.id, 'direct-bind publish');
 
     expect(result.lifecycleState).toBe('completed');
-    expect(result.publishStatus?.['sandbox']).toBe('pr-opened');
+    expect(result.publishStatus?.['sandbox']).toBe('pushed-no-pr');         // bug-77: pure-git mode terminal-state
   }, 60_000);
 });

@@ -119,7 +119,7 @@ export interface MissionState {
   /** v3.5 fold per MEDIUM-R5.2 — per-repo abandon-cleanup state; granular operator-visibility */
   readonly abandonRepoStatus?: Record<string, 'pending' | 'cleaned' | 'failed'>;
   /** v3.1 fold per MEDIUM-R1.9 — per-repo publish-state during/after `complete` execution; idempotent-retry surface */
-  readonly publishStatus?: Record<string, 'pending' | 'squashed' | 'pushed' | 'pr-opened' | 'failed'>;
+  readonly publishStatus?: Record<string, 'pending' | 'squashed' | 'pushed' | 'pushed-no-pr' | 'pr-opened' | 'failed'>;
   /** v3.1 fold — per-repo PR URLs after successful complete-publish-flow */
   readonly publishedPRs?: readonly { readonly repoName: string; readonly prUrl: string }[];
   /** v1.7 fold per MEDIUM-R6.3 — populated ONLY when workspace exists on-disk (state-gated; see spec for full lifecycle) */
@@ -170,7 +170,7 @@ export interface MissionConfig {
     // Persisted in YAML; written by complete()/abandon() flows; read for idempotent retry semantics.
     readonly publishMessage?: string;                     // immutable post-first-complete per v3.2 MEDIUM-R2.6
     readonly abandonMessage?: string;                     // immutable post-first-abandon per v3.3 fold
-    readonly publishStatus?: Record<string, 'pending' | 'squashed' | 'pushed' | 'pr-opened' | 'failed'>;
+    readonly publishStatus?: Record<string, 'pending' | 'squashed' | 'pushed' | 'pushed-no-pr' | 'pr-opened' | 'failed'>;
     readonly publishedPRs?: readonly { readonly repoName: string; readonly prUrl: string }[];
     readonly abandonProgress?:
       | 'tick-fired'

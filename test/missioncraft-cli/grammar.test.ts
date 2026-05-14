@@ -232,4 +232,47 @@ describe('CLI grammar parser — Rules 1-7 — W3 smoke-tests', () => {
   it('rejects unknown flag', () => {
     expect(() => parse(['list', '--nonexistent-flag'])).toThrow(/unknown flag/);
   });
+
+  describe('mission-80 bug-84 — repeatable flags accumulate to array', () => {
+    it('mission create --repo X --repo Y → flags.get("--repo") returns string[]', () => {
+      const result = parse(['create', '--repo', 'file:///tmp/a', '--repo', 'file:///tmp/b']);
+      expect(result.flags.get('--repo')).toEqual(['file:///tmp/a', 'file:///tmp/b']);
+    });
+
+    it('mission create --repo X (single) returns string (back-compat)', () => {
+      const result = parse(['create', '--repo', 'file:///tmp/only']);
+      expect(result.flags.get('--repo')).toBe('file:///tmp/only');
+    });
+
+    it('mission create --repo X --repo Y --repo Z (3+) returns full array', () => {
+      const result = parse(['create', '--repo', 'A', '--repo', 'B', '--repo', 'C']);
+      expect(result.flags.get('--repo')).toEqual(['A', 'B', 'C']);
+    });
+
+    it('scope create --repo X --repo Y → flags.get("--repo") returns string[]', () => {
+      const result = parse(['scope', 'create', '--repo', 'file:///tmp/a', '--repo', 'file:///tmp/b']);
+      expect(result.flags.get('--repo')).toEqual(['file:///tmp/a', 'file:///tmp/b']);
+    });
+
+    it('non-repeatable --name flag overwrites on repeat (existing behavior)', () => {
+      const result = parse(['create', '--name', 'first', '--name', 'second']);
+      expect(result.flags.get('--name')).toBe('second');                           // single string, overwrite kept
+    });
+  });
+
+  describe('mission-80 bug-81 — scope-update sub-action dispatcher routing', () => {
+    it('scope update <id> name <new-name> parses with subNamespacePath = ["scope", "update", "name"]', () => {
+      const result = parse(['scope', 'update', 'scp-deadbeef', 'name', 'new-name']);
+      expect(result.verb).toBe('scope');
+      expect(result.subAction).toBe('name');                                      // deepest
+      expect(result.subNamespacePath).toEqual(['scope', 'update', 'name']);       // routing surface
+      expect(result.positionals).toEqual(['scp-deadbeef', 'new-name']);
+    });
+
+    it('scope update <id> repo-add <url> parses with subNamespacePath leaf "repo-add"', () => {
+      const result = parse(['scope', 'update', 'scp-deadbeef', 'repo-add', 'file:///tmp/r']);
+      expect(result.subAction).toBe('repo-add');
+      expect(result.subNamespacePath).toEqual(['scope', 'update', 'repo-add']);
+    });
+  });
 });

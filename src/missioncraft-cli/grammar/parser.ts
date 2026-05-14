@@ -29,8 +29,9 @@ export interface ParsedCommand {
   readonly subAction?: string;
   /** Positionals after verb + sub-action(s) consumed. */
   readonly positionals: readonly string[];
-  /** Verb-specific flags. */
-  readonly flags: ReadonlyMap<string, string | boolean>;
+  /** Verb-specific flags. Values are: `string` (single occurrence), `string[]` (repeatable
+   *  flag with 2+ occurrences — bug-84), `boolean` (no-value flag). */
+  readonly flags: ReadonlyMap<string, string | string[] | boolean>;
   /** Global flags (apply uniformly across verbs). */
   readonly globalFlags: ReadonlyMap<string, string | boolean>;
   /** Substrate-coordinate (Rule 7) when first positional contains ':'. */
@@ -120,7 +121,7 @@ export function validateSlugFormat(slug: string): string | undefined {
 
 interface TokenizeResult {
   readonly positionals: string[];
-  readonly flags: Map<string, string | boolean>;
+  readonly flags: Map<string, string | string[] | boolean>;
   readonly globalFlags: Map<string, string | boolean>;
 }
 
@@ -132,9 +133,13 @@ const GLOBAL_FLAG_SPEC = new Map(GLOBAL_FLAGS.map((f) => [f.name, f] as const));
  * Two-pass: first pass collects all flags/positionals; second-pass classifier separates global vs verb-specific
  * once verb-context is known (caller passes acceptableVerbFlags set after Rule 1 dispatch).
  */
-function tokenize(argv: readonly string[], acceptableVerbFlags: Set<string>): TokenizeResult {
+function tokenize(
+  argv: readonly string[],
+  acceptableVerbFlags: Set<string>,
+  repeatableVerbFlags: Set<string>,
+): TokenizeResult {
   const positionals: string[] = [];
-  const flags = new Map<string, string | boolean>();
+  const flags = new Map<string, string | string[] | boolean>();
   const globalFlags = new Map<string, string | boolean>();
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
@@ -153,8 +158,23 @@ function tokenize(argv: readonly string[], acceptableVerbFlags: Set<string>): To
         : next !== undefined && !next.startsWith('-');
       if (takesValue && next !== undefined && !next.startsWith('-')) {
         const value = next;
-        if (isGlobal) globalFlags.set(token, value);
-        else flags.set(token, value);
+        if (isGlobal) {
+          globalFlags.set(token, value);
+        } else if (repeatableVerbFlags.has(token)) {
+          // bug-84: repeatable arg-spec flags accumulate to array on repeat
+          // (vs. silent overwrite). First occurrence stays as string for back-compat;
+          // second+ occurrence promotes to string[].
+          const existing = flags.get(token);
+          if (Array.isArray(existing)) {
+            flags.set(token, [...existing, value]);
+          } else if (typeof existing === 'string') {
+            flags.set(token, [existing, value]);
+          } else {
+            flags.set(token, value);
+          }
+        } else {
+          flags.set(token, value);
+        }
         i++;                                                   // skip consumed value
       } else {
         if (isGlobal) globalFlags.set(token, true);
@@ -183,7 +203,24 @@ function flagNameSet(spec: VerbArgSpec): Set<string> {
   return set;
 }
 
-function validateArgCount(spec: VerbArgSpec, positionals: readonly string[], flags: ReadonlyMap<string, string | boolean>, contextPath: readonly string[]): void {
+/** bug-84: collect names of all flags marked `repeatable: true` across the verb-spec tree. */
+function repeatableFlagNameSet(spec: VerbArgSpec): Set<string> {
+  const set = new Set<string>();
+  for (const f of spec.flags) if (f.repeatable) set.add(f.name);
+  if (spec.subActions) {
+    for (const sub of Object.values(spec.subActions)) {
+      for (const f of sub.flags) if (f.repeatable) set.add(f.name);
+      if (sub.subActions) {
+        for (const subSub of Object.values(sub.subActions)) {
+          for (const f of subSub.flags) if (f.repeatable) set.add(f.name);
+        }
+      }
+    }
+  }
+  return set;
+}
+
+function validateArgCount(spec: VerbArgSpec, positionals: readonly string[], flags: ReadonlyMap<string, string | string[] | boolean>, contextPath: readonly string[]): void {
   // disjunctive arg-shape (v1.6 fold per MEDIUM-R5.4)
   if (spec.disjunctive) {
     const flagPresent = flags.has(spec.disjunctive.flagName);
@@ -400,13 +437,14 @@ export function parse(argv: readonly string[]): ParsedCommand {
   }
 
   const acceptableFlags = flagNameSet(verbSpec);
+  const repeatableFlags = repeatableFlagNameSet(verbSpec);
   // Under id-first form: tokenize the shifted argv (effectiveArgv.slice(1)) so the missionRef
   // isn't redundantly consumed as a positional. The missionRef will be PREPENDED to positionals
   // post-tokenize so existing per-verb dispatch logic (which reads positionals[0] as mission-id)
   // continues working unchanged. missionRef field is set for slice (iv) slug-validation +
   // future-state transparency.
   const tokenizeArgv = effectiveArgv.slice(1);
-  const { positionals: tokenizedPositionals, flags, globalFlags } = tokenize(tokenizeArgv, acceptableFlags);
+  const { positionals: tokenizedPositionals, flags, globalFlags } = tokenize(tokenizeArgv, acceptableFlags, repeatableFlags);
   const rawPositionals: string[] = missionRefOverride !== undefined
     ? [missionRefOverride, ...tokenizedPositionals]
     : tokenizedPositionals;

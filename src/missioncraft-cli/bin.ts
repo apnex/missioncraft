@@ -233,9 +233,8 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
     // (race against concurrent CLI invocations) per architect-disposition idempotent-flag.
     case 'create': {
       // v1.0.5 bug-67 item 4: validate --repo URL via `new URL(...)` parse
-      if (parsed.flags.has('--repo')) {
-        validateRepoUrl(String(parsed.flags.get('--repo')));
-      }
+      // bug-84: readRepoFlag returns string | string[] | undefined (repeatable-aware)
+      const repo = readRepoFlag(parsed);
       // v1.0.6 bug-70: --scope and --repo are mutually exclusive on `msn create`. Scope acts as the
       // repo-template; combining with --repo yields ambiguous attach-semantics (replace vs. append).
       if (parsed.flags.has('--scope') && parsed.flags.has('--repo')) {
@@ -245,7 +244,7 @@ async function dispatch(mc: Missioncraft, parsed: ParsedCommand, format: OutputF
       }
       const handle = await mc.create('mission', {
         ...(parsed.flags.has('--name') && { name: String(parsed.flags.get('--name')) }),
-        ...(parsed.flags.has('--repo') && { repo: String(parsed.flags.get('--repo')) }),
+        ...(repo !== undefined && { repo }),
         ...(parsed.flags.has('--scope') && { scope: String(parsed.flags.get('--scope')) }),
       });
       if (parsed.flags.has('--start')) {
@@ -486,15 +485,20 @@ function buildMissionMutation(parsed: ParsedCommand): MissionMutation {
 }
 
 async function dispatchScope(mc: Missioncraft, parsed: ParsedCommand, format: OutputFormat): Promise<void> {
-  switch (parsed.subAction) {
+  // bug-81: parser overwrites `parsed.subAction` to the level-3 inner sub-action (e.g.,
+  // 'name', 'description') for `msn scope update <id> <sub-action>`, which made every
+  // `scope update X` invocation fall into the default case below. Use subNamespacePath[1]
+  // for the level-2 sub-verb routing; buildScopeMutation continues reading parsed.subAction
+  // for the level-3 inner.
+  const scopeSubVerb = parsed.subNamespacePath[1];
+  switch (scopeSubVerb) {
     case 'create': {
-      if (parsed.flags.has('--repo')) {
-        validateRepoUrl(String(parsed.flags.get('--repo')));                  // v1.0.5 bug-67 item 4
-      }
+      // bug-84: readRepoFlag returns string | string[] | undefined (repeatable-aware)
+      const repo = readRepoFlag(parsed);
       const handle = await mc.create('scope', {
         ...(parsed.flags.has('--name') && { name: String(parsed.flags.get('--name')) }),
         ...(parsed.flags.has('--description') && { description: String(parsed.flags.get('--description')) }),
-        ...(parsed.flags.has('--repo') && { repo: String(parsed.flags.get('--repo')) }),
+        ...(repo !== undefined && { repo }),
       });
       console.log(format === 'text' ? handle.name ? `${handle.id}\t${handle.name}` : handle.id : formatValue(handle, format));
       return;
@@ -526,7 +530,7 @@ async function dispatchScope(mc: Missioncraft, parsed: ParsedCommand, format: Ou
       return;
     }
     default:
-      throw new ConfigValidationError(`internal: unknown 'scope' sub-verb '${parsed.subAction}'`);
+      throw new ConfigValidationError(`internal: unknown 'scope' sub-verb '${scopeSubVerb}'`);
   }
 }
 
@@ -581,6 +585,23 @@ function validateRepoUrl(url: string): void {
       `'--repo ${url}' is not a parseable URL (https://, ssh://, git://, file://)`,
     );
   }
+}
+
+/**
+ * bug-84: read --repo flag values, supporting repeatable form.
+ * Returns string for single occurrence, string[] for 2+, undefined when absent.
+ * Each URL validated via `validateRepoUrl`.
+ */
+function readRepoFlag(parsed: ParsedCommand): string | string[] | undefined {
+  if (!parsed.flags.has('--repo')) return undefined;
+  const raw = parsed.flags.get('--repo');
+  if (Array.isArray(raw)) {
+    for (const url of raw) validateRepoUrl(url);
+    return raw;
+  }
+  const single = String(raw);
+  validateRepoUrl(single);
+  return single;
 }
 
 /**

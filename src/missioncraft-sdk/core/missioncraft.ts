@@ -132,8 +132,15 @@ export class Missioncraft {
   constructor(config: Partial<MissioncraftConfig> = {}) {
     this.identity = config.identity ?? instantiateProvider('identity', 'local-git-config');
     this.approval = config.approval ?? instantiateProvider('approval', 'trust-all');
+    // mission-80 slice (vii): workspaceRoot precedence chain (matches LocalFilesystemStorage):
+    //   1. config.workspaceRoot (explicit caller param; CLI's --workspace-root flag lands here)
+    //   2. process.env.MSN_WORKSPACE_ROOT (env-var; persistent operator-shell preference)
+    //   3. ~/.missioncraft (default)
+    const envRoot = process.env.MSN_WORKSPACE_ROOT;
     this.workspaceRoot = resolve(
-      (config.workspaceRoot ?? join(homedir(), '.missioncraft')).replace(/^~(?=$|\/|\\)/, homedir()),
+      (config.workspaceRoot
+        ?? (envRoot !== undefined && envRoot !== '' ? envRoot : join(homedir(), '.missioncraft'))
+      ).replace(/^~(?=$|\/|\\)/, homedir()),
     );
     this.storage = config.storage ?? instantiateProvider('storage', 'local-filesystem', { workspaceRoot: this.workspaceRoot });
     this.gitEngine = config.gitEngine ?? instantiateProvider('gitEngine', 'native-git');

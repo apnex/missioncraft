@@ -91,7 +91,16 @@ export class LocalFilesystemStorage implements StorageProvider {
   private readonly workspaceRoot: string;
 
   constructor(options: LocalFilesystemStorageOptions = {}) {
-    const root = options.workspaceRoot ?? join(homedir(), '.missioncraft');
+    // mission-80 slice (vii): workspaceRoot precedence chain:
+    //   1. options.workspaceRoot (explicit caller param; CLI's --workspace-root flag lands here)
+    //   2. process.env.MSN_WORKSPACE_ROOT (env-var; persistent operator-shell preference)
+    //   3. ~/.missioncraft (default)
+    // Allows operators to set MSN_WORKSPACE_ROOT once in their shell rc-file rather than
+    // passing --workspace-root on every CLI invocation. Empty-string env-var treated as unset
+    // (matches POSIX convention; avoids resolving to '' silently).
+    const envRoot = process.env.MSN_WORKSPACE_ROOT;
+    const root = options.workspaceRoot
+      ?? (envRoot !== undefined && envRoot !== '' ? envRoot : join(homedir(), '.missioncraft'));
     this.workspaceRoot = resolve(root.replace(/^~(?=$|\/|\\)/, homedir()));
   }
 

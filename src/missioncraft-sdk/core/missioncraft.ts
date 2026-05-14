@@ -914,25 +914,92 @@ export class Missioncraft {
     // need reader-schema validation, not writer-default schema.
     const initialConfig = parseMissionConfig(initialContent, path, 'auto');
     const currentState = initialConfig.mission.lifecycleState;
-    // Accept writer-class ('in-progress', 'started') AND reader-class ('reading', 'started') states.
-    // 'started' transient is shared per W8-new slice (viii.a) v2 READER_STATES extension; 'reading'
-    // is the reader-mission steady-state per mission-79 slice (i) daemonTickAdvance role-branch fix.
+    // Accept writer-class ('in-progress', 'started'), reader-class ('reading', 'started'), AND
+    // pre-start ('created') states. 'started' transient is shared per W8-new slice (viii.a) v2
+    // READER_STATES extension; 'reading' is the reader-mission steady-state per mission-79 slice (i)
+    // daemonTickAdvance role-branch fix; 'created' is the pre-start state per mission-81 slice (i)
+    // bug-85 fix (abandon-from-created minimal-teardown branch below).
     if (
+      currentState !== 'created' &&
       currentState !== 'in-progress' &&
       currentState !== 'started' &&
       currentState !== 'reading'
     ) {
       throw new MissionStateError(
-        `Missioncraft.abandon: requires lifecycle 'in-progress', 'started', or 'reading' (current: '${currentState}')`,
+        `Missioncraft.abandon: requires lifecycle 'created', 'in-progress', 'started', or 'reading' (current: '${currentState}')`,
       );
     }
 
     const emit = opts.onProgress ?? ((): void => undefined);               // v1.0.5 idea-273
-    emit({ phase: 'final-tick', message: 'flushing final wip-commit + setting abandon-flag' });
 
     // abandonMessage immutability per v3.3 fold + symmetric with publishMessage
     const effectiveMessage = initialConfig.mission.abandonMessage ?? message;
     const messageWasOverridden = initialConfig.mission.abandonMessage !== undefined && initialConfig.mission.abandonMessage !== message;
+
+    // mission-81 slice (i) bug-85: abandon-from-'created' minimal-teardown branch.
+    // A 'created' mission has ONLY a config YAML + (maybe) a .names symlink — NO workspace,
+    // NO daemon, NO mission-lock from start(), NO upstream branches, NO repo-locks. The full
+    // teardown flow below (lock-inheritance → daemon-flush → SIGTERM → branch-cleanup →
+    // workspace-destroy) is entirely inapplicable; in particular the inspectLocks() inheritance
+    // gate would reject with "mission-lock absent" since start() was never called. Branch to a
+    // minimal path: acquire a fresh mission-lock, atomically write abandonMessage + advance
+    // lifecycle 'created' → 'abandoned', then (if --purge-config) remove config + symlink.
+    // Semantically uniform with abandon-from-started — produces an 'abandoned' terminal record;
+    // --purge-config is the universal opt-in for full removal. The roadmapped `msn delete` verb
+    // stays the distinct "remove without leaving a tombstone" surface (engineer-judgment
+    // disposition surfaced on thread-558).
+    if (currentState === 'created') {
+      emit({ phase: 'final-tick', message: 'created-state mission — minimal teardown (no workspace/daemon/branches)' });
+      const createdLock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
+      let createdFinalConfig: MissionConfig;
+      try {
+        createdFinalConfig = await this._engineMutate(
+          id,
+          (config) => ({
+            ...config,
+            mission: {
+              ...config.mission,
+              ...(config.mission.abandonMessage === undefined && { abandonMessage: effectiveMessage }),
+              lifecycleState: 'abandoned',
+              abandonProgress: 'workspace-handled',
+            },
+          }),
+          {
+            validate: (config) =>
+              config.mission.lifecycleState === 'created'
+                ? null
+                : `abandon-from-created rejected: lifecycle '${config.mission.lifecycleState}' is not 'created'`,
+            sourceLabel: `Missioncraft.abandon.created-minimal('${id}')`,
+            role: 'auto',
+          },
+        );
+      } finally {
+        try { await this.storage.releaseLock(createdLock); } catch { /* idempotent */ }
+      }
+      if (messageWasOverridden) {
+        process.stderr.write(
+          `NOTE: abandon already initiated for '${id}' with message '${initialConfig.mission.abandonMessage}'; ` +
+            `retry uses original message; new message arg ignored.\n`,
+        );
+      }
+      if (opts.purgeConfig) {
+        const purgeLock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
+        try {
+          const symlinkPath = initialConfig.mission.name
+            ? join(this.missionNamesDir(), `${initialConfig.mission.name}.yaml`)
+            : undefined;
+          try { await unlink(this.missionConfigPath(id)); } catch { /* idempotent */ }
+          if (symlinkPath) {
+            try { await unlink(symlinkPath); } catch { /* idempotent */ }
+          }
+        } finally {
+          try { await this.storage.releaseLock(purgeLock); } catch { /* idempotent */ }
+        }
+      }
+      return this.missionConfigToState(createdFinalConfig, this.principal);
+    }
+
+    emit({ phase: 'final-tick', message: 'flushing final wip-commit + setting abandon-flag' });
 
     // First lock-cycle: Steps 1-3 (inherit + Steps 1-3 + release at Step 4).
     // SD2/SD3 follow-on (v1.0.2 slice i.5): inherit the mission-lock from start() rather than

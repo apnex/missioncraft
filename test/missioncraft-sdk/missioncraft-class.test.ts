@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -255,12 +256,50 @@ describe('Missioncraft SDK class — W3 smoke-tests', () => {
       });
     });
 
-    it("abandon() rejects 'configured' lifecycle (must be 'in-progress' or 'started')", async () => {
+    it("abandon() rejects 'configured' lifecycle (accepts 'created', 'in-progress', 'started', 'reading')", async () => {
+      // mission-81 slice (i) bug-85: abandon now accepts 'created' (minimal-teardown branch);
+      // 'configured' remains rejected — it's a writer-class pre-start state with repos bound.
       const mc = new Missioncraft({ workspaceRoot: tempRoot });
       const handle = await mc.create('mission', { repo: 'https://github.com/example/repo-x' });
       await expect(mc.abandon(handle.id, 'msg')).rejects.toMatchObject({
-        message: expect.stringMatching(/requires lifecycle 'in-progress', 'started', or 'reading' \(current: 'configured'\)/),
+        message: expect.stringMatching(/requires lifecycle 'created', 'in-progress', 'started', or 'reading' \(current: 'configured'\)/),
       });
+    });
+
+    // mission-81 slice (i) bug-85 — abandon-from-'created' minimal-teardown branch.
+    // A 'created' mission (mc.create with no repo) has only a config YAML + maybe a .names
+    // symlink — no workspace/daemon/lock/branches. abandon must succeed via the minimal path.
+    it("abandon() succeeds on 'created' lifecycle — minimal teardown, config retained as tombstone", async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      const handle = await mc.create('mission', { name: 'created-abandon-test' });
+      // Pre: lifecycle is 'created' (no repo bound)
+      expect((await mc.get('mission', handle.id)).lifecycleState).toBe('created');
+
+      const result = await mc.abandon(handle.id, 'abandon-from-created reason');
+
+      // SHAPE-1: lifecycle advanced to terminal 'abandoned'
+      expect(result.lifecycleState).toBe('abandoned');
+      // SHAPE-2: abandonMessage persisted
+      expect(result.abandonMessage).toBe('abandon-from-created reason');
+      // SHAPE-3: config YAML retained (uniform with abandon-from-started — tombstone, not delete)
+      expect(existsSync(join(tempRoot, 'config', 'missions', `${handle.id}.yaml`))).toBe(true);
+      // SHAPE-4: the abandoned mission is still gettable (terminal record)
+      expect((await mc.get('mission', handle.id)).lifecycleState).toBe('abandoned');
+    });
+
+    it("abandon() on 'created' with purgeConfig removes config + .names symlink", async () => {
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      const handle = await mc.create('mission', { name: 'created-purge-test' });
+      const configPath = join(tempRoot, 'config', 'missions', `${handle.id}.yaml`);
+      const symlinkPath = join(tempRoot, 'config', 'missions', '.names', 'created-purge-test.yaml');
+      expect(existsSync(configPath)).toBe(true);
+      expect(existsSync(symlinkPath)).toBe(true);
+
+      await mc.abandon(handle.id, 'purge reason', { purgeConfig: true });
+
+      // SHAPE: both config + symlink removed
+      expect(existsSync(configPath)).toBe(false);
+      expect(existsSync(symlinkPath)).toBe(false);
     });
 
   });

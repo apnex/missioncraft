@@ -6,7 +6,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -17,7 +17,13 @@ let savedCwd: string;
 
 beforeEach(async () => {
   savedCwd = process.cwd();
-  tempRoot = await mkdtemp(join(tmpdir(), 'mc-v106-v-'));
+  // mission-81 slice (iv): realpath the mkdtemp dir. On macOS `os.tmpdir()` resolves under a
+  // symlink (`/var` → `/private/var`); `process.cwd()` after a `chdir` into a tempRoot subdir
+  // returns the CANONICAL path, but `resolve(tempRoot, ...)` keeps the symlink form — so the
+  // test's own `startsWith` / `toBe` assertions mismatched on macOS (2 of the 3 macos-matrix
+  // flakes). Canonicalising tempRoot here makes every downstream comparison consistent + also
+  // hands the Missioncraft instance a canonical workspaceRoot.
+  tempRoot = realpathSync(await mkdtemp(join(tmpdir(), 'mc-v106-v-')));
 });
 
 afterEach(async () => {

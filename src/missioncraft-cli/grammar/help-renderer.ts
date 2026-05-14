@@ -132,6 +132,30 @@ export function renderVerbHelp(verbPath: readonly string[]): string {
   return lines.join('\n').trimEnd();
 }
 
+/**
+ * mission-81 slice (iii) bug-87 — render help scoped to the mission-targeted verb level.
+ * Emitted for id-first `msn <id> help` / `msn <id> --help`: the operator has a specific
+ * mission-id and wants "what can I do with this mission", NOT the full global CLI surface.
+ * Lists only the verbs operable on a specific mission (the W6-new mission-targeted taxonomy).
+ */
+export function renderMissionTargetedHelp(): string {
+  // Mirrors parser.ts MISSION_TARGETED_REQUIRES_ID_FIRST + the `update` id-first form.
+  const MISSION_TARGETED_VERBS = ['show', 'start', 'complete', 'abandon', 'workspace', 'cd', 'update'];
+  const lines: string[] = [];
+  lines.push('usage: msn <mission-id> <verb> [args]');
+  lines.push('');
+  lines.push('Verbs operable on a specific mission:');
+  const width = Math.max(...MISSION_TARGETED_VERBS.map((v) => v.length));
+  for (const v of MISSION_TARGETED_VERBS) {
+    const spec = VERB_SPECS[v];
+    const desc = spec?.shortDesc ?? spec?.description ?? '';
+    lines.push(`  ${v.padEnd(width)}  ${desc}`);
+  }
+  lines.push('');
+  lines.push("Run 'msn <mission-id> <verb> --help' for per-verb detail, or 'msn help' for the full CLI surface.");
+  return lines.join('\n');
+}
+
 /** Build the default usage-line for a verb-path + spec. */
 function buildUsageLine(verbPath: readonly string[], spec: VerbArgSpec): string {
   const parts = ['msn', ...verbPath];

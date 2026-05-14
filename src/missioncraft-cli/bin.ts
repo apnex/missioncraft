@@ -110,8 +110,13 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   if (parsed.verb === '--help') {
-    // v1.0.4 idea-274: subNamespacePath populated → per-verb help; empty → global help
-    if (parsed.subNamespacePath.length === 0) {
+    // mission-81 slice (iii) bug-87: id-first help context (`msn <id> help` / `msn <id> --help`)
+    // → mission-targeted-verb scoped help, NOT the full global dump.
+    if (parsed.missionRef !== undefined) {
+      const { renderMissionTargetedHelp } = await import('./grammar/help-renderer.js');
+      console.log(renderMissionTargetedHelp());
+    } else if (parsed.subNamespacePath.length === 0) {
+      // v1.0.4 idea-274: subNamespacePath populated → per-verb help; empty → global help
       console.log(HELP_TEXT);
     } else {
       const { renderVerbHelp } = await import('./grammar/help-renderer.js');
@@ -520,7 +525,27 @@ async function dispatchScope(mc: Missioncraft, parsed: ParsedCommand, format: Ou
       // v1.0.6 bug-70: --include-references triggers compute-on-demand scan per scope
       const includeReferences = parsed.flags.has('--include-references');
       const states = await mc.list('scope', undefined, includeReferences ? { includeReferences: true } : undefined);
-      console.log(formatValue(states, format));
+      // mission-81 slice (iii) bug-86: default to table format (operator-DX parity with `msn list`);
+      // --output json|yaml is the opt-in for machine-readable output. The `referenced-by` column is
+      // appended only when --include-references was passed (otherwise it's a meaningless 0 everywhere).
+      if (format === 'text') {
+        const columns = includeReferences
+          ? ['id', 'name', 'lifecycle', 'repos-count', 'referenced-by']
+          : ['id', 'name', 'lifecycle', 'repos-count'];
+        console.log(formatTable(
+          states.map((s) => ({
+            id: s.id,
+            name: s.name ?? '',
+            lifecycle: s.lifecycleState,
+            'repos-count': s.repos.length,
+            ...(includeReferences && { 'referenced-by': s.referencedByMissions.length }),
+          })),
+          columns,
+          format,
+        ));
+      } else {
+        console.log(formatValue(states, format));
+      }
       return;
     }
     case 'show': {

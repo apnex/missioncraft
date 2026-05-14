@@ -329,6 +329,19 @@ export function parse(argv: readonly string[]): ParsedCommand {
   if (helpFlagIdx >= 0) {
     // Strip the help-flag; verb-path = everything before it (and after, if any — unusual but accepted)
     const verbPath = argv.filter((a, i) => i !== helpFlagIdx && !a.startsWith('-'));
+    // mission-81 slice (iii) bug-87: `msn <id> --help` is an id-first help context — the verb-path
+    // is a lone mission-id, not a verb. Carry it as missionRef + leave subNamespacePath empty so
+    // the dispatcher renders mission-targeted-verb scoped help (not "unknown verb-path" on the id).
+    if (verbPath.length === 1 && isMissionId(verbPath[0])) {
+      return {
+        verb: '--help',
+        positionals: [],
+        flags: new Map(),
+        globalFlags: new Map(),
+        subNamespacePath: [],
+        missionRef: verbPath[0],
+      };
+    }
     return {
       verb: '--help',
       positionals: verbPath,
@@ -392,6 +405,11 @@ export function parse(argv: readonly string[]): ParsedCommand {
       flags: new Map(),
       globalFlags: new Map(),
       subNamespacePath: verb === '--help' || verb === 'help' ? [] : [verb],
+      // mission-81 slice (iii) bug-87: `msn <id> help` is an id-first help context — carry the
+      // missionRef so the dispatcher renders mission-targeted-verb scoped help, not global help.
+      ...(missionRefOverride !== undefined && (verb === '--help' || verb === 'help') && {
+        missionRef: missionRefOverride,
+      }),
     };
   }
   // mission-78 W6-new slice (v.b) (Design v5.0 §10.6 + no-backward-compat ratification):

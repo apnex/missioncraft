@@ -415,17 +415,27 @@ async function renderVersion(format: OutputFormat): Promise<string> {
 }
 
 function emitShellInit(shell: string): string {
-  // Shell-function wrapper: intercepts `msn cd <args>` to `cd "$(command msn workspace <args>)"`.
-  // All other verbs pass through transparently via `command msn`.
-  // bash + zsh share POSIX function syntax; fish requires the function-builtin form.
+  // Shell-function wrapper: intercepts the `cd` verb and runs `cd "$(command msn workspace ...)"`
+  // in the operator's shell. All other verbs pass through transparently via `command msn`.
+  //
+  // mission-81 slice (ii) bug-89: W6-new (mission-78) migrated `cd` from verb-first
+  // (`msn cd <id>`) to id-first (`msn <id> cd [<repo>]`). The wrapper must intercept BOTH forms:
+  //   - `$1 == "cd"`  — legacy verb-first + coord-form (`msn cd <id>:<repo>`); preserved.
+  //   - `$2 == "cd"` AND `$1` matches the canonical mission-id pattern — W6-new id-first form.
+  // The id-first guard mirrors the binary's own id-first detection (`msn-<8 hex>`); name-form
+  // refs fall through to `command msn` (the binary requires id-first for `cd`, so names error
+  // there consistently). bash + zsh share `[[ =~ ]]`; fish uses `string match -qr`.
   if (shell === 'bash' || shell === 'zsh') {
     return [
-      `# missioncraft ${shell} shell-init — adds \`msn cd <id|name>\` quick-jump.`,
+      `# missioncraft ${shell} shell-init — adds \`msn <id> cd [<repo>]\` quick-jump.`,
       `# Install: append \`eval "$(msn shell-init ${shell})"\` to your ~/.${shell}rc`,
       `msn() {`,
       `  if [ "$1" = "cd" ]; then`,
       `    shift`,
       `    cd "$(command msn workspace "$@")" || return $?`,
+      `  elif [ "$2" = "cd" ] && [[ "$1" =~ ^msn-[a-f0-9]{8}$ ]]; then`,
+      `    local _msn_id="$1"; shift 2`,
+      `    cd "$(command msn "$_msn_id" workspace "$@")" || return $?`,
       `  else`,
       `    command msn "$@"`,
       `  fi`,
@@ -434,11 +444,14 @@ function emitShellInit(shell: string): string {
   }
   if (shell === 'fish') {
     return [
-      `# missioncraft fish shell-init — adds \`msn cd <id|name>\` quick-jump.`,
+      `# missioncraft fish shell-init — adds \`msn <id> cd [<repo>]\` quick-jump.`,
       `# Install: append \`eval (msn shell-init fish)\` to your ~/.config/fish/config.fish`,
       `function msn`,
       `  if test "$argv[1]" = "cd"`,
       `    cd (command msn workspace $argv[2..])`,
+      `  else if test "$argv[2]" = "cd"; and string match -qr '^msn-[a-f0-9]{8}$' -- "$argv[1]"`,
+      `    set -l _msn_id $argv[1]`,
+      `    cd (command msn $_msn_id workspace $argv[3..])`,
       `  else`,
       `    command msn $argv`,
       `  end`,

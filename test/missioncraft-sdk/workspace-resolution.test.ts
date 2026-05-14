@@ -74,12 +74,26 @@ describe('W5c slice (ii) — Missioncraft.workspace() runtime-resolution', () =>
     expect(wsPath).toMatch(new RegExp(`/missions/${handle.id}/w5c-ii-1$`));
   });
 
-  it('rejects multi-repo mission with plain mission-id + no repoName arg', async () => {
+  it('resolves multi-repo mission with plain mission-id to mission-root (bug-88)', async () => {
+    // mission-81 slice (ii) bug-88: bare workspace() on a multi-repo mission resolves to the
+    // mission-root dir (the parent containing the per-repo subdirs), not a throw. storage.allocate
+    // on one repo is enough for the mission-root dir to exist on-disk.
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
     const handle = await mc.create('mission', { repo: ['file:///tmp/w5c-ii-2a', 'file:///tmp/w5c-ii-2b'] });
+    await mc.storage.allocate(handle.id, 'file:///tmp/w5c-ii-2a');
 
-    await expect(mc.workspace(handle.id)).rejects.toBeInstanceOf(ConfigValidationError);
-    await expect(mc.workspace(handle.id)).rejects.toThrow(/has 2 repos.*repoName arg required/);
+    const wsPath = await mc.workspace(handle.id);
+    expect(wsPath).toMatch(new RegExp(`/missions/${handle.id}$`));      // mission-root, no repo suffix
+  });
+
+  it('multi-repo mission with plain mission-id throws when mission-root absent (not started)', async () => {
+    // bug-88 edge: if no workspace dir exists yet (mission never started / no allocate),
+    // the mission-root path doesn't exist — throw a clear MissionStateError, not a stale path.
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const handle = await mc.create('mission', { repo: ['file:///tmp/w5c-ii-2c', 'file:///tmp/w5c-ii-2d'] });
+
+    await expect(mc.workspace(handle.id)).rejects.toBeInstanceOf(MissionStateError);
+    await expect(mc.workspace(handle.id)).rejects.toThrow(/mission-root not found/);
   });
 
   it('resolves multi-repo mission with explicit repoName arg', async () => {

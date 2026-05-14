@@ -1285,11 +1285,21 @@ export class Missioncraft {
       ? (config.repos[0].name ?? repoNameFromUrl(config.repos[0].url))
       : undefined);
 
+    // mission-81 slice (ii) bug-88: bare workspace/cd on a multi-repo mission resolves to the
+    // mission-root dir (the directory that CONTAINS the per-repo subdirs), rather than throwing
+    // "repoName arg required". The operator who wants the whole-mission view — both repos
+    // side-by-side — previously had no CLI path to it. `msn <id> cd <repo>` (repoName supplied)
+    // still resolves to the specific repo workspace; only the bare multi-repo form changes.
+    // Single-repo bare form is unchanged (targetRepoName resolves to the unique repo above).
     if (!targetRepoName) {
-      throw new ConfigValidationError(
-        `Missioncraft.workspace: mission '${missionId}' has ${config.repos.length} repos; ` +
-          `repoName arg required (or use coordinate-form '<id>:<repo>')`,
-      );
+      const missionRoot = join(this.workspaceRoot, 'missions', missionId);
+      if (!existsSync(missionRoot)) {
+        throw new MissionStateError(
+          `Missioncraft.workspace: mission-root not found for '${missionId}' ` +
+            `(try 'msn start' to create the workspace)`,
+        );
+      }
+      return coord?.path ? join(missionRoot, coord.path) : missionRoot;
     }
 
     const targetRepo = config.repos.find((r) => (r.name ?? repoNameFromUrl(r.url)) === targetRepoName);

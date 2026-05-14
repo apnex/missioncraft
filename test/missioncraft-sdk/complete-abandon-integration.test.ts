@@ -170,7 +170,7 @@ describe('W4.3 slice (iv) — abandon() real-engine integration', () => {
 
     // Mission is now terminal 'abandoned'; retry abandon should be rejected
     await expect(mc.abandon(handle.id, 'second-msg')).rejects.toMatchObject({
-      message: expect.stringMatching(/requires lifecycle 'in-progress' or 'started'/),
+      message: expect.stringMatching(/requires lifecycle 'in-progress', 'started', or 'reading'/),
     });
   });
 

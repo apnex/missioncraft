@@ -52,7 +52,7 @@ describe('v1.0.6 slice (iii) — bug-68 FSM pre-flight before progress callback'
     const events: { phase: string }[] = [];
     await expect(
       mc.abandon(id, 'late abandon', { onProgress: (e) => events.push(e) }),
-    ).rejects.toThrow(/requires lifecycle 'in-progress' or 'started'/);
+    ).rejects.toThrow(/requires lifecycle 'in-progress', 'started', or 'reading'/);
     expect(events).toEqual([]);
   });
 

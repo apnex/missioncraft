@@ -73,7 +73,7 @@ describe('v1.0.3 slice (iii) — name-alias resolution audit per bug-64 item 5',
     await mc.create('mission', { name: 'test-abandon', repo: 'file:///tmp/test-repo' });
 
     await expect(mc.abandon('test-abandon', 'msg')).rejects.toThrow(
-      /requires lifecycle 'in-progress' or 'started'/,
+      /requires lifecycle 'in-progress', 'started', or 'reading'/,
     );
   });
 

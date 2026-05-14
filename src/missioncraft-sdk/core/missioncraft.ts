@@ -514,7 +514,12 @@ export class Missioncraft {
       throw new MissionStateError(`Missioncraft.complete: mission '${id}' not found`);
     }
     const initialContent = await readFile(path, 'utf8');
-    const initialConfig = parseMissionConfig(initialContent, path);
+    // mission-80 slice (i) bug-83 fix companion: auto-mode parse for symmetry with abandon().
+    // Note: complete() pre-check is writer-class ONLY ('in-progress' or 'started'); readers don't
+    // 'complete' (they auto-close via cascade OR `abandon`). Auto-mode parse here just ensures
+    // reader-mission YAMLs (e.g., reader-state 'reading') would correctly route to reader-schema +
+    // get the operator-DX-clear "wrong lifecycle" error rather than ConfigValidationError.
+    const initialConfig = parseMissionConfig(initialContent, path, 'auto');
     const currentState = initialConfig.mission.lifecycleState;
     if (currentState !== 'in-progress' && currentState !== 'started') {
       throw new MissionStateError(
@@ -870,11 +875,21 @@ export class Missioncraft {
       throw new MissionStateError(`Missioncraft.abandon: mission '${id}' not found`);
     }
     const initialContent = await readFile(path, 'utf8');
-    const initialConfig = parseMissionConfig(initialContent, path);
+    // mission-80 slice (i) bug-83 fix: auto-mode peeks readOnly first per W8-new slice (viii.a) v2
+    // + mission-79 slice (i) v2 pattern; reader-mission YAMLs (post-mission-79: lifecycle 'reading')
+    // need reader-schema validation, not writer-default schema.
+    const initialConfig = parseMissionConfig(initialContent, path, 'auto');
     const currentState = initialConfig.mission.lifecycleState;
-    if (currentState !== 'in-progress' && currentState !== 'started') {
+    // Accept writer-class ('in-progress', 'started') AND reader-class ('reading', 'started') states.
+    // 'started' transient is shared per W8-new slice (viii.a) v2 READER_STATES extension; 'reading'
+    // is the reader-mission steady-state per mission-79 slice (i) daemonTickAdvance role-branch fix.
+    if (
+      currentState !== 'in-progress' &&
+      currentState !== 'started' &&
+      currentState !== 'reading'
+    ) {
       throw new MissionStateError(
-        `Missioncraft.abandon: requires lifecycle 'in-progress' or 'started' (current: '${currentState}')`,
+        `Missioncraft.abandon: requires lifecycle 'in-progress', 'started', or 'reading' (current: '${currentState}')`,
       );
     }
 

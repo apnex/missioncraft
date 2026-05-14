@@ -53,7 +53,7 @@ describe('v1.0.6 slice (iv) — bug-69 FSM-rejection hint matrix (W6-new id-firs
 
     const { stderr, status } = runCli(id, 'abandon', 'late msg');
     expect(status).toBe(65);
-    expect(stderr).toMatch(/requires lifecycle 'in-progress' or 'started'/);
+    expect(stderr).toMatch(/requires lifecycle 'in-progress', 'started', or 'reading'/);
     expect(stderr).toMatch(/hint: to remove config for an already-completed mission/);
     expect(stderr).toMatch(new RegExp(`~/\\.missioncraft/config/missions/${id}\\.yaml`));
     expect(stderr).toMatch(/'msn delete <id>' verb is on the v1\.0\.x roadmap/);

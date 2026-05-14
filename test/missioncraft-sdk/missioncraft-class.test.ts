@@ -220,6 +220,7 @@ describe('Missioncraft SDK class — W3 smoke-tests', () => {
     });
 
     it("complete() rejects 'created' lifecycle (must be 'in-progress' or 'started')", async () => {
+      // Note: complete() error-message unchanged at mission-80 slice (i) (writer-only verb)
       const mc = new Missioncraft({ workspaceRoot: tempRoot });
       const handle = await mc.create('mission');
       await expect(mc.complete(handle.id, 'msg')).rejects.toMatchObject({
@@ -258,7 +259,7 @@ describe('Missioncraft SDK class — W3 smoke-tests', () => {
       const mc = new Missioncraft({ workspaceRoot: tempRoot });
       const handle = await mc.create('mission', { repo: 'https://github.com/example/repo-x' });
       await expect(mc.abandon(handle.id, 'msg')).rejects.toMatchObject({
-        message: expect.stringMatching(/requires lifecycle 'in-progress' or 'started' \(current: 'configured'\)/),
+        message: expect.stringMatching(/requires lifecycle 'in-progress', 'started', or 'reading' \(current: 'configured'\)/),
       });
     });
 

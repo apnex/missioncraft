@@ -144,9 +144,12 @@ async function main(argv: readonly string[]): Promise<number> {
         .replace(/^\w+Error:\s+/, '');
       const nameNotFoundMatch = /^mission '\S+' not found$/.test(cleaned) || /^scope '\S+' not found$/.test(cleaned);
       // v1.0.6 bug-69: FSM-rejection hints — match `requires lifecycle '...' (current: '...')`
-      // OR `requires lifecycle '...' or '...' (current: '...')` and emit operator-actionable hint
-      // per-verb. parsed.verb names the verb the operator typed; positionals[0] is the id/name.
-      const fsmMatch = /requires lifecycle '[^']+'(?: or '[^']+')? \(current: '([^']+)'\)/.exec(cleaned);
+      // OR `requires lifecycle '...' or '...' (current: '...')`
+      // OR `requires lifecycle '...', '...', or '...' (current: '...')` (mission-80 slice (i)
+      // bug-83 fix: abandon now accepts 3-element list including reader-class 'reading')
+      // and emit operator-actionable hint per-verb. parsed.verb names the verb the operator typed;
+      // positionals[0] is the id/name.
+      const fsmMatch = /requires lifecycle [^(]+\(current: '([^']+)'\)/.exec(cleaned);
       let hint = '';
       if (nameNotFoundMatch) {
         hint = `\n\nhint: run '${cleaned.startsWith('scope') ? 'msn scope list' : 'msn list'}' to see available ${cleaned.startsWith('scope') ? 'scopes' : 'missions'}`;

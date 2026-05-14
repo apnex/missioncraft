@@ -220,6 +220,36 @@ async function main(): Promise<void> {
   watcher.on('add', fireDebouncedCommit);
   watcher.on('unlink', fireDebouncedCommit);
 
+  // bug-79: chokidar startup-race fix. Operator edits within the watcher's init
+  // window (between `chokidar.watch()` and the internal `ready` event) may not
+  // surface as `change`/`add`/`unlink` events because chokidar's internal map is
+  // still being built. Symptom: ~80s window where edits go undetected; the next
+  // operator-event triggers a combined commit. On ready, query gitEngine.status
+  // for actual working-tree state; if dirty, fire the debounced commit so any
+  // startup-window edits are captured. No-op when working-tree is clean (avoids
+  // empty commit-pollution on every msn start).
+  watcher.once('ready', () => {
+    void (async () => {
+      if (!mcSdk) return;
+      try {
+        const handles = await mcSdk.storage.list(missionId);
+        for (const handle of handles) {
+          try {
+            const status = await mcSdk.gitEngine.status(handle);
+            if (!status.clean) {
+              fireDebouncedCommit();
+              return;        // single fire-shot covers all repos via the loop in fireDebouncedCommit
+            }
+          } catch {
+            // Per-repo status failure non-aborting; daemon continues
+          }
+        }
+      } catch {
+        // Storage.list failure → no startup-window catch-up; normal event subscription remains active
+      }
+    })();
+  });
+
   // mission-78 W5-new slice (ii): config-mtime-watch + propagateConfigToCoordRemote DELETED
   // (coord-remote primitive removed per Design v5.0 §10.2). Mission-config mutations are now
   // local-state-only at v1.2.0 standalone-capable; future Hub-coupling (idea-291) lands its own

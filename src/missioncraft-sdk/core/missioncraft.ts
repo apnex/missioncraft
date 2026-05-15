@@ -1288,16 +1288,18 @@ export class Missioncraft {
    * Resolve workspace filesystem-path for a mission-id or substrate-coordinate (Design v4.9 §2.3
    * Rule 7 + W5c MEDIUM-R8.1 substrate-coordinate runtime-resolution per idea-265).
    *
-   * Forms:
-   *   - `<mission-id>` + optional `<repoName>` arg: returns workspace path for the named repo
-   *     (or first repo if mission has only one + repoName omitted).
+   * Forms (mission-82 bug-92 cd-consistency: bare always → mission-root, regardless of repo-count):
+   *   - `<mission-id>` (bare): mission workspace-root dir (the parent containing each repo subdir),
+   *     for both single-repo and multi-repo missions. Operator-DX consistency per Director-ratified
+   *     Option A.
+   *   - `<mission-id>` + `<repoName>` arg: workspace path for the named repo subdir.
    *   - `<mission-id>:<repo>[/<path>]` (Rule 7 coordinate; gsutil-style): parsed via
-   *     `parseSubstrateCoordinate`; workspace + optional path-suffix appended.
+   *     `parseSubstrateCoordinate`; repo workspace + optional path-suffix appended.
    *
    * Errors:
    *   - mission not found → MissionStateError
    *   - coordinate's repo not in mission's repos[] → MissionStateError
-   *   - mission has multiple repos AND idOrCoordinate is plain id AND repoName omitted → ConfigValidationError
+   *   - bare form on a never-started mission (mission-root absent on-disk) → MissionStateError
    */
   async workspace(idOrCoordinate: string, repoName?: string): Promise<string> {
     if (!idOrCoordinate) {
@@ -1326,17 +1328,17 @@ export class Missioncraft {
       );
     }
 
-    // Resolve target repo: coordinate.repo > repoName arg > unique repo
-    const targetRepoName = coord?.repo ?? repoName ?? (config.repos.length === 1
-      ? (config.repos[0].name ?? repoNameFromUrl(config.repos[0].url))
-      : undefined);
+    // Resolve target repo: coordinate.repo > repoName arg.
+    // mission-82 bug-92: NO single-repo auto-pick. Director-ratified Option A — bare form always
+    // resolves to mission-root, regardless of repo-count. The pre-fix ternary `config.repos.length
+    // === 1 ? sole-repo-name : undefined` made bare-single drop into the repo subdir while bug-88's
+    // bare-multi resolved to mission-root — a same-command-different-level split. Removing the
+    // single-repo auto-pick makes bare-single AND bare-multi both fall through to the
+    // mission-root branch below; coord-form + named-repo still set targetRepoName → unchanged.
+    const targetRepoName = coord?.repo ?? repoName;
 
-    // mission-81 slice (ii) bug-88: bare workspace/cd on a multi-repo mission resolves to the
-    // mission-root dir (the directory that CONTAINS the per-repo subdirs), rather than throwing
-    // "repoName arg required". The operator who wants the whole-mission view — both repos
-    // side-by-side — previously had no CLI path to it. `msn <id> cd <repo>` (repoName supplied)
-    // still resolves to the specific repo workspace; only the bare multi-repo form changes.
-    // Single-repo bare form is unchanged (targetRepoName resolves to the unique repo above).
+    // Bare form (no coord.repo, no repoName arg) → mission-root, both single-repo and multi-repo.
+    // The operator who wants a specific repo passes `<id> <repoName>` or coord-form `<id>:<repo>`.
     if (!targetRepoName) {
       const missionRoot = join(this.workspaceRoot, 'missions', missionId);
       if (!existsSync(missionRoot)) {

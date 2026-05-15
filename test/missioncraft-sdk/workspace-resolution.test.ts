@@ -64,14 +64,29 @@ describe('W5c slice (ii) — parseSubstrateCoordinate', () => {
 describe('W5c slice (ii) — Missioncraft.workspace() runtime-resolution', () => {
   // v1.0.3 slice (vi): workspace() now READS existing handles via storage.list (no create-on-
   // demand); tests must pre-allocate via storage.allocate to substrate-bypass the start() step.
-  it('resolves single-repo mission with plain mission-id (auto-pick repo)', async () => {
+  it('resolves single-repo mission with plain mission-id to mission-root (bug-92)', async () => {
+    // mission-82 bug-92 (Director-ratified Option A — cd-consistency): bare workspace() resolves
+    // to the mission-root for BOTH single-repo and multi-repo missions, regardless of repo-count.
+    // Pre-fix: bare-single auto-picked the sole repo subdir (the bug-92 inconsistency that bug-88
+    // accidentally introduced when it added bare-multi → mission-root).
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
     const repoUrl = 'file:///tmp/w5c-ii-1';
     const handle = await mc.create('mission', { repo: repoUrl });
     await mc.storage.allocate(handle.id, repoUrl);
 
     const wsPath = await mc.workspace(handle.id);
-    expect(wsPath).toMatch(new RegExp(`/missions/${handle.id}/w5c-ii-1$`));
+    expect(wsPath).toMatch(new RegExp(`/missions/${handle.id}$`));      // mission-root, no repo suffix
+  });
+
+  it('single-repo mission with explicit repoName arg → repo subdir (bug-92 unchanged path)', async () => {
+    // bug-92 directive: bare → mission-root; named-repo still selects the specific repo subdir.
+    const mc = new Missioncraft({ workspaceRoot: tempRoot });
+    const repoUrl = 'file:///tmp/w5c-ii-1b';
+    const handle = await mc.create('mission', { repo: repoUrl });
+    await mc.storage.allocate(handle.id, repoUrl);
+
+    const wsPath = await mc.workspace(handle.id, 'w5c-ii-1b');
+    expect(wsPath).toMatch(new RegExp(`/missions/${handle.id}/w5c-ii-1b$`));
   });
 
   it('resolves multi-repo mission with plain mission-id to mission-root (bug-88)', async () => {
@@ -155,11 +170,14 @@ describe('W5c slice (ii) — Missioncraft.workspace() runtime-resolution', () =>
 
   it('idea-268 — rejects workspace lookup when workspace dir missing (safety-net)', async () => {
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
-    // Mission created but NOT allocated — safety-net should fire (non-terminal-but-missing-workspace)
+    // Mission created but NOT allocated — safety-net should fire (non-terminal-but-missing-workspace).
+    // mission-82 bug-92: bare workspace() now resolves to mission-root, so the safety-net fires
+    // at the mission-root-absent gate (not the per-repo find-handle gate). The intent — clear
+    // diagnostic when the workspace doesn't exist on-disk — is preserved.
     const handle = await mc.create('mission', { repo: 'file:///tmp/idea-268-missing' });
 
     await expect(mc.workspace(handle.id)).rejects.toThrow(
-      /workspace not found for repo .+ \(try 'msn start' to re-create\)/,
+      /mission-root not found .+ \(try 'msn start' to create the workspace\)/,
     );
   });
 

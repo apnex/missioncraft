@@ -87,7 +87,9 @@ describe('v1.0.3 slice (iii) — name-alias resolution audit per bug-64 item 5',
     await mc.storage.allocate(handle.id, 'file:///tmp/test-repo');  // v1.0.3 slice (vi) substrate-bypass
 
     // workspace pre-flights mission existence; if name not resolved, fails with "mission not found".
-    // If resolved, reaches the repo-resolution path (single-repo mission → just returns path).
+    // mission-82 bug-92: bare workspace() now resolves to mission-root regardless of repo-count
+    // (was: single-repo auto-picked the sole repo subdir). The name-resolution proof — a non-
+    // resolving name throws "mission not found" — is still load-bearing here.
     const path = await mc.workspace('test-workspace');
     expect(path).toContain(tempRoot);
     expect(path).toContain('missions');

@@ -117,6 +117,29 @@ function repoNameFromUrl(repoUrl: string): string {
   return candidate.toLowerCase();
 }
 
+/** DNS-style slug pattern for repo-names — mirrors RepoSpecSchema.name (mission-config-schema.ts). */
+const REPO_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/;
+
+/**
+ * mission-81 slice (iii.a) bug-90: derive a repo-name from a URL AND validate it eagerly at
+ * create-time. `createMission` / `createScope` previously wrote configs with un-validated
+ * derived names (e.g. a 1-char name `x` from `file:///tmp/x.git`) — which then failed
+ * `RepoSpecSchema` on the READ path (getScope / parseMissionConfig), making the entity
+ * silently un-listable. Validate at WRITE so the failure is loud + actionable, not a
+ * silent read-time vanish.
+ */
+function deriveValidatedRepoName(repoUrl: string): string {
+  const name = repoNameFromUrl(repoUrl);
+  if (!REPO_NAME_PATTERN.test(name)) {
+    throw new ConfigValidationError(
+      `repo-name '${name}' derived from '${repoUrl}' is invalid — must match DNS-style slug ` +
+      `[a-z0-9][a-z0-9-]{1,62} (2-63 lowercase chars). Use a repo URL whose last path segment ` +
+      `is a valid slug.`,
+    );
+  }
+  return name;
+}
+
 export class Missioncraft {
   // Pluggables (resolved from constructor opts OR PROVIDER_REGISTRY defaults)
   readonly identity: IdentityProvider;
@@ -1903,7 +1926,7 @@ export class Missioncraft {
 
     const repos: RepoSpec[] = scopeBoundRepos ?? writerInheritedRepos ?? (
       opts.repo
-        ? (Array.isArray(opts.repo) ? opts.repo : [opts.repo]).map((url) => ({ url, name: repoNameFromUrl(url) }))
+        ? (Array.isArray(opts.repo) ? opts.repo : [opts.repo]).map((url) => ({ url, name: deriveValidatedRepoName(url) }))
         : []
     );
 
@@ -1974,7 +1997,7 @@ export class Missioncraft {
     const id = generateScopeId();
     const now = new Date();
     const repos = opts.repo
-      ? (Array.isArray(opts.repo) ? opts.repo : [opts.repo]).map((url) => ({ url, name: repoNameFromUrl(url) }))
+      ? (Array.isArray(opts.repo) ? opts.repo : [opts.repo]).map((url) => ({ url, name: deriveValidatedRepoName(url) }))
       : [];
     const config: ScopeConfig = {
       scopeConfigSchemaVersion: 1,
@@ -2039,8 +2062,12 @@ export class Missioncraft {
         if (this.matchesMissionFilter(state, filter)) {
           states.push(state);
         }
-      } catch {
-        // skip configs that fail to parse (forensic-history; W4 may surface as warning)
+      } catch (err) {
+        // mission-81 slice (iii.a) bug-90: surface parse/validation failures instead of
+        // silently swallowing them. A config that fails to parse is no longer invisible in
+        // `msn list` — the operator gets a stderr warning naming the entity + reason.
+        const reason = err instanceof Error ? err.message.replace(/\s+/g, ' ').slice(0, 200) : 'unknown error';
+        process.stderr.write(`warning: skipped mission '${id}' — config could not be read: ${reason}\n`);
       }
     }
     return states;
@@ -2188,8 +2215,13 @@ export class Missioncraft {
         if (this.matchesScopeFilter(state, filter)) {
           states.push(state);
         }
-      } catch {
-        // skip
+      } catch (err) {
+        // mission-81 slice (iii.a) bug-90: surface parse/validation failures instead of
+        // silently swallowing them. This is the exact hazard bug-90 was filed for — a scope
+        // whose YAML fails `getScope` (e.g. an invalid persisted repo-name) silently vanished
+        // from `msn scope list` with zero diagnostic. Now it warns to stderr.
+        const reason = err instanceof Error ? err.message.replace(/\s+/g, ' ').slice(0, 200) : 'unknown error';
+        process.stderr.write(`warning: skipped scope '${id}' — config could not be read: ${reason}\n`);
       }
     }
     return states;

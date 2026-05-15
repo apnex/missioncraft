@@ -129,6 +129,29 @@ const GLOBAL_FLAG_NAMES = new Set(GLOBAL_FLAGS.map((f) => f.name));
 const GLOBAL_FLAG_SPEC = new Map(GLOBAL_FLAGS.map((f) => [f.name, f] as const));
 
 /**
+ * mission-81 slice (iii.a) bug-91: extract the verb-path from a help-invocation token list,
+ * stripping flags AND the VALUES of value-taking global flags. The previous help-form
+ * extraction filtered only `-`-prefixed tokens — so `msn help start --workspace-root /p` left
+ * `/p` (the flag's value) in the verb-path → `renderVerbHelp(['start','/p'])` → "unknown
+ * verb-path". `--help` / `-h` are not in GLOBAL_FLAG_SPEC (no `takesValue`), so they're
+ * skipped as bare flags; value-taking globals (`--workspace-root`, `--output`, etc.) skip
+ * their value token too.
+ */
+function extractHelpVerbPath(tokens: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.startsWith('-')) {
+      const spec = GLOBAL_FLAG_SPEC.get(t);
+      if (spec?.takesValue && i + 1 < tokens.length) i++;     // skip the flag's value token too
+      continue;                                               // skip the flag itself
+    }
+    out.push(t);
+  }
+  return out;
+}
+
+/**
  * Tokenize argv into positionals + flags (verb-specific vs global).
  * Two-pass: first pass collects all flags/positionals; second-pass classifier separates global vs verb-specific
  * once verb-context is known (caller passes acceptableVerbFlags set after Rule 1 dispatch).
@@ -327,8 +350,9 @@ export function parse(argv: readonly string[]): ParsedCommand {
   // populated with the verb-path so the dispatcher can resolve the per-verb spec.
   const helpFlagIdx = argv.findIndex((a) => a === '--help' || a === '-h');
   if (helpFlagIdx >= 0) {
-    // Strip the help-flag; verb-path = everything before it (and after, if any — unusual but accepted)
-    const verbPath = argv.filter((a, i) => i !== helpFlagIdx && !a.startsWith('-'));
+    // verb-path = the non-flag tokens; bug-91: strip value-taking global flags AND their values
+    // (a bare `!startsWith('-')` filter left e.g. `--workspace-root`'s path-value in the verb-path).
+    const verbPath = extractHelpVerbPath(argv);
     // mission-81 slice (iii) bug-87: `msn <id> --help` is an id-first help context — the verb-path
     // is a lone mission-id, not a verb. Carry it as missionRef + leave subNamespacePath empty so
     // the dispatcher renders mission-targeted-verb scoped help (not "unknown verb-path" on the id).
@@ -352,7 +376,8 @@ export function parse(argv: readonly string[]): ParsedCommand {
   }
   // `help <verb-path>` prefix-form
   if (argv[0] === 'help' && argv.length > 1) {
-    const verbPath = argv.slice(1).filter((a) => !a.startsWith('-'));
+    // bug-91: strip value-taking global flags AND their values from the verb-path
+    const verbPath = extractHelpVerbPath(argv.slice(1));
     return {
       verb: '--help',
       positionals: verbPath,

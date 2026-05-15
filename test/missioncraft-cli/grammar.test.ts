@@ -275,4 +275,35 @@ describe('CLI grammar parser — Rules 1-7 — W3 smoke-tests', () => {
       expect(result.subNamespacePath).toEqual(['scope', 'update', 'repo-add']);
     });
   });
+
+  describe('mission-81 slice (iii.a) bug-91 — help-form verb-path strips global-flag values', () => {
+    it('`help <verb> --workspace-root <path>` does not absorb the path into the verb-path', () => {
+      const result = parse(['help', 'start', '--workspace-root', '/tmp/ws']);
+      expect(result.verb).toBe('--help');
+      expect(result.subNamespacePath).toEqual(['start']);                         // NOT ['start', '/tmp/ws']
+    });
+
+    it('`<verb> --help --workspace-root <path>` (flag form) strips the global-flag value', () => {
+      const result = parse(['scope', '--help', '--workspace-root', '/tmp/ws']);
+      expect(result.verb).toBe('--help');
+      expect(result.subNamespacePath).toEqual(['scope']);
+    });
+
+    it('`help <verb> --output json` strips the value-taking --output global flag', () => {
+      const result = parse(['help', 'list', '--output', 'json']);
+      expect(result.subNamespacePath).toEqual(['list']);
+    });
+
+    it('`msn <id> --help --workspace-root <path>` preserves id-first help context (bug-87 + bug-91)', () => {
+      const result = parse(['msn-deadbeef', '--help', '--workspace-root', '/tmp/ws']);
+      expect(result.verb).toBe('--help');
+      expect(result.missionRef).toBe('msn-deadbeef');
+      expect(result.subNamespacePath).toEqual([]);                                // mission-targeted scoped help
+    });
+
+    it('non-value global flags (--quiet) do not consume a following token', () => {
+      const result = parse(['help', 'start', '--quiet']);
+      expect(result.subNamespacePath).toEqual(['start']);
+    });
+  });
 });

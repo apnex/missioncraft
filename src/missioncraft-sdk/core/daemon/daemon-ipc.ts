@@ -53,17 +53,24 @@ function isAlive(pid: number): boolean {
  */
 const PID_REUSE_SKEW_THRESHOLD_MS = 30_000;
 async function verifyPidStartTime(pid: number, expectedStartTimeMs: number): Promise<boolean> {
+  // mission-81 slice (iv): "can't verify" must mean PROCEED, not BAIL. Every caller
+  // (terminateDaemon / detectDeadPid / triggerDaemonFlush) runs `isAlive(pid)` FIRST — so by
+  // the time we get here the process is already confirmed to exist. `ps` failing, or emitting
+  // an unparseable `etimes`, therefore means "the verification TOOL is unavailable/odd" — NOT
+  // "the process is dead" (already ruled out) and NOT "pid-reuse" (unproven). Returning `false`
+  // in those cases made `terminateDaemon` skip SIGTERM on a confirmed-live daemon → orphaned
+  // daemon. Only a POSITIVE pid-reuse measurement (large positive skew) returns false.
   try {
     const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'etimes=']);
     const elapsedSec = parseInt(stdout.trim(), 10);
-    if (Number.isNaN(elapsedSec)) return false;
+    if (Number.isNaN(elapsedSec)) return true;        // unparseable → can't disprove → proceed
     const actualStartMs = Date.now() - elapsedSec * 1000;
     // Directional: negative/small-positive skew = legit Node-boot-lag (any magnitude OK);
     // large positive skew = process born after the recorded daemon = pid-reuse.
     const skewMs = actualStartMs - expectedStartTimeMs;
     return skewMs < PID_REUSE_SKEW_THRESHOLD_MS;
   } catch {
-    return false;        // ps failed → process likely dead OR pid-reuse hazard
+    return true;         // ps unavailable → can't disprove; isAlive already vouched → proceed
   }
 }
 

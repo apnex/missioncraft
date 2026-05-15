@@ -4,6 +4,14 @@ All notable changes to `@apnex/missioncraft` are documented here.
 
 This project follows [Semantic Versioning](https://semver.org/). Dates are in UTC.
 
+## [1.2.4] — 2026-05-15
+
+Bug-fix release.
+
+### Fixed
+
+- `msn <id> cd` and `msn <id> workspace` (no repo-name) now consistently resolve to the mission's workspace root, regardless of whether the mission has one repo or several. In 1.2.3 the multi-repo bare form went to the mission root but the single-repo bare form silently auto-selected the sole repo and dropped you into its subdirectory — same command, different level. They're now uniform: bare → mission root; pass a repo-name (or use the `<id>:<repo>` coordinate form) to address a specific repo.
+
 ## [1.2.3] — 2026-05-15
 
 Bug-fix release — operator-experience sweep.

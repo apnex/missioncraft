@@ -256,14 +256,21 @@ describe('Missioncraft SDK class — W3 smoke-tests', () => {
       });
     });
 
-    it("abandon() rejects 'configured' lifecycle (accepts 'created', 'in-progress', 'started', 'reading')", async () => {
-      // mission-81 slice (i) bug-85: abandon now accepts 'created' (minimal-teardown branch);
-      // 'configured' remains rejected — it's a writer-class pre-start state with repos bound.
+    it("abandon() succeeds on 'configured' lifecycle — minimal teardown (mission-81 slice v.a bug-85 completion)", async () => {
+      // mission-81 slice (v.a): 'configured' (writer mission with ≥1 repo, not yet started) is a
+      // pre-start state — no workspace/daemon/branches — so it takes the same minimal-teardown
+      // branch as 'created'. slice (i) bug-85 added only 'created'; slice (v.a) completes the
+      // pre-start state-set ('created' + 'configured' + 'joined').
       const mc = new Missioncraft({ workspaceRoot: tempRoot });
       const handle = await mc.create('mission', { repo: 'https://github.com/example/repo-x' });
-      await expect(mc.abandon(handle.id, 'msg')).rejects.toMatchObject({
-        message: expect.stringMatching(/requires lifecycle 'created', 'in-progress', 'started', or 'reading' \(current: 'configured'\)/),
-      });
+      expect((await mc.get('mission', handle.id)).lifecycleState).toBe('configured');   // pre: ≥1 repo
+
+      const result = await mc.abandon(handle.id, 'abandon-from-configured reason');
+
+      expect(result.lifecycleState).toBe('abandoned');
+      expect(result.abandonMessage).toBe('abandon-from-configured reason');
+      expect(existsSync(join(tempRoot, 'config', 'missions', `${handle.id}.yaml`))).toBe(true);  // tombstone retained
+      expect((await mc.get('mission', handle.id)).lifecycleState).toBe('abandoned');
     });
 
     // mission-81 slice (i) bug-85 — abandon-from-'created' minimal-teardown branch.
@@ -300,6 +307,22 @@ describe('Missioncraft SDK class — W3 smoke-tests', () => {
       // SHAPE: both config + symlink removed
       expect(existsSync(configPath)).toBe(false);
       expect(existsSync(symlinkPath)).toBe(false);
+    });
+
+    it("abandon() succeeds on 'joined' lifecycle — reader-mission pre-start, minimal teardown", async () => {
+      // mission-81 slice (v.a): 'joined' is the reader-side pre-start state (msn join written,
+      // not yet msn start) — no workspace/daemon/branches → minimal-teardown branch, same as the
+      // writer pre-start states. Completes the pre-start state-set enumeration.
+      const mc = new Missioncraft({ workspaceRoot: tempRoot });
+      const writer = await mc.create('mission', { name: 'jp-writer', repo: 'file:///tmp/widget.git' });
+      const reader = await mc.create('mission', { name: 'jp-reader', readOnly: true, sourceMissionId: writer.id });
+      expect((await mc.get('mission', reader.id)).lifecycleState).toBe('joined');   // pre-start reader
+
+      const result = await mc.abandon(reader.id, 'abandon-from-joined reason');
+
+      expect(result.lifecycleState).toBe('abandoned');
+      expect(result.abandonMessage).toBe('abandon-from-joined reason');
+      expect((await mc.get('mission', reader.id)).lifecycleState).toBe('abandoned');
     });
 
   });

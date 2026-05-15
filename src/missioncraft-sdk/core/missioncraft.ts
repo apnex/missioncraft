@@ -943,21 +943,31 @@ export class Missioncraft {
     // need reader-schema validation, not writer-default schema.
     const initialConfig = parseMissionConfig(initialContent, path, 'auto');
     const currentState = initialConfig.mission.lifecycleState;
-    // Accept writer-class ('in-progress', 'started'), reader-class ('reading', 'started'), AND
-    // pre-start ('created') states. 'started' transient is shared per W8-new slice (viii.a) v2
-    // READER_STATES extension; 'reading' is the reader-mission steady-state per mission-79 slice (i)
-    // daemonTickAdvance role-branch fix; 'created' is the pre-start state per mission-81 slice (i)
-    // bug-85 fix (abandon-from-created minimal-teardown branch below).
+    // mission-81 slice (v.a) bug-85 completion: the abandon precheck must accept the COMPLETE
+    // pre-start state-set, not just the one state the Director's repro string named. Per the
+    // MissionStatePhase FSM (mission-types.ts) there are THREE pre-start states:
+    //   - 'created'    — writer scaffolded config, no repos
+    //   - 'configured' — writer config with ≥1 repo, not yet started (the COMMON pre-start state)
+    //   - 'joined'     — reader-side pre-start (msn join written, not yet msn start)
+    // all three are no-workspace / no-daemon / no-branches → minimal-teardown branch below.
+    // Plus the active states: 'in-progress' + 'started' (writer/shared transient) + 'reading'
+    // (reader steady-state). slice (i) bug-85 added only 'created' — it pattern-matched the
+    // repro string instead of enumerating the set (calibration #79 inverse shape).
     if (
       currentState !== 'created' &&
+      currentState !== 'configured' &&
+      currentState !== 'joined' &&
       currentState !== 'in-progress' &&
       currentState !== 'started' &&
       currentState !== 'reading'
     ) {
       throw new MissionStateError(
-        `Missioncraft.abandon: requires lifecycle 'created', 'in-progress', 'started', or 'reading' (current: '${currentState}')`,
+        `Missioncraft.abandon: requires lifecycle 'created', 'configured', 'joined', 'in-progress', 'started', or 'reading' (current: '${currentState}')`,
       );
     }
+    // The three pre-start states share the minimal-teardown branch (no workspace/daemon/branches).
+    const isPreStartState =
+      currentState === 'created' || currentState === 'configured' || currentState === 'joined';
 
     const emit = opts.onProgress ?? ((): void => undefined);               // v1.0.5 idea-273
 
@@ -965,20 +975,20 @@ export class Missioncraft {
     const effectiveMessage = initialConfig.mission.abandonMessage ?? message;
     const messageWasOverridden = initialConfig.mission.abandonMessage !== undefined && initialConfig.mission.abandonMessage !== message;
 
-    // mission-81 slice (i) bug-85: abandon-from-'created' minimal-teardown branch.
-    // A 'created' mission has ONLY a config YAML + (maybe) a .names symlink — NO workspace,
-    // NO daemon, NO mission-lock from start(), NO upstream branches, NO repo-locks. The full
-    // teardown flow below (lock-inheritance → daemon-flush → SIGTERM → branch-cleanup →
-    // workspace-destroy) is entirely inapplicable; in particular the inspectLocks() inheritance
-    // gate would reject with "mission-lock absent" since start() was never called. Branch to a
-    // minimal path: acquire a fresh mission-lock, atomically write abandonMessage + advance
-    // lifecycle 'created' → 'abandoned', then (if --purge-config) remove config + symlink.
-    // Semantically uniform with abandon-from-started — produces an 'abandoned' terminal record;
-    // --purge-config is the universal opt-in for full removal. The roadmapped `msn delete` verb
-    // stays the distinct "remove without leaving a tombstone" surface (engineer-judgment
-    // disposition surfaced on thread-558).
-    if (currentState === 'created') {
-      emit({ phase: 'final-tick', message: 'created-state mission — minimal teardown (no workspace/daemon/branches)' });
+    // mission-81 slice (i) bug-85 + slice (v.a): abandon-from-pre-start minimal-teardown branch.
+    // A pre-start mission ('created' / 'configured' / 'joined') has ONLY a config YAML +
+    // (maybe) a .names symlink — NO workspace, NO daemon, NO mission-lock from start(), NO
+    // upstream branches, NO repo-locks. The full teardown flow below (lock-inheritance →
+    // daemon-flush → SIGTERM → branch-cleanup → workspace-destroy) is entirely inapplicable;
+    // in particular the inspectLocks() inheritance gate would reject with "mission-lock absent"
+    // since start() was never called. Branch to a minimal path: acquire a fresh mission-lock,
+    // atomically write abandonMessage + advance lifecycle → 'abandoned', then (if --purge-config)
+    // remove config + symlink. Semantically uniform with abandon-from-started — produces an
+    // 'abandoned' terminal record; --purge-config is the universal opt-in for full removal. The
+    // roadmapped `msn delete` verb stays the distinct "remove without leaving a tombstone"
+    // surface (engineer-judgment disposition surfaced on thread-558).
+    if (isPreStartState) {
+      emit({ phase: 'final-tick', message: `${currentState}-state mission — minimal teardown (no workspace/daemon/branches)` });
       const createdLock = await this.storage.acquireMissionLock(id, { waitMs: 0 });
       let createdFinalConfig: MissionConfig;
       try {
@@ -996,9 +1006,11 @@ export class Missioncraft {
           {
             validate: (config) =>
               config.mission.lifecycleState === 'created'
+              || config.mission.lifecycleState === 'configured'
+              || config.mission.lifecycleState === 'joined'
                 ? null
-                : `abandon-from-created rejected: lifecycle '${config.mission.lifecycleState}' is not 'created'`,
-            sourceLabel: `Missioncraft.abandon.created-minimal('${id}')`,
+                : `abandon-from-pre-start rejected: lifecycle '${config.mission.lifecycleState}' is not a pre-start state (created/configured/joined)`,
+            sourceLabel: `Missioncraft.abandon.pre-start-minimal('${id}')`,
             role: 'auto',
           },
         );

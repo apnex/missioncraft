@@ -11,11 +11,19 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Missioncraft } from '@apnex/missioncraft';
 
 const execFileAsync = promisify(execFile);
+
+// mission-81 slice (v.a): every test in this file is a REAL-engine integration test (git
+// init/commit/squash + storage allocate/cleanup) — genuine I/O that normally runs in <5s but
+// can exceed vitest's 5s default on a loaded CI runner. The `publishMessage immutability` test
+// (2× real `mc.complete`) flaked with a 5s timeout on the macos-node-24 runner. Per the
+// enumerate-the-set discipline, lift the timeout for the WHOLE file rather than the one test
+// that lost the dice roll — they are all the same risk class.
+vi.setConfig({ testTimeout: 30_000 });
 
 let tempRoot: string;
 let bareRepoPath: string;
@@ -170,7 +178,7 @@ describe('W4.3 slice (iv) — abandon() real-engine integration', () => {
 
     // Mission is now terminal 'abandoned'; retry abandon should be rejected
     await expect(mc.abandon(handle.id, 'second-msg')).rejects.toMatchObject({
-      message: expect.stringMatching(/requires lifecycle 'created', 'in-progress', 'started', or 'reading'/),
+      message: expect.stringMatching(/requires lifecycle 'created', 'configured', 'joined', 'in-progress', 'started', or 'reading'/),
     });
   });
 

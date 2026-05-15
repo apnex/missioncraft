@@ -68,13 +68,17 @@ describe('v1.0.3 slice (iii) — name-alias resolution audit per bug-64 item 5',
     );
   });
 
-  it('mc.abandon(<name>) resolves name → id (substrate-bypass via lifecycle requirement)', async () => {
+  it('mc.abandon(<name>) resolves name → id (abandon succeeds on the configured pre-start state)', async () => {
+    // mission-81 slice (v.a): a 'configured' mission (created with a repo, not started) is a
+    // pre-start state that abandon now accepts (minimal-teardown branch). This test proves
+    // NAME-RESOLUTION: if 'test-abandon' didn't resolve, abandon would throw "mission ... not
+    // found" — instead it resolves to the canonical id and abandons cleanly.
     const mc = new Missioncraft({ workspaceRoot: tempRoot });
-    await mc.create('mission', { name: 'test-abandon', repo: 'file:///tmp/test-repo' });
+    const handle = await mc.create('mission', { name: 'test-abandon', repo: 'file:///tmp/test-repo' });
 
-    await expect(mc.abandon('test-abandon', 'msg')).rejects.toThrow(
-      /requires lifecycle 'created', 'in-progress', 'started', or 'reading'/,
-    );
+    const result = await mc.abandon('test-abandon', 'msg');
+    expect(result.id).toBe(handle.id);                        // name resolved → canonical id
+    expect(result.lifecycleState).toBe('abandoned');
   });
 
   it('mc.workspace(<name>) resolves name → id (substrate-bypass via lifecycle requirement)', async () => {

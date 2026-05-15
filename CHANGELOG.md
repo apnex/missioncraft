@@ -4,6 +4,20 @@ All notable changes to `@apnex/missioncraft` are documented here.
 
 This project follows [Semantic Versioning](https://semver.org/). Dates are in UTC.
 
+## [1.2.3] — 2026-05-15
+
+Bug-fix release — operator-experience sweep.
+
+### Fixed
+
+- `msn <id> abandon` now works on a mission that was never started. Previously a mission you'd created (with or without `--repo`) but not yet `msn start`-ed could not be abandoned — abandon only accepted already-running missions. It now cleanly tears down any not-yet-started mission and tells you it had no workspace or daemon to remove.
+- `msn scope list` now prints a readable table by default — the same `ID / NAME / LIFECYCLE / REPOS-COUNT` shape as `msn list`. Previously it dumped raw JSON. Use `--output json` (or `yaml`) when you want machine-readable output.
+- `msn <id> help` now shows only the verbs that apply to a specific mission (`show`, `start`, `complete`, `abandon`, `workspace`, `cd`, `update`), instead of dumping the entire CLI help.
+- `msn <id> cd` and `msn <id> workspace` with no repo-name on a multi-repo mission now resolve to the mission's root directory (the folder containing each repo), instead of erroring. Passing a repo-name still selects that specific repo.
+- `msn <id> cd` now works through the shell integration. The `msn shell-init` wrapper was not intercepting the `msn <id> cd` form, so the documented direct-cd feature didn't work even after `eval "$(msn shell-init bash)"`. It now does.
+- Scopes and missions whose config file fails to load no longer vanish silently from `msn scope list` / `msn list` — you now get a `warning:` line naming the entity that couldn't be read. Relatedly, `msn create` / `msn scope create` now reject an invalid auto-derived repo name up front instead of writing a config that can't be read back.
+- `msn help <verb>` followed by a flag (e.g. `msn help start --workspace-root /path`) now renders the verb help correctly, instead of reporting an "unknown verb-path" error.
+
 ## [1.2.2] — 2026-05-14
 
 Bug-fix release.
